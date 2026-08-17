@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api.js';
-import TaskEditor from './TaskEditor.jsx';
+import Icon from './Icon.jsx';
+import TaskForm from './TaskForm.jsx';
 import {
   AUTO_TYPES, STRATEGIES, NAME_TOKENS, parseLines,
   buildNegatives, buildTaskPlan, buildWorkbookData, downloadWorkbook, todayStamp,
@@ -89,7 +90,8 @@ export default function BuilderPage({ market }) {
     const rows = plans.reduce(
       (a, x) => a + x.plan.campaigns.length * (x.plan.blockRows + 1), 0
     );
-    return { campaigns, problems, rows };
+    const skus = plans.reduce((a, x) => a + parseLines(x.task.skus).length, 0);
+    return { campaigns, problems, rows, skus };
   }, [plans]);
 
   const blocked = totals.problems > 0 || totals.campaigns === 0;
@@ -100,7 +102,7 @@ export default function BuilderPage({ market }) {
   }
 
   function addTask() {
-    // 新任务沿用上一个任务的参数,只清空 SKU —— 连开几个系列时省事
+    // 新任务沿用上一个任务的参数,只清空标题 —— 连开几个系列时省事
     const last = tasks[tasks.length - 1];
     const t = last
       ? newTask({ ...last, id: `t${seq++}`, title: '', skus: last.skus })
@@ -131,18 +133,6 @@ export default function BuilderPage({ market }) {
     setResult(null);
   }
 
-  function moveTask(id, dir) {
-    setTasks((prev) => {
-      const i = prev.findIndex((t) => t.id === id);
-      const j = i + dir;
-      if (i < 0 || j < 0 || j >= prev.length) return prev;
-      const next = [...prev];
-      [next[i], next[j]] = [next[j], next[i]];
-      return next;
-    });
-    setResult(null);
-  }
-
   function generate() {
     try {
       const wb = buildWorkbookData(plans);
@@ -167,99 +157,102 @@ export default function BuilderPage({ market }) {
   const active = tasks.find((t) => t.id === activeId) ?? tasks[0];
   const activePlan = plans.find((p) => p.task.id === active?.id)?.plan;
   const libCount = lib?.terms?.length ?? 0;
+  const multi = tasks.length > 1;
 
   return (
     <div className="builder">
-      <div className="builder-head">
-        <div>
-          <h1>开设广告 · {market} 站</h1>
+      {/* ---------- 页头 ---------- */}
+      <header className="bhero">
+        <div className="bhero-glow" />
+        <div className="bhero-text">
+          <h1>
+            开设广告
+            <span className="bhero-mk">{market} 站</span>
+          </h1>
           <p className="hint">
-            一个任务 = 一组 SKU + 一套组合。加几个任务分别配置,最后一次生成合并成总表。
-            {libError
-              ? ` 词库读取失败:${libError}`
-              : ` 本站点词库共 ${libCount} 条,可在每个任务里选择是否套用。`}
+            一页填完:SKU、组合、命名、参数、否定,右边实时预览。
+            {libError ? ` 词库读取失败:${libError}` : ` 本站点词库共 ${libCount} 条,可在每个任务里选择是否套用。`}
           </p>
         </div>
-      </div>
-
-      <div className="builder-body">
-        {/* ---------- 任务列表 ---------- */}
-        <aside className="tasklist">
-          <div className="tasklist-head">
-            <span className="card-title" style={{ margin: 0 }}>任务列表</span>
-            <div className="spacer" />
-            <button className="btn sm" onClick={addTask}>+ 新任务</button>
-          </div>
-
-          <div className="tasklist-items">
-            {plans.map(({ task, plan }, i) => (
-              <button
-                key={task.id}
-                className={`taskitem${task.id === active?.id ? ' on' : ''}${plan.problems.length ? ' bad' : ''}`}
-                onClick={() => setActiveId(task.id)}
-              >
-                <div className="taskitem-top">
-                  <span className="taskitem-idx">{i + 1}</span>
-                  <span className="taskitem-name">{autoTitle(task, i)}</span>
-                </div>
-                <div className="taskitem-meta">
-                  {plan.problems.length ? (
-                    <span className="tag amber">{plan.problems.length} 项待处理</span>
-                  ) : (
-                    <span className="tag green">{plan.campaigns.length} 条活动</span>
-                  )}
-                  <span>{parseLines(task.skus).length} SKU</span>
-                  <span>{plan.blockRows} 行/条</span>
-                </div>
-                <div className="taskitem-tools">
-                  <span onClick={(e) => { e.stopPropagation(); moveTask(task.id, -1); }} title="上移">↑</span>
-                  <span onClick={(e) => { e.stopPropagation(); moveTask(task.id, 1); }} title="下移">↓</span>
-                  <span onClick={(e) => { e.stopPropagation(); duplicateTask(task.id); }} title="复制">⧉</span>
-                  <span
-                    className="del"
-                    onClick={(e) => { e.stopPropagation(); removeTask(task.id); }}
-                    title="删除"
-                  >✕</span>
-                </div>
-              </button>
-            ))}
-          </div>
-
-          <div className="tasklist-foot">
-            <div className="row" style={{ marginBottom: 8 }}>
-              <span className="stat"><b>{totals.campaigns}</b> 条活动</span>
-              <div className="spacer" />
-              <span className="stat"><b>{totals.rows}</b> 行</span>
+        <div className="bhero-stats">
+          {[
+            ['广告活动', totals.campaigns, 'accent'],
+            ['总行数', totals.rows, ''],
+            ['SKU', totals.skus, ''],
+            ['任务', tasks.length, ''],
+          ].map(([label, value, tone]) => (
+            <div className={`kpi${tone ? ` ${tone}` : ''}`} key={label}>
+              <b>{value}</b>
+              <span>{label}</span>
             </div>
-            {totals.problems > 0 && (
-              <div className="note warn" style={{ marginBottom: 8 }}>
-                {totals.problems} 个任务还有问题,处理完才能生成
-              </div>
-            )}
-            <button className="btn primary" style={{ width: '100%' }} disabled={blocked} onClick={generate}>
-              生成总表并下载
-            </button>
-            {result && (
-              <div className={`note ${result.kind}`} style={{ marginTop: 9 }}>{result.text}</div>
-            )}
-          </div>
-        </aside>
+          ))}
+        </div>
+      </header>
 
-        {/* ---------- 任务编辑器 ---------- */}
-        <section className="taskpane">
+      {/* ---------- 吸顶操作条 ---------- */}
+      <div className="bbar">
+        <div className="tabstrip">
+          {plans.map(({ task, plan }, i) => (
+            <div
+              key={task.id}
+              className={`taskpill${task.id === active?.id ? ' on' : ''}${plan.problems.length ? ' bad' : ''}`}
+            >
+              <button
+                className="taskpill-main"
+                onClick={() => setActiveId(task.id)}
+                title={autoTitle(task, i)}
+              >
+                <span className="taskpill-i">{i + 1}</span>
+                <span className="taskpill-name">{autoTitle(task, i)}</span>
+                <span className="taskpill-n">
+                  {plan.problems.length ? `${plan.problems.length} 待处理` : `${plan.campaigns.length} 条`}
+                </span>
+              </button>
+              {multi && (
+                <button
+                  className="taskpill-x"
+                  title="删除任务"
+                  aria-label="删除任务"
+                  onClick={() => removeTask(task.id)}
+                >✕</button>
+              )}
+            </div>
+          ))}
+          <button className="btn sm addtask" onClick={addTask}>
+            <Icon name="plus" className="ico-sm" />新任务
+          </button>
           {active && (
-            <TaskEditor
-              key={active.id}
-              task={active}
-              plan={activePlan}
-              index={tasks.findIndex((t) => t.id === active.id)}
-              libCount={libCount}
-              libTerms={lib?.terms ?? []}
-              onChange={(patch) => updateTask(active.id, patch)}
-            />
+            <button className="btn sm ghost" onClick={() => duplicateTask(active.id)} title="复制当前任务">
+              <Icon name="copy" className="ico-sm" />复制
+            </button>
           )}
-        </section>
+        </div>
+
+        <div className="spacer" />
+
+        {totals.problems > 0 && (
+          <span className="tag amber">{totals.problems} 个任务待处理</span>
+        )}
+        <button className="btn primary" disabled={blocked} onClick={generate}>
+          <Icon name="download" className="ico-sm" />
+          生成总表并下载
+        </button>
       </div>
+
+      {result && <div className={`note ${result.kind} bresult animate-in`}>{result.text}</div>}
+
+      {/* ---------- 一页式表单 ---------- */}
+      {active && (
+        <TaskForm
+          key={active.id}
+          task={active}
+          plan={activePlan}
+          index={tasks.findIndex((t) => t.id === active.id)}
+          libCount={libCount}
+          libTerms={lib?.terms ?? []}
+          onChange={(patch) => updateTask(active.id, patch)}
+        />
+      )}
     </div>
   );
 }
