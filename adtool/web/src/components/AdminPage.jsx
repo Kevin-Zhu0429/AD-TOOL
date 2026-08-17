@@ -3,12 +3,30 @@ import { api } from '../api.js';
 import './AdminPage.css';
 
 const ROLES = [
-  { id: 'operator', label: '运营', desc: '本国词库只读 · 可开广告' },
-  { id: 'admin', label: '国家管理员', desc: '本国词库可编辑 · 可开广告' },
-  { id: 'owner', label: '超级管理员', desc: '所有国家 + 账号管理' },
+  { id: 'operator', label: '运营', desc: '负责站点的词库可编辑 · 可开广告' },
+  { id: 'admin', label: '国家管理员', desc: '负责站点的词库可编辑 · 可开广告' },
+  { id: 'owner', label: '超级管理员', desc: '所有站点 + 账号管理' },
 ];
 
-const ROLE_TONE = { owner: 'blue', admin: 'green', operator: 'gray' };
+/** 站点多选:创建表单和账号列表共用 */
+function MarketChips({ markets, value, onChange }) {
+  return (
+    <div className="chips">
+      {markets.map((m) => {
+        const on = value.includes(m);
+        return (
+          <label key={m} className={`chip${on ? ' on' : ''}`}>
+            <input
+              type="checkbox" checked={on}
+              onChange={() => onChange(on ? value.filter((x) => x !== m) : [...value, m])}
+            />
+            {m}
+          </label>
+        );
+      })}
+    </div>
+  );
+}
 
 export default function AdminPage({ user, markets }) {
   const [users, setUsers] = useState([]);
@@ -16,8 +34,10 @@ export default function AdminPage({ user, markets }) {
   const [msg, setMsg] = useState(null);
   const [tab, setTab] = useState('users');
   const [form, setForm] = useState({
-    username: '', displayName: '', password: '', role: 'operator', marketplace: markets[0] ?? 'ES',
+    username: '', displayName: '', password: '', role: 'operator', markets: [markets[0] ?? 'ES'],
   });
+  // 正在改站点的那一行:{id, markets}
+  const [mkEdit, setMkEdit] = useState(null);
 
   async function load() {
     try {
@@ -45,11 +65,17 @@ export default function AdminPage({ user, markets }) {
     if (!form.username.trim() || !form.displayName.trim() || form.password.length < 6) {
       return setMsg({ kind: 'err', text: '用户名、姓名要填,密码至少 6 位' });
     }
+    if (form.role !== 'owner' && !form.markets.length) {
+      return setMsg({ kind: 'err', text: '至少选一个负责站点' });
+    }
     act(
       () => api.createUser(form),
       `账号 ${form.username} 已创建`
     ).then(() =>
-      setForm({ username: '', displayName: '', password: '', role: 'operator', marketplace: markets[0] ?? 'ES' })
+      setForm({
+        username: '', displayName: '', password: '', role: 'operator',
+        markets: [markets[0] ?? 'ES'],
+      })
     );
   }
 
@@ -108,13 +134,13 @@ export default function AdminPage({ user, markets }) {
                 {ROLES.find((r) => r.id === form.role)?.desc}
               </p>
               {form.role !== 'owner' && (
-                <label className="field">
-                  <span>负责站点</span>
-                  <select className="inp" value={form.marketplace}
-                    onChange={(e) => setForm({ ...form, marketplace: e.target.value })}>
-                    {markets.map((m) => <option key={m} value={m}>{m}</option>)}
-                  </select>
-                </label>
+                <div className="field">
+                  <span>负责站点(可多选)</span>
+                  <MarketChips
+                    markets={markets} value={form.markets}
+                    onChange={(v) => setForm({ ...form, markets: v })}
+                  />
+                </div>
               )}
               <button className="btn primary" onClick={create}>创建账号</button>
             </div>
@@ -147,15 +173,38 @@ export default function AdminPage({ user, markets }) {
                       <td>
                         {u.role === 'owner' ? (
                           <span className="tag blue">全部</span>
+                        ) : mkEdit?.id === u.id ? (
+                          <div className="mkedit">
+                            <MarketChips
+                              markets={markets} value={mkEdit.markets}
+                              onChange={(v) => setMkEdit({ id: u.id, markets: v })}
+                            />
+                            <div className="row" style={{ gap: 5 }}>
+                              <button
+                                className="btn sm primary"
+                                disabled={!mkEdit.markets.length}
+                                onClick={() => {
+                                  const next = mkEdit.markets;
+                                  setMkEdit(null);
+                                  act(
+                                    () => api.updateUser(u.id, { markets: next }),
+                                    `${u.display_name} 的站点已改成 ${next.join(' / ')}`
+                                  );
+                                }}
+                              >保存</button>
+                              <button className="btn sm" onClick={() => setMkEdit(null)}>取消</button>
+                            </div>
+                          </div>
                         ) : (
-                          <select
-                            className="inp sel-inline" value={u.marketplace}
-                            onChange={(e) =>
-                              act(() => api.updateUser(u.id, { marketplace: e.target.value }), '站点已更新')
-                            }
+                          <button
+                            className="mkcell"
+                            title="点一下改负责站点"
+                            onClick={() => setMkEdit({ id: u.id, markets: u.markets ?? [] })}
                           >
-                            {markets.map((m) => <option key={m} value={m}>{m}</option>)}
-                          </select>
+                            {(u.markets ?? []).length
+                              ? u.markets.map((m) => <span key={m} className="tag gray">{m}</span>)
+                              : <span className="tag amber">未分配</span>}
+                          </button>
                         )}
                       </td>
                       <td>

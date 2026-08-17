@@ -22,7 +22,6 @@ function EntryCard({ tone, icon, title, desc, meta, onClick }) {
 export default function HomePage({ user, market, onNav, theme }) {
   const [libCount, setLibCount] = useState(null);
   const [noWebgl, setNoWebgl] = useState(false);
-  const canEdit = user.role === 'owner' || user.role === 'admin';
 
   useEffect(() => {
     let alive = true;
@@ -57,8 +56,8 @@ export default function HomePage({ user, market, onNav, theme }) {
           <h1>{greet},{user.displayName}</h1>
           <p className="hint">
             当前站点 <b className="home-mk">{market}</b>
-            {user.role === 'owner'
-              ? ' · 右上角可以切换到任意站点'
+            {user.markets.length > 1
+              ? ' · 右上角可以切换到你负责的其他站点'
               : ' · 你的账号负责这个站点'}
             {libCount !== null && ` · 词库 ${libCount} 条`}
           </p>
@@ -74,10 +73,8 @@ export default function HomePage({ user, market, onNav, theme }) {
         />
         <EntryCard
           tone="green" icon="book" title={`${market} 站否定词库`}
-          desc={canEdit
-            ? '维护型号、品牌、无关词和否定 ASIN。改动对本站点所有人立即生效。'
-            : '查看本站点的否定词库。你的账号是只读的,需要增删找本国管理员。'}
-          meta={canEdit ? '可编辑' : '只读'}
+          desc="维护型号、品牌、无关词和否定 ASIN。改动对本站点所有人立即生效。"
+          meta="可编辑"
           onClick={() => onNav('library')}
         />
         {user.role === 'owner' && (
