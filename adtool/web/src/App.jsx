@@ -54,7 +54,7 @@ export default function App() {
     ) : page === 'profile' ? (
       <ProfilePage user={user} onUserChange={setUser} onDone={() => setPage('home')} />
     ) : (
-      <HomePage user={user} market={market} onNav={setPage} />
+      <HomePage user={user} market={market} onNav={setPage} theme={theme} />
     );
 
   return (

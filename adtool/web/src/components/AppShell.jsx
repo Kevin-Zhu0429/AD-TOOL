@@ -99,7 +99,9 @@ export default function AppShell({
                 </div>
                 <div className="usermenu-badges">
                   <span className={`tag ${role.cls}`}>{role.label}</span>
-                  <span className="tag gray">{user.role === 'owner' ? '全部站点' : `${user.marketplace} 站`}</span>
+                  <span className="tag gray">
+                    {user.role === 'owner' ? '全部站点' : `${user.markets.join(' / ')} 站`}
+                  </span>
                 </div>
 
                 <div className="usermenu-sep" />

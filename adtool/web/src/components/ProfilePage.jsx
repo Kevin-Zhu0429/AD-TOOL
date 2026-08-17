@@ -69,7 +69,7 @@ export default function ProfilePage({ user, onUserChange, onDone }) {
         <div className="row" style={{ gap: 5 }}>
           <span className="tag blue">{ROLE[user.role] ?? user.role}</span>
           <span className="tag gray">
-            {user.role === 'owner' ? '全部站点' : `${user.marketplace} 站`}
+            {user.role === 'owner' ? '全部站点' : `${user.markets.join(' / ')} 站`}
           </span>
         </div>
       </div>

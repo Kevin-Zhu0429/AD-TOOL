@@ -6,9 +6,9 @@ PRAGMA foreign_keys = ON;
 
 -- ---------- 用户 ----------
 -- role: owner    = Kevin,所有国家 + 账号管理
---       admin    = 国家管理员,本国词库可编辑
---       operator = 运营,本国词库只读
--- marketplace: 该用户负责的站点。owner 填 ALL
+--       admin    = 国家管理员,负责站点的词库可编辑
+--       operator = 运营,权限与 admin 相同(仅名称区分职级)
+-- marketplace: 该用户负责的站点,逗号分隔可以填多个,例如 'ES,FR'。owner 填 ALL
 CREATE TABLE IF NOT EXISTS users (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   username      TEXT    NOT NULL UNIQUE,

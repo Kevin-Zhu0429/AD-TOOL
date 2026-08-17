@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import Icon from './Icon.jsx';
+import CloudShader from './CloudShader.jsx';
 import './HomePage.css';
 
 function EntryCard({ tone, icon, title, desc, meta, onClick }) {
@@ -18,9 +19,9 @@ function EntryCard({ tone, icon, title, desc, meta, onClick }) {
   );
 }
 
-export default function HomePage({ user, market, onNav }) {
+export default function HomePage({ user, market, onNav, theme }) {
   const [libCount, setLibCount] = useState(null);
-  const canEdit = user.role === 'owner' || user.role === 'admin';
+  const [noWebgl, setNoWebgl] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -34,17 +35,33 @@ export default function HomePage({ user, market, onNav }) {
   const hour = new Date().getHours();
   const greet = hour < 6 ? '这么晚还在忙' : hour < 12 ? '早上好' : hour < 18 ? '下午好' : '晚上好';
 
+  // 云层只在浅色主题下铺;显卡不支持时页头退回原来的纯文字样式
+  const sky = theme === 'light' && !noWebgl;
+
   return (
-    <div className="home animate-in">
-      <div className="home-head">
-        <h1>{greet},{user.displayName}</h1>
-        <p className="hint">
-          当前站点 <b className="home-mk">{market}</b>
-          {user.role === 'owner'
-            ? ' · 右上角可以切换到任意站点'
-            : ' · 你的账号负责这个站点'}
-          {libCount !== null && ` · 词库 ${libCount} 条`}
-        </p>
+    <div className={`home animate-in${sky ? ' has-sky' : ''}`}>
+      <div className="home-hero">
+        {sky && (
+          <CloudShader
+            className="home-hero-sky"
+            speed={0.7}
+            count={5}
+            skyTopColor="#3f7fe4"
+            skyBottomColor="#b7dcf6"
+            cloudColor="#fdfbf6"
+            onUnsupported={() => setNoWebgl(true)}
+          />
+        )}
+        <div className="home-head">
+          <h1>{greet},{user.displayName}</h1>
+          <p className="hint">
+            当前站点 <b className="home-mk">{market}</b>
+            {user.markets.length > 1
+              ? ' · 右上角可以切换到你负责的其他站点'
+              : ' · 你的账号负责这个站点'}
+            {libCount !== null && ` · 词库 ${libCount} 条`}
+          </p>
+        </div>
       </div>
 
       <div className="home-grid">
@@ -56,10 +73,8 @@ export default function HomePage({ user, market, onNav }) {
         />
         <EntryCard
           tone="green" icon="book" title={`${market} 站否定词库`}
-          desc={canEdit
-            ? '维护型号、品牌、无关词和否定 ASIN。改动对本站点所有人立即生效。'
-            : '查看本站点的否定词库。你的账号是只读的,需要增删找本国管理员。'}
-          meta={canEdit ? '可编辑' : '只读'}
+          desc="维护型号、品牌、无关词和否定 ASIN。改动对本站点所有人立即生效。"
+          meta="可编辑"
           onClick={() => onNav('library')}
         />
         {user.role === 'owner' && (

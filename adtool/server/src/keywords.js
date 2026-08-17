@@ -40,7 +40,7 @@ function resolveMarket(req, res, needWrite) {
     return null;
   }
   if (needWrite && !canWrite(u, mk)) {
-    res.status(403).json({ error: '你的账号对该站点词库是只读的' });
+    res.status(403).json({ error: '你不负责这个站点,改不了它的词库' });
     return null;
   }
   return mk;
@@ -132,7 +132,7 @@ negRouter.patch('/:id', (req, res) => {
   const row = db.prepare('SELECT * FROM neg_terms WHERE id = ?').get(id);
   if (!row) return res.status(404).json({ error: '词不存在' });
   if (!canWrite(req.session.user, row.marketplace)) {
-    return res.status(403).json({ error: '你的账号对该站点词库是只读的' });
+    return res.status(403).json({ error: '你不负责这个站点,改不了它的词库' });
   }
 
   const { term, note } = req.body ?? {};
@@ -172,7 +172,7 @@ negRouter.post('/delete', (req, res) => {
 
   for (const r of rows) {
     if (!canWrite(req.session.user, r.marketplace)) {
-      return res.status(403).json({ error: '你的账号对该站点词库是只读的' });
+      return res.status(403).json({ error: '你不负责这个站点,改不了它的词库' });
     }
   }
 

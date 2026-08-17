@@ -6,41 +6,36 @@ export const authRouter = express.Router();
 
 export const MARKETPLACES = ['ES', 'DE', 'FR', 'IT', 'UK', 'US', 'CA'];
 
-// ---------- 中间件 ----------
-
-export function requireLogin(req, res, next) {
-  if (!req.session?.user) return res.status(401).json({ error: '未登录' });
-  next();
-}
-
-export function requireRole(...roles) {
-  return (req, res, next) => {
-    if (!req.session?.user) return res.status(401).json({ error: '未登录' });
-    if (!roles.includes(req.session.user.role)) {
-      return res.status(403).json({ error: '权限不足' });
-    }
-    next();
-  };
-}
-
 /**
- * 判断当前用户能不能访问某个站点的数据。
- * owner 通吃,其他人只能碰自己那个站点。
+ * users.marketplace 存的是逗号分隔的站点列表,例如 'ES,FR';owner 存 'ALL'。
+ * 这里只认 MARKETPLACES 里的值 —— 'ALL' 解析出来是空数组,
+ * 所以万一有 admin/operator 的行留着 'ALL',是「什么都碰不到」,不会误放权。
  */
-export function canRead(user, marketplace) {
-  return user.role === 'owner' || user.marketplace === marketplace;
+export function parseMarkets(raw) {
+  const out = [];
+  for (const part of String(raw ?? '').split(',')) {
+    const mk = part.trim().toUpperCase();
+    if (MARKETPLACES.includes(mk) && !out.includes(mk)) out.push(mk);
+  }
+  return out;
 }
 
-/** 能不能改某个站点的词库 —— operator 一律只读 */
-export function canWrite(user, marketplace) {
-  if (user.role === 'owner') return true;
-  if (user.role === 'admin') return user.marketplace === marketplace;
-  return false;
+/** 校验前端传来的站点列表,不合法或为空返回 null */
+export function normMarkets(input) {
+  const list = Array.isArray(input) ? input : String(input ?? '').split(',');
+  const out = [];
+  for (const raw of list) {
+    const mk = String(raw).trim().toUpperCase();
+    if (!mk) continue;
+    if (!MARKETPLACES.includes(mk)) return null;
+    if (!out.includes(mk)) out.push(mk);
+  }
+  return out.length ? out : null;
 }
 
 /** 该用户在界面上能选哪些站点 */
-export function visibleMarkets(user) {
-  return user.role === 'owner' ? MARKETPLACES : [user.marketplace];
+export function visibleMarkets(row) {
+  return row.role === 'owner' ? [...MARKETPLACES] : parseMarkets(row.marketplace);
 }
 
 function publicUser(row) {
@@ -49,9 +44,53 @@ function publicUser(row) {
     username: row.username,
     displayName: row.display_name,
     role: row.role,
-    marketplace: row.marketplace,
-    markets: visibleMarkets({ role: row.role, marketplace: row.marketplace }),
+    markets: visibleMarkets(row),
   };
+}
+
+// ---------- 中间件 ----------
+
+/**
+ * 每个请求都按库里的最新状态刷新会话用户 ——
+ * owner 改了谁的站点/角色/停用,对方下一个请求就生效,不用等重新登录。
+ */
+export function requireLogin(req, res, next) {
+  const sess = req.session?.user;
+  if (!sess) return res.status(401).json({ error: '未登录' });
+
+  const row = db.prepare('SELECT * FROM users WHERE id = ?').get(sess.id);
+  if (!row) {
+    return req.session.destroy(() => res.status(401).json({ error: '账号不存在' }));
+  }
+  if (!row.is_active) {
+    return req.session.destroy(() => res.status(403).json({ error: '账号已停用' }));
+  }
+
+  req.session.user = publicUser(row);
+  next();
+}
+
+export function requireRole(...roles) {
+  return (req, res, next) =>
+    requireLogin(req, res, () => {
+      if (!roles.includes(req.session.user.role)) {
+        return res.status(403).json({ error: '权限不足' });
+      }
+      next();
+    });
+}
+
+/** 能不能看某个站点的数据:owner 通吃,其他人看自己负责的站点 */
+export function canRead(user, marketplace) {
+  return user.role === 'owner' || (user.markets ?? []).includes(marketplace);
+}
+
+/**
+ * 能不能改某个站点的词库。
+ * 国家管理员和运营权限一致 —— 只要是自己负责的站点就能改。
+ */
+export function canWrite(user, marketplace) {
+  return canRead(user, marketplace);
 }
 
 // ---------- 登录 ----------
@@ -73,7 +112,7 @@ authRouter.post('/login', (req, res) => {
   if (!row.is_active) return res.status(403).json({ error: '账号已停用' });
 
   req.session.user = publicUser(row);
-  audit(row.id, row.marketplace, 'login', 'user', row.id, null);
+  audit(row.id, null, 'login', 'user', row.id, { markets: req.session.user.markets });
   res.json({ user: req.session.user });
 });
 
@@ -96,7 +135,7 @@ authRouter.patch('/profile', requireLogin, (req, res) => {
 
   const row = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
   req.session.user = publicUser(row);
-  audit(id, row.marketplace, 'update', 'user', id, { displayName: name });
+  audit(id, null, 'update', 'user', id, { displayName: name });
   res.json({ user: req.session.user });
 });
 
@@ -111,7 +150,7 @@ authRouter.post('/change-password', requireLogin, (req, res) => {
   }
   db.prepare('UPDATE users SET password_hash = ? WHERE id = ?')
     .run(bcrypt.hashSync(newPassword, 10), row.id);
-  audit(row.id, row.marketplace, 'update', 'user', row.id, { field: 'password' });
+  audit(row.id, null, 'update', 'user', row.id, { field: 'password' });
   res.json({ ok: true });
 });
 
@@ -121,14 +160,15 @@ authRouter.get('/users', requireRole('owner'), (req, res) => {
   const users = db
     .prepare(
       `SELECT id, username, display_name, role, marketplace, is_active, created_at
-         FROM users ORDER BY marketplace, role, id`
+         FROM users ORDER BY role, marketplace, id`
     )
-    .all();
+    .all()
+    .map((u) => ({ ...u, markets: visibleMarkets(u) }));
   res.json({ users });
 });
 
 authRouter.post('/users', requireRole('owner'), (req, res) => {
-  const { username, displayName, password, role, marketplace } = req.body ?? {};
+  const { username, displayName, password, role } = req.body ?? {};
   if (!username || !password || !displayName) {
     return res.status(400).json({ error: '用户名、姓名、密码都要填' });
   }
@@ -138,9 +178,11 @@ authRouter.post('/users', requireRole('owner'), (req, res) => {
   if (!['owner', 'admin', 'operator'].includes(role)) {
     return res.status(400).json({ error: '角色不合法' });
   }
-  const mk = role === 'owner' ? 'ALL' : marketplace;
-  if (role !== 'owner' && !MARKETPLACES.includes(mk)) {
-    return res.status(400).json({ error: '站点不合法' });
+  let mk = 'ALL';
+  if (role !== 'owner') {
+    const list = normMarkets(req.body?.markets ?? req.body?.marketplace);
+    if (!list) return res.status(400).json({ error: '至少选一个站点,且站点必须合法' });
+    mk = list.join(',');
   }
 
   try {
@@ -150,7 +192,9 @@ authRouter.post('/users', requireRole('owner'), (req, res) => {
          VALUES (?, ?, ?, ?, ?)`
       )
       .run(username.trim(), displayName.trim(), bcrypt.hashSync(password, 10), role, mk);
-    audit(req.session.user.id, mk, 'create', 'user', info.lastInsertRowid, { username, role });
+    audit(req.session.user.id, null, 'create', 'user', info.lastInsertRowid, {
+      username, role, markets: mk,
+    });
     res.json({ id: info.lastInsertRowid });
   } catch (e) {
     if (String(e.message).includes('UNIQUE')) {
@@ -165,7 +209,7 @@ authRouter.patch('/users/:id', requireRole('owner'), (req, res) => {
   const row = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
   if (!row) return res.status(404).json({ error: '账号不存在' });
 
-  const { displayName, role, marketplace, isActive } = req.body ?? {};
+  const { displayName, role, isActive } = req.body ?? {};
 
   if (id === req.session.user.id && (role !== undefined || isActive === false)) {
     return res.status(400).json({ error: '不能改自己的角色或停用自己' });
@@ -175,9 +219,22 @@ authRouter.patch('/users/:id', requireRole('owner'), (req, res) => {
   }
 
   const nextRole = role ?? row.role;
-  const nextMk = nextRole === 'owner' ? 'ALL' : (marketplace ?? row.marketplace);
-  if (nextRole !== 'owner' && !MARKETPLACES.includes(nextMk)) {
-    return res.status(400).json({ error: '站点不合法' });
+  const given = req.body?.markets ?? req.body?.marketplace;
+
+  let nextMk = 'ALL';
+  if (nextRole !== 'owner') {
+    if (given !== undefined) {
+      const list = normMarkets(given);
+      if (!list) return res.status(400).json({ error: '至少选一个站点,且站点必须合法' });
+      nextMk = list.join(',');
+    } else {
+      // 从超级管理员降级时库里存的是 ALL,必须同时指定负责哪些站点
+      const kept = parseMarkets(row.marketplace);
+      if (!kept.length) {
+        return res.status(400).json({ error: '改成非超级管理员时要同时指定负责的站点' });
+      }
+      nextMk = kept.join(',');
+    }
   }
 
   db.prepare(
@@ -190,7 +247,7 @@ authRouter.patch('/users/:id', requireRole('owner'), (req, res) => {
     isActive === undefined ? row.is_active : isActive ? 1 : 0,
     id
   );
-  audit(req.session.user.id, nextMk, 'update', 'user', id, { role: nextRole, marketplace: nextMk });
+  audit(req.session.user.id, null, 'update', 'user', id, { role: nextRole, markets: nextMk });
   res.json({ ok: true });
 });
 
@@ -222,8 +279,9 @@ authRouter.get('/audit', requireLogin, (req, res) => {
           .prepare(
             `SELECT a.*, us.display_name AS who FROM audit_log a
                LEFT JOIN users us ON us.id = a.user_id
-              WHERE a.marketplace = ? ORDER BY a.id DESC LIMIT 200`
+              WHERE a.marketplace IN (${u.markets.map(() => '?').join(',') || 'NULL'})
+              ORDER BY a.id DESC LIMIT 200`
           )
-          .all(u.marketplace);
+          .all(...u.markets);
   res.json({ logs: rows });
 });
