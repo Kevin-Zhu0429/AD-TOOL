@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { api } from '../api.js';
 import Icon from './Icon.jsx';
+import CloudShader from './CloudShader.jsx';
 import './LoginPage.css';
 
 export default function LoginPage({ onLoggedIn, theme, onToggleTheme }) {
@@ -8,6 +9,10 @@ export default function LoginPage({ onLoggedIn, theme, onToggleTheme }) {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [noWebgl, setNoWebgl] = useState(false);
+
+  // 云层只在浅色主题下铺;显卡不支持时退回原来的网格 + 光晕
+  const sky = theme === 'light' && !noWebgl;
 
   async function submit(e) {
     e.preventDefault();
@@ -25,9 +30,22 @@ export default function LoginPage({ onLoggedIn, theme, onToggleTheme }) {
   }
 
   return (
-    <div className="login">
-      <div className="login-grid" aria-hidden="true" />
-      <div className="login-halo" aria-hidden="true" />
+    <div className={`login${sky ? ' has-sky' : ''}`}>
+      {sky ? (
+        <CloudShader
+          className="login-sky"
+          speed={0.85}
+          skyTopColor="#2f6fe0"
+          skyBottomColor="#a8d2f2"
+          cloudColor="#fdfbf6"
+          onUnsupported={() => setNoWebgl(true)}
+        />
+      ) : (
+        <>
+          <div className="login-grid" aria-hidden="true" />
+          <div className="login-halo" aria-hidden="true" />
+        </>
+      )}
 
       <form className="login-card animate-in" onSubmit={submit}>
         <button
