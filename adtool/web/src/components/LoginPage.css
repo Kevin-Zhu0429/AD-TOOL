@@ -1,0 +1,70 @@
+.login {
+  position: relative;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+/* 细网格底纹 —— 呼应批量表的格子感 */
+.login-grid {
+  position: absolute; inset: 0;
+  background-image:
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+  background-size: 46px 46px;
+  mask-image: radial-gradient(circle at 50% 45%, #000 0%, transparent 70%);
+  -webkit-mask-image: radial-gradient(circle at 50% 45%, #000 0%, transparent 70%);
+}
+
+/* 一团柔和的色光,深浅两种主题下都成立 */
+.login-halo {
+  position: absolute;
+  width: 620px; height: 620px;
+  top: 50%; left: 50%; transform: translate(-50%, -58%);
+  background: radial-gradient(
+    circle,
+    color-mix(in srgb, var(--accent) 18%, transparent) 0%,
+    transparent 62%
+  );
+  pointer-events: none;
+}
+
+.login-card {
+  position: relative;
+  width: 352px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 30px 28px 22px;
+  box-shadow: var(--shadow);
+}
+
+.login-brand { display: flex; align-items: center; gap: 11px; margin-bottom: 24px; }
+
+.login-glyph {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 36px; height: 36px; border-radius: 10px;
+  background: linear-gradient(140deg, var(--accent), var(--violet));
+  color: #fff; font-size: 13px; font-weight: 700; letter-spacing: .02em;
+}
+
+.login-name { font-size: 15.5px; font-weight: 600; }
+.login-tag { font-size: 11.5px; color: var(--text-faint); margin-top: 1px; }
+
+.login-theme {
+  position: absolute; top: 14px; right: 14px;
+  color: var(--text-faint);
+}
+
+.login-foot {
+  margin-top: 20px; padding-top: 14px;
+  border-top: 1px solid var(--border-soft);
+  font-size: 11px; color: var(--text-faint); text-align: center;
+}
+
+@media (max-width: 420px) {
+  .login-card { width: calc(100% - 32px); }
+}
