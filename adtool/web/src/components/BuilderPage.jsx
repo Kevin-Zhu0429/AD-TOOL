@@ -34,7 +34,11 @@ export function newTask(overrides = {}) {
     rounding: 'round',
     coefs: { TOS: 2, ROS: 1.5, PP: 1.5 },
     extraNeg: { negExact: '', negPhrase: '', cnegExact: '', cnegPhrase: '', negAsin: '' },
-    useLib: true,
+    // 每一类词库这个任务要不要套用;E 类数据格式还没定,默认不带
+    libUse: { A: true, B: true, C: true, D: true, E: false },
+    adType: 'mixed',        // mixed = 混合广告;series = 系列广告,D 类联动否定其它型号
+    seriesModels: [],       // 系列广告投的是哪几个墨盒型号
+    seriesScope: 'both',    // 联动否定的范围:both / models 只否墨盒 / printers 只否打印机
     ...overrides,
   };
 }
@@ -64,25 +68,22 @@ export default function BuilderPage({ market }) {
     if (!activeId && tasks.length) setActiveId(tasks[0].id);
   }, [tasks, activeId]);
 
-  const libConfig = useMemo(() => {
-    const m = {};
+  /** 词库数据整理成引擎要的形状:定义 + 各类行 + 本站点的套用设置 */
+  const libData = useMemo(() => {
+    const config = {};
     for (const c of lib?.config ?? []) {
-      m[c.cat] = { enabled: c.enabled !== 0, matchType: c.match_type, level: c.level };
+      config[c.lib] = { enabled: c.enabled !== 0, matchType: c.match_type, level: c.level };
     }
-    return m;
+    return { libs: lib?.libs ?? [], items: lib?.items ?? {}, config, scopes: lib?.scopes ?? {} };
   }, [lib]);
 
   /** 每个任务各自算一遍计划,词库按任务开关决定带不带 */
   const plans = useMemo(() => {
     return tasks.map((task) => {
-      const negData = buildNegatives(
-        task.useLib ? lib?.terms ?? [] : [],
-        libConfig,
-        task.extraNeg
-      );
+      const negData = buildNegatives(libData, task);
       return { task, plan: buildTaskPlan(task, negData) };
     });
-  }, [tasks, lib, libConfig]);
+  }, [tasks, libData]);
 
   const totals = useMemo(() => {
     const campaigns = plans.reduce((a, x) => a + x.plan.campaigns.length, 0);
@@ -156,7 +157,7 @@ export default function BuilderPage({ market }) {
 
   const active = tasks.find((t) => t.id === activeId) ?? tasks[0];
   const activePlan = plans.find((p) => p.task.id === active?.id)?.plan;
-  const libCount = lib?.terms?.length ?? 0;
+  const libCount = Object.values(lib?.items ?? {}).reduce((a, x) => a + x.length, 0);
   const multi = tasks.length > 1;
 
   return (
@@ -249,7 +250,7 @@ export default function BuilderPage({ market }) {
           plan={activePlan}
           index={tasks.findIndex((t) => t.id === active.id)}
           libCount={libCount}
-          libTerms={lib?.terms ?? []}
+          lib={libData}
           onChange={(patch) => updateTask(active.id, patch)}
         />
       )}

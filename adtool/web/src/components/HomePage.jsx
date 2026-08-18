@@ -27,7 +27,9 @@ export default function HomePage({ user, market, onNav, theme }) {
     let alive = true;
     setLibCount(null);
     api.library(market)
-      .then((d) => alive && setLibCount(d.terms.length))
+      .then((d) => alive && setLibCount(
+        Object.values(d.items ?? {}).reduce((a, x) => a + x.length, 0)
+      ))
       .catch(() => alive && setLibCount(0));
     return () => { alive = false; };
   }, [market]);
@@ -67,14 +69,14 @@ export default function HomePage({ user, market, onNav, theme }) {
       <div className="home-grid">
         <EntryCard
           tone="blue" icon="layers" title="开设广告"
-          desc="按任务批量配置自动广告,一次生成可直接上传的总表。词库里的否定词会自动带进每一条活动。"
+          desc="按任务批量配置自动广告,一次生成可直接上传的总表。词库里的否定词会自动带进每一条活动;开系列广告时还会按 D 类反推,把其它墨盒和打印机型号一起否掉。"
           meta="生成 xlsx 批量表"
           onClick={() => onNav('builder')}
         />
         <EntryCard
           tone="green" icon="book" title={`${market} 站否定词库`}
-          desc="维护型号、品牌、无关词和否定 ASIN。改动对本站点所有人立即生效。"
-          meta="可编辑"
+          desc="A 无名词 · B 非售品牌 · C 非售流量干扰墨盒 · D 在售墨盒和打印机 · E 原装竞品 ASIN。改动立即生效。"
+          meta={user.goodsAdmin ? 'A–E 都可编辑' : 'A 类可编辑,B–E 只读'}
           onClick={() => onNav('library')}
         />
         {user.role === 'owner' && (

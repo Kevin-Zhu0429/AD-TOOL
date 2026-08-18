@@ -175,39 +175,173 @@ export function parseCombos(text) {
 
 /* ---------------- 否定投放 ---------------- */
 
+/** 「575, 576」这种一格里塞多个型号的,拆成 ['575','576'] */
+export function splitModels(text) {
+  return String(text ?? '')
+    .split(/[,，、;；/]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+const clean = (v) => String(v ?? '').trim().replace(/\s+/g, ' ');
+const pairKey = (series, printer) => `${clean(series).toLowerCase()}|${clean(printer).toLowerCase()}`;
+
+/** D 类词库里有哪些墨盒型号组,给界面做选择用(「575, 576」算一组) */
+export function seriesGroups(rows) {
+  const map = new Map();
+  for (const r of rows || []) {
+    const label = clean(r.term);
+    if (!label) continue;
+    const cur = map.get(label.toLowerCase());
+    if (cur) cur.count++;
+    else map.set(label.toLowerCase(), { label, models: splitModels(label), count: 1, brand: clean(r.brand) });
+  }
+  return [...map.values()].sort((a, b) => a.label.localeCompare(b.label, 'en', { numeric: true }));
+}
+
 /**
- * 把词库 + 本次临时否定合并成待写入的否定行。
- * libTerms: [{cat, term}]  libConfig: {cat: {enabled, matchType, level}}
- * extra: {negExact, negPhrase, cnegExact, cnegPhrase, negAsin} 每项是多行文本
+ * 系列广告的联动否定:留下要投的那个系列,D 类词库里其余的墨盒型号和打印机型号全部否掉。
+ *
+ * 两个坑在这里处理掉:
+ * 1) 「575, 576」是一组一起卖的,只要选中其中一个,同组的另一个也要留着,不能否;
+ * 2) 同一个打印机数字会挂在不同墨盒下(比如 DeskJet 6120 和别的系列的 6120),
+ *    这种重复数字不能光否数字,要带上打印机系列名,否则会误伤在投的机型。
  */
-export function buildNegatives(libTerms, libConfig, extra) {
+export function buildSeriesNegatives(rows, selectedModels) {
+  const sel = new Set((selectedModels || []).map((m) => clean(m).toLowerCase()).filter(Boolean));
+  const parsed = (rows || []).map((r) => {
+    const models = splitModels(r.term);
+    return {
+      models,
+      printer: clean(r.printer),
+      series: clean(r.series),
+      hit: models.some((m) => sel.has(m.toLowerCase())),
+    };
+  });
+
+  const allModels = new Map();      // 小写 -> 原样,库里出现过的全部墨盒型号
+  const keptModels = new Set();     // 投放系列的墨盒型号(含同组的兄弟型号)
+  const keptPrinters = new Set();   // 投放系列的打印机型号
+  const keptPairs = new Set();      // 系列+型号,精确到行
+  const printerSeries = new Map();  // 打印机型号 -> 它出现过的系列集合
+
+  for (const r of parsed) {
+    for (const m of r.models) allModels.set(m.toLowerCase(), m);
+    if (r.printer) {
+      const pl = r.printer.toLowerCase();
+      if (!printerSeries.has(pl)) printerSeries.set(pl, new Set());
+      if (r.series) printerSeries.get(pl).add(r.series.toLowerCase());
+    }
+    if (!r.hit) continue;
+    for (const m of r.models) keptModels.add(m.toLowerCase());
+    if (r.printer) {
+      keptPrinters.add(r.printer.toLowerCase());
+      keptPairs.add(pairKey(r.series, r.printer));
+    }
+  }
+
+  const models = [];
+  for (const [lower, disp] of allModels) if (!keptModels.has(lower)) models.push(disp);
+  models.sort((a, b) => a.localeCompare(b, 'en', { numeric: true }));
+
+  const printers = [];
+  const qualified = [];   // 因为数字重复而带上了系列名的
+  const seen = new Set();
+  for (const r of parsed) {
+    if (r.hit || !r.printer) continue;
+    if (keptPairs.has(pairKey(r.series, r.printer))) continue; // 同系列同型号正在投,不能否
+    const pl = r.printer.toLowerCase();
+    const dup = keptPrinters.has(pl) || (printerSeries.get(pl)?.size ?? 0) > 1;
+    const text = dup && r.series ? `${r.series} ${r.printer}` : r.printer;
+    const key = text.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    printers.push(text);
+    if (dup && r.series) qualified.push(text);
+  }
+
+  const unknown = [...sel].filter((m) => !allModels.has(m));
+  return { models, printers, qualified, unknown, keptModels: [...keptModels] };
+}
+
+/** 一条否定关键词行 */
+function negRow(text, cfg) {
+  const level = cfg?.level || 'camp';
+  return {
+    entity: level === 'camp' ? '广告活动否定关键词' : '否定关键词',
+    match: cfg?.matchType || '否定词组',
+    needGroup: level !== 'camp',
+    text,
+  };
+}
+
+/**
+ * 把五类词库 + D 类系列联动 + 本次临时否定合并成待写入的否定行。
+ *
+ * lib  : { libs: [词库定义], items: {A: [...], …}, config: {A: {enabled, matchType, level}, …} }
+ * task : { libUse: {A: true, …}, adType: 'mixed' | 'series', seriesModels: [...], extraNeg: {...} }
+ */
+export function buildNegatives(lib, task) {
   const problems = [];
   const negs = [];
   const asinSet = new Set();
   const asins = [];
 
-  for (const t of libTerms || []) {
-    const cfg = libConfig?.[t.cat];
+  const pushAsin = (raw) => {
+    const v = String(raw ?? '').trim().toUpperCase();
+    if (!v) return;
+    const full = `asin="${v}"`;
+    if (asinSet.has(full)) return;
+    asinSet.add(full);
+    asins.push(full);
+  };
+  const pushKw = (raw, cfg, libName) => {
+    const t = clean(raw);
+    if (!t) return;
+    if (t.length > KW_MAX_CHARS) {
+      problems.push(`${libName}有词超 ${KW_MAX_CHARS} 字符:${t.slice(0, 30)}…`);
+      return;
+    }
+    negs.push(negRow(t, cfg));
+  };
+
+  const specs = lib?.libs ?? [];
+  let series = null;
+
+  for (const spec of specs) {
+    if (!task.libUse?.[spec.id]) continue;
+    const cfg = lib?.config?.[spec.id];
     if (cfg && cfg.enabled === false) continue;
-    if (t.cat === 'asin') {
-      const code = `asin="${t.term}"`;
-      if (!asinSet.has(code)) {
-        asinSet.add(code);
-        asins.push(code);
+    const items = lib?.items?.[spec.id] ?? [];
+
+    if (spec.special === 'series') {
+      // D 类不整库否定 —— 混合广告什么都不否,系列广告才反推该否掉的型号
+      if (task.adType !== 'series') continue;
+      const picked = (task.seriesModels || []).filter(Boolean);
+      if (!picked.length) {
+        problems.push('选了系列广告,但还没选投放的墨盒型号,D 类联动否定没生效');
+        continue;
+      }
+      if (!items.length) {
+        problems.push(`「${spec.name}」这个区域还没有数据,系列广告没法反推要否掉的型号`);
+        continue;
+      }
+      series = buildSeriesNegatives(items, picked);
+      // 欧洲这种大库,墨盒 + 打印机一起否很容易顶到亚马逊每条活动 1000 个否定词的上限,
+      // 所以留一个开关:可以只否墨盒型号,或者只否打印机型号
+      const only = task.seriesScope ?? 'both';
+      if (only !== 'printers') for (const t of series.models) pushKw(t, cfg, spec.name);
+      if (only !== 'models') for (const t of series.printers) pushKw(t, cfg, spec.name);
+      if (series.unknown.length) {
+        problems.push(`这些墨盒型号在 D 类词库里没找到,先确认有没有写错:${series.unknown.join('、')}`);
       }
       continue;
     }
-    if (t.term.length > KW_MAX_CHARS) {
-      problems.push(`词库有词超 ${KW_MAX_CHARS} 字符：${t.term.slice(0, 30)}…`);
-      continue;
+
+    for (const it of items) {
+      for (const k of spec.feed?.kw ?? []) pushKw(it[k], cfg, spec.name);
+      for (const k of spec.feed?.asin ?? []) pushAsin(it[k]);
     }
-    const level = cfg?.level || 'camp';
-    negs.push({
-      entity: level === 'camp' ? '广告活动否定关键词' : '否定关键词',
-      match: cfg?.matchType || '否定词组',
-      needGroup: level !== 'camp',
-      text: t.term,
-    });
   }
 
   const EXTRA = [
@@ -217,9 +351,9 @@ export function buildNegatives(libTerms, libConfig, extra) {
     ['cnegPhrase', '广告活动否定关键词', '否定词组', false],
   ];
   for (const [key, entity, match, needGroup] of EXTRA) {
-    for (const w of parseLines(extra?.[key])) {
+    for (const w of parseLines(task.extraNeg?.[key])) {
       if (w.length > KW_MAX_CHARS) {
-        problems.push(`否定词超 ${KW_MAX_CHARS} 字符：${w.slice(0, 30)}…`);
+        problems.push(`否定词超 ${KW_MAX_CHARS} 字符:${w.slice(0, 30)}…`);
         continue;
       }
       negs.push({ entity, match, needGroup, text: w });
@@ -237,24 +371,26 @@ export function buildNegatives(libTerms, libConfig, extra) {
   }
 
   const ASIN_RE = /^B0[0-9A-Z]{8}$/;
-  for (const w of parseLines(extra?.negAsin)) {
+  for (const w of parseLines(task.extraNeg?.negAsin)) {
     const m = w.match(/^asin\s*=\s*"?([^"]+)"?$/i);
     const code = (m ? m[1] : w).trim().toUpperCase();
     if (!ASIN_RE.test(code)) {
-      problems.push(`ASIN 格式不对：${w.slice(0, 24)}`);
+      problems.push(`ASIN 格式不对:${w.slice(0, 24)}`);
       continue;
     }
-    const full = `asin="${code}"`;
-    if (asinSet.has(full)) continue;
-    asinSet.add(full);
-    asins.push(full);
+    pushAsin(code);
   }
 
   if (keep.length > 1000) {
-    problems.push(`每条活动 ${keep.length} 个否定词,亚马逊上限一般是 1000,先精简词库`);
+    problems.push(
+      `每条活动 ${keep.length} 个否定词,亚马逊上限一般是 1000。` +
+      (series
+        ? '系列广告可以把「联动否定」改成只否墨盒型号,或者拆成多个任务'
+        : '先精简词库')
+    );
   }
 
-  return { negs: keep, asins, problems };
+  return { negs: keep, asins, problems, series };
 }
 
 /* ---------------- 生成计划 ---------------- */
@@ -343,7 +479,10 @@ export function buildTaskPlan(task, negData) {
     problems.push('SKU 有大小写重复');
   }
 
-  return { campaigns, blockRows, skus, problems, negs: negData.negs, asins: negData.asins };
+  return {
+    campaigns, blockRows, skus, problems,
+    negs: negData.negs, asins: negData.asins, series: negData.series,
+  };
 }
 
 /* ---------------- 写表 ---------------- */

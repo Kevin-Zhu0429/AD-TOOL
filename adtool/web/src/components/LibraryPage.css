@@ -30,3 +30,18 @@
 }
 
 .lib-tab .ico-sm { opacity: .8; }
+
+.lib-tab-id {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+.lib-tab.on .lib-tab-id { color: var(--text-dim); }
+
+.libmeta { display: grid; gap: 7px; font-size: 12px; }
+.libmeta > div { display: flex; gap: 8px; align-items: baseline; }
+.libmeta span { color: var(--text-faint); flex: 0 0 52px; }
+.libmeta b { color: var(--text-dim); font-weight: 500; line-height: 1.5; }

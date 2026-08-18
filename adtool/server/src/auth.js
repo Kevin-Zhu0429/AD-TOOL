@@ -1,10 +1,11 @@
 import express from 'express';
 import bcrypt from 'bcryptjs';
 import { db, audit } from './db.js';
+import { LIBS, MARKETPLACES, libOf } from './libs.js';
 
 export const authRouter = express.Router();
 
-export const MARKETPLACES = ['ES', 'DE', 'FR', 'IT', 'UK', 'US', 'CA'];
+export { MARKETPLACES };
 
 /**
  * users.marketplace 存的是逗号分隔的站点列表,例如 'ES,FR';owner 存 'ALL'。
@@ -33,9 +34,17 @@ export function normMarkets(input) {
   return out.length ? out : null;
 }
 
-/** 该用户在界面上能选哪些站点 */
+/** 商品部维护权:B/C/D/E 四类词库归他们管,超级管理员天然有 */
+export function isGoods(row) {
+  return row.role === 'owner' || !!(row.goods_admin ?? row.goodsAdmin);
+}
+
+/**
+ * 该用户在界面上能选哪些站点。
+ * 超级管理员和商品部要跨站点看词库,给全部;其他人只给分配到的站点。
+ */
 export function visibleMarkets(row) {
-  return row.role === 'owner' ? [...MARKETPLACES] : parseMarkets(row.marketplace);
+  return isGoods(row) ? [...MARKETPLACES] : parseMarkets(row.marketplace);
 }
 
 function publicUser(row) {
@@ -44,6 +53,9 @@ function publicUser(row) {
     username: row.username,
     displayName: row.display_name,
     role: row.role,
+    goodsAdmin: isGoods(row),
+    // 商品部账号可以不挂站点,这里单独留一份「自己负责的站点」给 A 类词库判权限
+    ownMarkets: parseMarkets(row.marketplace),
     markets: visibleMarkets(row),
   };
 }
@@ -86,11 +98,28 @@ export function canRead(user, marketplace) {
 }
 
 /**
- * 能不能改某个站点的词库。
+ * 能不能改某个站点自己维护的那部分词库(A 类无名词)。
  * 国家管理员和运营权限一致 —— 只要是自己负责的站点就能改。
  */
 export function canWrite(user, marketplace) {
-  return canRead(user, marketplace);
+  return user.role === 'owner' || (user.ownMarkets ?? user.markets ?? []).includes(marketplace);
+}
+
+/**
+ * 能不能改某一类词库。
+ * A 类是运营 / 国家管理员按站点维护;B/C/D/E 由商品部统一维护。
+ */
+export function canWriteLib(user, libId, marketplace) {
+  const lib = typeof libId === 'string' ? libOf(libId) : libId;
+  if (!lib) return false;
+  return lib.owner === 'goods' ? !!user.goodsAdmin : canWrite(user, marketplace);
+}
+
+/** 前端画界面用:这个人在这个站点每一类词库能不能改 */
+export function libPerms(user, marketplace) {
+  const out = {};
+  for (const lib of LIBS) out[lib.id] = canWriteLib(user, lib, marketplace);
+  return out;
 }
 
 // ---------- 登录 ----------
@@ -159,11 +188,17 @@ authRouter.post('/change-password', requireLogin, (req, res) => {
 authRouter.get('/users', requireRole('owner'), (req, res) => {
   const users = db
     .prepare(
-      `SELECT id, username, display_name, role, marketplace, is_active, created_at
+      `SELECT id, username, display_name, role, marketplace, goods_admin, is_active, created_at
          FROM users ORDER BY role, marketplace, id`
     )
     .all()
-    .map((u) => ({ ...u, markets: visibleMarkets(u) }));
+    .map((u) => ({
+      ...u,
+      markets: visibleMarkets(u),
+      // 商品部账号 markets 是全部站点,这里单独给一份「实际分配到的站点」供账号管理显示和编辑
+      ownMarkets: parseMarkets(u.marketplace),
+      goodsAdmin: isGoods(u),
+    }));
   res.json({ users });
 });
 
@@ -178,22 +213,29 @@ authRouter.post('/users', requireRole('owner'), (req, res) => {
   if (!['owner', 'admin', 'operator'].includes(role)) {
     return res.status(400).json({ error: '角色不合法' });
   }
+  const goods = role === 'owner' || !!req.body?.goodsAdmin;
   let mk = 'ALL';
   if (role !== 'owner') {
     const list = normMarkets(req.body?.markets ?? req.body?.marketplace);
-    if (!list) return res.status(400).json({ error: '至少选一个站点,且站点必须合法' });
-    mk = list.join(',');
+    // 纯商品部账号可以不挂站点 —— 他们维护的是 B/C/D/E 区域库,不管某一个站点
+    if (!list && !goods) {
+      return res.status(400).json({ error: '至少选一个站点,且站点必须合法' });
+    }
+    mk = (list ?? []).join(',');
   }
 
   try {
     const info = db
       .prepare(
-        `INSERT INTO users (username, display_name, password_hash, role, marketplace)
-         VALUES (?, ?, ?, ?, ?)`
+        `INSERT INTO users (username, display_name, password_hash, role, marketplace, goods_admin)
+         VALUES (?, ?, ?, ?, ?, ?)`
       )
-      .run(username.trim(), displayName.trim(), bcrypt.hashSync(password, 10), role, mk);
+      .run(
+        username.trim(), displayName.trim(), bcrypt.hashSync(password, 10),
+        role, mk, goods ? 1 : 0
+      );
     audit(req.session.user.id, null, 'create', 'user', info.lastInsertRowid, {
-      username, role, markets: mk,
+      username, role, markets: mk, goodsAdmin: goods,
     });
     res.json({ id: info.lastInsertRowid });
   } catch (e) {
@@ -220,17 +262,26 @@ authRouter.patch('/users/:id', requireRole('owner'), (req, res) => {
 
   const nextRole = role ?? row.role;
   const given = req.body?.markets ?? req.body?.marketplace;
+  const nextGoods =
+    nextRole === 'owner'
+      ? 1
+      : req.body?.goodsAdmin === undefined
+        ? row.goods_admin
+        : req.body.goodsAdmin ? 1 : 0;
 
   let nextMk = 'ALL';
   if (nextRole !== 'owner') {
     if (given !== undefined) {
       const list = normMarkets(given);
-      if (!list) return res.status(400).json({ error: '至少选一个站点,且站点必须合法' });
-      nextMk = list.join(',');
+      // 纯商品部账号可以不挂站点
+      if (!list && !nextGoods) {
+        return res.status(400).json({ error: '至少选一个站点,且站点必须合法' });
+      }
+      nextMk = (list ?? []).join(',');
     } else {
       // 从超级管理员降级时库里存的是 ALL,必须同时指定负责哪些站点
       const kept = parseMarkets(row.marketplace);
-      if (!kept.length) {
+      if (!kept.length && !nextGoods) {
         return res.status(400).json({ error: '改成非超级管理员时要同时指定负责的站点' });
       }
       nextMk = kept.join(',');
@@ -238,16 +289,19 @@ authRouter.patch('/users/:id', requireRole('owner'), (req, res) => {
   }
 
   db.prepare(
-    `UPDATE users SET display_name = ?, role = ?, marketplace = ?, is_active = ?
+    `UPDATE users SET display_name = ?, role = ?, marketplace = ?, goods_admin = ?, is_active = ?
       WHERE id = ?`
   ).run(
     displayName ?? row.display_name,
     nextRole,
     nextMk,
+    nextGoods,
     isActive === undefined ? row.is_active : isActive ? 1 : 0,
     id
   );
-  audit(req.session.user.id, null, 'update', 'user', id, { role: nextRole, markets: nextMk });
+  audit(req.session.user.id, null, 'update', 'user', id, {
+    role: nextRole, markets: nextMk, goodsAdmin: !!nextGoods,
+  });
   res.json({ ok: true });
 });
 

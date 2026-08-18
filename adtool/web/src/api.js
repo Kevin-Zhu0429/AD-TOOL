@@ -28,10 +28,14 @@ export const api = {
   audit: () => request('/auth/audit'),
 
   library: (marketplace) => request(`/neg?marketplace=${encodeURIComponent(marketplace)}`),
-  addTerms: (marketplace, cat, text) =>
-    request('/neg/bulk', { method: 'POST', body: { marketplace, cat, text } }),
-  updateTerm: (id, body) => request(`/neg/${id}`, { method: 'PATCH', body }),
-  deleteTerms: (ids) => request('/neg/delete', { method: 'POST', body: { ids } }),
-  setCatConfig: (marketplace, body) =>
+  // 整段文本批量加(单列词库一行一个词,多列词库从 Excel 复制过来,列之间是 Tab)
+  addText: (marketplace, lib, text, replace = false) =>
+    request('/neg/bulk', { method: 'POST', body: { marketplace, lib, text, replace } }),
+  // 结构化批量加,Excel 导入时按列名映射好再发
+  addRows: (marketplace, lib, rows, replace = false) =>
+    request('/neg/rows', { method: 'POST', body: { marketplace, lib, rows, replace } }),
+  updateRow: (id, body) => request(`/neg/${id}`, { method: 'PATCH', body }),
+  deleteRows: (ids) => request('/neg/delete', { method: 'POST', body: { ids } }),
+  setLibConfig: (marketplace, body) =>
     request('/neg/config', { method: 'POST', body: { marketplace, ...body } }),
 };
