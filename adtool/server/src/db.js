@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { dedupeKey, libOf, regionOf } from './libs.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -18,6 +19,59 @@ export const db = new Database(DB_PATH);
 
 const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
 db.exec(schema);
+migrate();
+
+/**
+ * 老库升级 —— 每次启动跑一遍,已经改过的自动跳过。
+ * 1) users 加「商品部维护权」列:B/C/D/E 四类词库归商品部管
+ * 2) 旧的 neg_terms 搬进 lib_items:无关词→A,品牌→B,型号和 ASIN→C
+ */
+function migrate() {
+  const cols = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
+  if (!cols.includes('goods_admin')) {
+    db.exec('ALTER TABLE users ADD COLUMN goods_admin INTEGER NOT NULL DEFAULT 0');
+    console.log('[db] users 加上 goods_admin 列');
+  }
+
+  if (db.pragma('user_version', { simple: true }) >= 1) return;
+
+  const old = db
+    .prepare('SELECT marketplace, cat, term, note, created_by, created_at FROM neg_terms')
+    .all();
+
+  if (old.length) {
+    // 旧库是按站点存的,B/C 现在按区域存,同区多个站点的词合并成一份
+    const ins = db.prepare(
+      `INSERT OR IGNORE INTO lib_items (lib, scope, term, asin, note, dedupe, created_by, created_at)
+       VALUES (@lib, @scope, @term, @asin, @note, @dedupe, @created_by, @created_at)`
+    );
+    let moved = 0;
+    db.transaction(() => {
+      for (const r of old) {
+        const region = regionOf(r.marketplace)?.id ?? null;
+        const map = {
+          irrel: { lib: 'A', scope: r.marketplace, term: r.term, asin: null },
+          brand: { lib: 'B', scope: region, term: r.term, asin: null },
+          model: { lib: 'C', scope: region, term: r.term, asin: null },
+          asin: { lib: 'C', scope: region, term: null, asin: r.term },
+        }[r.cat];
+        if (!map || !map.scope) continue;
+        moved += ins.run({
+          ...map,
+          dedupe: dedupeKey(libOf(map.lib), map),
+          note: r.note,
+          created_by: r.created_by,
+          created_at: r.created_at,
+        }).changes;
+      }
+    })();
+    console.log(`[db] 旧词库搬进 lib_items:${moved} 条`);
+  }
+
+  // 老的分类设置用的是 model/brand/irrel/asin,新界面按 A–E 重新生成,直接丢掉
+  db.exec("DELETE FROM neg_cat_config WHERE cat NOT IN ('A','B','C','D','E')");
+  db.pragma('user_version = 1');
+}
 
 /** 写一条操作留痕 */
 export function audit(userId, marketplace, action, entity, entityId, detail) {

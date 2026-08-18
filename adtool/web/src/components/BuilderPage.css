@@ -179,8 +179,17 @@
 .switchrow input { margin-top: 2px; }
 .switchrow-main { display: flex; flex-direction: column; gap: 2px; font-size: 12.5px; }
 
-.libpeek { max-height: 210px; }
-.libpeek .tbl td { padding: 5px 10px; }
+/* 系列广告:墨盒型号选择 + 联动否定预览 */
+.serieskit {
+  margin-top: 11px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  padding: 10px;
+  background: var(--panel-2);
+}
+.modelbox { max-height: 168px; }
+.seriesout { margin-top: 10px; }
+.seriesout .minigrid { margin-bottom: 0; }
 
 /* ---------- 否定 ---------- */
 .negsec {

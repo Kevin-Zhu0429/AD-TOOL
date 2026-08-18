@@ -71,3 +71,28 @@ CREATE INDEX IF NOT EXISTS idx_audit_time ON audit_log (created_at DESC);
 -- 注意:sessions 表故意不在这里建。
 -- better-sqlite3-session-store 会自己建,列顺序必须由它决定,
 -- 手动建会导致 session 内容和过期时间存反,表现为「登录成功但下一个请求就说未登录」。
+
+-- ---------- 五类词库(A/B/C/D/E) ----------
+-- lib   : A 无名词 / B 非售品牌 / C 非售流量干扰墨盒 / D 在售墨盒型号和相关打印机 / E 原装竞品ASIN
+-- scope : 站点库存站点码(ES、US…),区域库存区域码(EU、NA、AU)
+--         区域库只存一份 —— 欧洲传德国、美洲传美国,同区其他站点自动跟着变
+-- 各列具体含义看 libs.js 里的 LIBS 定义,不同 lib 用到的列不一样
+CREATE TABLE IF NOT EXISTS lib_items (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  lib         TEXT    NOT NULL,
+  scope       TEXT    NOT NULL,
+  term        TEXT,
+  brand       TEXT,
+  series      TEXT,
+  printer     TEXT,
+  asin        TEXT,
+  note        TEXT,
+  dedupe      TEXT    NOT NULL,
+  created_by  INTEGER REFERENCES users(id),
+  created_at  TEXT    NOT NULL DEFAULT (datetime('now', 'localtime')),
+  updated_at  TEXT    NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+
+-- 同一个 scope 同一类词库里,判重列一样的只留一条
+CREATE UNIQUE INDEX IF NOT EXISTS idx_lib_unique ON lib_items (lib, scope, dedupe);
+CREATE INDEX IF NOT EXISTS idx_lib_scope ON lib_items (lib, scope);

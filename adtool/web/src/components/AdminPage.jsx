@@ -34,7 +34,8 @@ export default function AdminPage({ user, markets }) {
   const [msg, setMsg] = useState(null);
   const [tab, setTab] = useState('users');
   const [form, setForm] = useState({
-    username: '', displayName: '', password: '', role: 'operator', markets: [markets[0] ?? 'ES'],
+    username: '', displayName: '', password: '', role: 'operator',
+    markets: [markets[0] ?? 'ES'], goodsAdmin: false,
   });
   // 正在改站点的那一行:{id, markets}
   const [mkEdit, setMkEdit] = useState(null);
@@ -65,7 +66,7 @@ export default function AdminPage({ user, markets }) {
     if (!form.username.trim() || !form.displayName.trim() || form.password.length < 6) {
       return setMsg({ kind: 'err', text: '用户名、姓名要填,密码至少 6 位' });
     }
-    if (form.role !== 'owner' && !form.markets.length) {
+    if (form.role !== 'owner' && !form.markets.length && !form.goodsAdmin) {
       return setMsg({ kind: 'err', text: '至少选一个负责站点' });
     }
     act(
@@ -74,7 +75,7 @@ export default function AdminPage({ user, markets }) {
     ).then(() =>
       setForm({
         username: '', displayName: '', password: '', role: 'operator',
-        markets: [markets[0] ?? 'ES'],
+        markets: [markets[0] ?? 'ES'], goodsAdmin: false,
       })
     );
   }
@@ -134,13 +135,26 @@ export default function AdminPage({ user, markets }) {
                 {ROLES.find((r) => r.id === form.role)?.desc}
               </p>
               {form.role !== 'owner' && (
-                <div className="field">
-                  <span>负责站点(可多选)</span>
-                  <MarketChips
-                    markets={markets} value={form.markets}
-                    onChange={(v) => setForm({ ...form, markets: v })}
-                  />
-                </div>
+                <>
+                  <label className="row">
+                    <input
+                      type="checkbox" checked={form.goodsAdmin}
+                      onChange={(e) => setForm({ ...form, goodsAdmin: e.target.checked })}
+                    />
+                    <span style={{ fontSize: 12.5 }}>商品部维护权(B/C/D/E 四类词库)</span>
+                  </label>
+                  <p className="hint" style={{ marginTop: -4 }}>
+                    勾上以后可以改所有区域的非售品牌、干扰墨盒、在售墨盒和竞品 ASIN,
+                    并且能看到全部站点;纯商品部账号可以不选负责站点。
+                  </p>
+                  <div className="field">
+                    <span>负责站点(可多选,决定 A 类无名词改哪个站)</span>
+                    <MarketChips
+                      markets={markets} value={form.markets}
+                      onChange={(v) => setForm({ ...form, markets: v })}
+                    />
+                  </div>
+                </>
               )}
               <button className="btn primary" onClick={create}>创建账号</button>
             </div>
@@ -151,7 +165,7 @@ export default function AdminPage({ user, markets }) {
               <table className="tbl">
                 <thead>
                   <tr>
-                    <th>姓名</th><th>用户名</th><th>角色</th><th>站点</th><th>状态</th><th></th>
+                    <th>姓名</th><th>用户名</th><th>角色</th><th>商品部</th><th>站点</th><th>状态</th><th></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -172,6 +186,25 @@ export default function AdminPage({ user, markets }) {
                       </td>
                       <td>
                         {u.role === 'owner' ? (
+                          <span className="tag blue">天然有</span>
+                        ) : (
+                          <label className="row" title="B/C/D/E 四类词库的维护权">
+                            <input
+                              type="checkbox" checked={!!u.goodsAdmin}
+                              onChange={(e) =>
+                                act(
+                                  () => api.updateUser(u.id, { goodsAdmin: e.target.checked }),
+                                  e.target.checked
+                                    ? `${u.display_name} 现在能维护 B/C/D/E 词库`
+                                    : `${u.display_name} 的商品部维护权已取消`
+                                )
+                              }
+                            />
+                          </label>
+                        )}
+                      </td>
+                      <td>
+                        {u.role === 'owner' ? (
                           <span className="tag blue">全部</span>
                         ) : mkEdit?.id === u.id ? (
                           <div className="mkedit">
@@ -182,7 +215,7 @@ export default function AdminPage({ user, markets }) {
                             <div className="row" style={{ gap: 5 }}>
                               <button
                                 className="btn sm primary"
-                                disabled={!mkEdit.markets.length}
+                                disabled={!mkEdit.markets.length && !u.goodsAdmin}
                                 onClick={() => {
                                   const next = mkEdit.markets;
                                   setMkEdit(null);
@@ -199,11 +232,11 @@ export default function AdminPage({ user, markets }) {
                           <button
                             className="mkcell"
                             title="点一下改负责站点"
-                            onClick={() => setMkEdit({ id: u.id, markets: u.markets ?? [] })}
+                            onClick={() => setMkEdit({ id: u.id, markets: u.ownMarkets ?? [] })}
                           >
-                            {(u.markets ?? []).length
-                              ? u.markets.map((m) => <span key={m} className="tag gray">{m}</span>)
-                              : <span className="tag amber">未分配</span>}
+                            {(u.ownMarkets ?? []).length
+                              ? u.ownMarkets.map((m) => <span key={m} className="tag gray">{m}</span>)
+                              : <span className="tag amber">{u.goodsAdmin ? '全部(商品部)' : '未分配'}</span>}
                           </button>
                         )}
                       </td>
