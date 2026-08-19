@@ -139,9 +139,9 @@ export default function SkuPage({ market }) {
   function downloadTemplate() {
     const rows = [
       cols.map((c) => c.label),
-      ['ES', 'HP', '301', '1黑1彩', 'CY-ES-HP301XL-BKCL', 120, 300],
-      ['ES', 'HP', '302', '2黑', 'CY-ES-HP302XL-2BK', 0, 500],
-      ['DE', 'Canon', 'PG-545', '1黑', 'CY-DE-CA545XL-BK', 80, ''],
+      ['ES', 'HP', '301', 'BKC', 'CY-ES-HP301XL-BKCL', 120, 300],
+      ['ES', 'HP', '302', '2BK', 'CY-ES-HP302XL-2BK', 0, 500],
+      ['DE', 'Canon', 'PG-545', 'BK', 'CY-DE-CA545XL-BK', 80, ''],
     ];
     const ws = XLSX.utils.aoa_to_sheet(rows);
     ws['!cols'] = cols.map((c) => ({ wch: c.width ?? 14 }));
@@ -258,7 +258,7 @@ export default function SkuPage({ market }) {
             <div className="card-title">批量添加</div>
             <textarea
               className="inp" rows={8} value={draft}
-              placeholder={`从 Excel 直接复制粘贴,一行一个 SKU\n列的顺序:${cols.map((c) => c.label).join(' → ')}\n\nES\tHP\t301\t1黑1彩\tCY-ES-HP301XL-BKCL\t120\t300`}
+              placeholder={`从 Excel 直接复制粘贴,一行一个 SKU\n列的顺序:${cols.map((c) => c.label).join(' → ')}\n\nES\tHP\t301\tBKC\tCY-ES-HP301XL-BKCL\t120\t300`}
               onChange={(e) => setDraft(e.target.value)}
             />
             <label className="row" style={{ marginTop: 9 }}>
@@ -273,8 +273,7 @@ export default function SkuPage({ market }) {
               </button>
             </div>
             <p className="hint" style={{ marginTop: 8 }}>
-              列之间用 Tab 分隔(Excel 复制出来就是),也认 <span className="mono">~</span> 和{' '}
-              <span className="mono">|</span>;SKU 和型号自带 <span className="mono">-</span>,所以不拿它当分隔符。
+              列之间用 Tab 分隔;
               同一个国家里同一个 SKU 再传一次是更新库存,不会重复。
             </p>
           </div>

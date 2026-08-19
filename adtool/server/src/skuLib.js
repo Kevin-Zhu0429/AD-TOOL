@@ -12,12 +12,12 @@
 import { MARKETPLACES } from './libs.js';
 
 export const SKU_COLS = [
-  { key: 'country', label: '国家', required: true, width: 8, hint: '站点码,ES / DE / US…,写「西班牙」也认' },
+  { key: 'country', label: '国家', required: true, width: 8, hint: '站点码,ES / DE / US…,写「西班牙」也行' },
   { key: 'brand', label: '品牌', width: 14, hint: '自己负责的品牌,挑 SKU 时可以按它筛' },
   { key: 'model', label: '型号', width: 14, hint: '填 301 即可,查的时候 301 和 301XL 归到一起' },
-  { key: 'setGroup', label: '套组', width: 14, hint: '如 1黑 / 1黑1彩 / 2黑2彩,方便挑要投的那几个' },
+  { key: 'setGroup', label: '套组', width: 14, hint: '如 BK/2BK/BKC/C,方便挑要投的那几个' },
   { key: 'sku', label: 'SKU', required: true, width: 28, hint: '后台实际 SKU,一行一个' },
-  { key: 'stock', label: '在库库存', num: true, width: 10, hint: '选填,挑 SKU 时会显示,缺货一眼看得出' },
+  { key: 'stock', label: '在库库存', num: true, width: 10, hint: '选填,挑 SKU 时会显示' },
   { key: 'transit', label: '在途库存', num: true, width: 10, hint: '选填,在途 / 补货中数量' },
 ];
 
