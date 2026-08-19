@@ -81,6 +81,14 @@ export default function HomePage({ user, market, onNav, theme }) {
             onClick={() => onNav('manual')}
           />
         )}
+        {user.adOpt && (
+          <EntryCard
+            tone="blue" icon="chart" title="广告优化"
+            desc="把后台下载的批量表拖进来,逐条活动看广告位 / SKU / 投放 / 搜索词的表现,改竞价、调溢价、批量否定,最后导出能直接回传的批量表。多载入几期数据还能按时间段合并着看。"
+            meta="试用中 · 数据只在本机浏览器里解析"
+            onClick={() => onNav('optimizer')}
+          />
+        )}
         <EntryCard
           tone="green" icon="book" title={`${market} 站否定词库`}
           desc="A 无名词 · B 非售品牌 · C 非售流量干扰墨盒 · D 在售墨盒和打印机 · E 原装竞品 ASIN。改动立即生效。"

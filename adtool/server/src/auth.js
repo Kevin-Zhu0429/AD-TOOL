@@ -44,6 +44,11 @@ export function canManualAds(row) {
   return row.role === 'owner' || !!(row.manual_ads ?? row.manualAds);
 }
 
+/** 广告优化工作台的使用权:同样在试用期,超级管理员天然有,其他人由超管逐个开 */
+export function canAdOpt(row) {
+  return row.role === 'owner' || !!(row.ad_opt ?? row.adOpt);
+}
+
 /**
  * 该用户在界面上能选哪些站点。
  * 超级管理员和商品部要跨站点看词库,给全部;其他人只给分配到的站点。
@@ -60,6 +65,7 @@ function publicUser(row) {
     role: row.role,
     goodsAdmin: isGoods(row),
     manualAds: canManualAds(row),
+    adOpt: canAdOpt(row),
     // 商品部账号可以不挂站点,这里单独留一份「自己负责的站点」给 A 类词库判权限
     ownMarkets: parseMarkets(row.marketplace),
     markets: visibleMarkets(row),
@@ -207,7 +213,7 @@ authRouter.get('/users', requireRole('owner'), (req, res) => {
   const users = db
     .prepare(
       `SELECT id, username, display_name, role, marketplace, goods_admin, manual_ads,
-              is_active, created_at
+              ad_opt, is_active, created_at
          FROM users ORDER BY role, marketplace, id`
     )
     .all()
@@ -218,6 +224,7 @@ authRouter.get('/users', requireRole('owner'), (req, res) => {
       ownMarkets: parseMarkets(u.marketplace),
       goodsAdmin: isGoods(u),
       manualAds: canManualAds(u),
+      adOpt: canAdOpt(u),
     }));
   res.json({ users });
 });
@@ -235,6 +242,7 @@ authRouter.post('/users', requireRole('owner'), (req, res) => {
   }
   const goods = role === 'owner' || !!req.body?.goodsAdmin;
   const manual = role === 'owner' || !!req.body?.manualAds;
+  const adOpt = role === 'owner' || !!req.body?.adOpt;
   let mk = 'ALL';
   if (role !== 'owner') {
     const list = normMarkets(req.body?.markets ?? req.body?.marketplace);
@@ -249,15 +257,15 @@ authRouter.post('/users', requireRole('owner'), (req, res) => {
     const info = db
       .prepare(
         `INSERT INTO users
-           (username, display_name, password_hash, role, marketplace, goods_admin, manual_ads)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
+           (username, display_name, password_hash, role, marketplace, goods_admin, manual_ads, ad_opt)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         username.trim(), displayName.trim(), bcrypt.hashSync(password, 10),
-        role, mk, goods ? 1 : 0, manual ? 1 : 0
+        role, mk, goods ? 1 : 0, manual ? 1 : 0, adOpt ? 1 : 0
       );
     audit(req.session.user.id, null, 'create', 'user', info.lastInsertRowid, {
-      username, role, markets: mk, goodsAdmin: goods, manualAds: manual,
+      username, role, markets: mk, goodsAdmin: goods, manualAds: manual, adOpt,
     });
     res.json({ id: info.lastInsertRowid });
   } catch (e) {
@@ -296,6 +304,12 @@ authRouter.patch('/users/:id', requireRole('owner'), (req, res) => {
       : req.body?.manualAds === undefined
         ? row.manual_ads
         : req.body.manualAds ? 1 : 0;
+  const nextAdOpt =
+    nextRole === 'owner'
+      ? 1
+      : req.body?.adOpt === undefined
+        ? row.ad_opt
+        : req.body.adOpt ? 1 : 0;
 
   let nextMk = 'ALL';
   if (nextRole !== 'owner') {
@@ -318,7 +332,7 @@ authRouter.patch('/users/:id', requireRole('owner'), (req, res) => {
 
   db.prepare(
     `UPDATE users SET display_name = ?, role = ?, marketplace = ?, goods_admin = ?,
-                      manual_ads = ?, is_active = ?
+                      manual_ads = ?, ad_opt = ?, is_active = ?
       WHERE id = ?`
   ).run(
     displayName ?? row.display_name,
@@ -326,11 +340,13 @@ authRouter.patch('/users/:id', requireRole('owner'), (req, res) => {
     nextMk,
     nextGoods,
     nextManual,
+    nextAdOpt,
     isActive === undefined ? row.is_active : isActive ? 1 : 0,
     id
   );
   audit(req.session.user.id, null, 'update', 'user', id, {
-    role: nextRole, markets: nextMk, goodsAdmin: !!nextGoods, manualAds: !!nextManual,
+    role: nextRole, markets: nextMk, goodsAdmin: !!nextGoods,
+    manualAds: !!nextManual, adOpt: !!nextAdOpt,
   });
   res.json({ ok: true });
 });

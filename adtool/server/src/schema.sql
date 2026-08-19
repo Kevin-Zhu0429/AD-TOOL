@@ -11,6 +11,7 @@ PRAGMA foreign_keys = ON;
 -- marketplace: 该用户负责的站点,逗号分隔可以填多个,例如 'ES,FR'。owner 填 ALL
 -- goods_admin: 商品部维护权,B/C/D/E 四类词库归他们管
 -- manual_ads : 手动广告页的使用权。这一页还在试用期,默认谁都没有,由超级管理员逐个开
+-- ad_opt     : 广告优化工作台的使用权。同样在试用期,默认全关,由超级管理员逐个开
 CREATE TABLE IF NOT EXISTS users (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   username      TEXT    NOT NULL UNIQUE,
@@ -21,6 +22,7 @@ CREATE TABLE IF NOT EXISTS users (
   marketplace   TEXT    NOT NULL DEFAULT 'ES',
   goods_admin   INTEGER NOT NULL DEFAULT 0,
   manual_ads    INTEGER NOT NULL DEFAULT 0,
+  ad_opt        INTEGER NOT NULL DEFAULT 0,
   is_active     INTEGER NOT NULL DEFAULT 1,
   created_at    TEXT    NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
