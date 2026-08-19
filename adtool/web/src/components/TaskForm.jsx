@@ -162,9 +162,12 @@ export default function TaskForm({ task, plan, index, libCount, lib, market, onC
           ) : (
             <>
               <label className="field">
-                <span>溢价组合(一行 = 一条活动)</span>
+                <span>
+                  溢价组合(一行 = 一条活动){' '}
+                  <span className="c-faint">(留空 = 不加溢价)</span>
+                </span>
                 <textarea
-                  className="inp" rows={6} placeholder={'TOS:100 ROS:50\nTOS:200 ROS:100'}
+                  className="inp" rows={6} placeholder={'留空 = 不加溢价,直接开\nTOS:100 ROS:50\nTOS:200 ROS:100'}
                   value={task.combos} onChange={(e) => set({ combos: e.target.value })}
                 />
               </label>
@@ -177,11 +180,23 @@ export default function TaskForm({ task, plan, index, libCount, lib, market, onC
                   className="btn sm"
                   onClick={() => set({ combos: tiersOf(task.tiers).map((v) => `TOS:${v} ROS:${Math.round(v / 2)}`).join('\n') })}
                 >档位→ROS减半</button>
+                <button
+                  className="btn sm"
+                  onClick={() => {
+                    const lines = task.combos.split('\n').map((x) => x.trim()).filter(Boolean);
+                    if (lines.some((x) => /^(0+%?|无|不加溢价|无溢价|不溢价|none|no)$/i.test(x))) return;
+                    set({ combos: [...lines, '不加溢价'].join('\n') });
+                  }}
+                >加一条不加溢价</button>
                 <button className="btn sm" onClick={() => set({ combos: '' })}>清空</button>
               </div>
               <p className="hint" style={{ marginTop: 8 }}>
                 <span className="mono">TOS:100 ROS:50</span>、<span className="mono">TOS=100,ROS=50</span> 都认;
                 没写到的广告位按 0 处理,也不进命名。
+              </p>
+              <p className="hint" style={{ marginTop: 4 }}>
+                整段留空就是不加溢价照样能开:三行竞价调整全写 0,出价 = CPC 基数,命名里也不带位置和溢价。
+                想和别的组合混着开,就单独写一行 <span className="mono">不加溢价</span>(写 <span className="mono">0</span>、<span className="mono">无</span> 也认)。
               </p>
             </>
           )}
