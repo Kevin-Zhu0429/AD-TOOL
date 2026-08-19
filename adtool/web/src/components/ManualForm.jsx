@@ -205,8 +205,8 @@ export default function ManualForm({ task, plan, libCount, lib, onChange }) {
 
           {task.mode === 'kw' && (
             <p className="hint" style={{ marginTop: 10 }}>
-              精准写成 <span className="mono">&quot;词&quot;</span>、词组写成{' '}
-              <span className="mono">[词]</span>、广泛不加标记,粘进来时自带的引号或方括号会先去掉再统一加。
+              精准写成 <span className="mono">[词]</span>、词组写成{' '}
+              <span className="mono">&quot;词&quot;</span>、广泛不加标记,粘进来时自带的引号或方括号会先去掉再统一加。
               示例:<span className="mono">{formatKeyword('hp 301 ink', '精准')}</span>
             </p>
           )}

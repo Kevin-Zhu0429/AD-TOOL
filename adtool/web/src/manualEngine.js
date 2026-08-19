@@ -24,8 +24,8 @@ export const MANUAL_STRATEGIES = [
 
 /* 匹配类型: id 就是写进「匹配类型」列的值 */
 export const MATCH_TYPES = [
-  { id: '精准', label: '精准', hint: '写成 "关键词"' },
-  { id: '词组', label: '词组', hint: '写成 [关键词]' },
+  { id: '精准', label: '精准', hint: '写成 [关键词]' },
+  { id: '词组', label: '词组', hint: '写成 "关键词"' },
   { id: '广泛', label: '广泛', hint: '不加任何标记' },
 ];
 
@@ -79,8 +79,8 @@ export function parseKeywordLines(text) {
 /** 按匹配类型给关键词文本加标记 */
 export function formatKeyword(word, matchType) {
   const w = stripMatchSyntax(word);
-  if (matchType === '精准') return `"${w}"`;
-  if (matchType === '词组') return `[${w}]`;
+  if (matchType === '精准') return `[${w}]`;
+  if (matchType === '词组') return `"${w}"`;
   return w;
 }
 
@@ -456,8 +456,8 @@ function selfCheck(out, placed) {
         const s = String(txt ?? '');
         const quoted = s.length >= 2 && s.startsWith('"') && s.endsWith('"');
         const bracketed = s.length >= 2 && s.startsWith('[') && s.endsWith(']');
-        if (mt === '精准' && !quoted) bad.push(`${camp}: 第${r + 1}行 精准关键词未用英文双引号包裹`);
-        if (mt === '词组' && !bracketed) bad.push(`${camp}: 第${r + 1}行 词组关键词未用方括号包裹`);
+        if (mt === '精准' && !bracketed) bad.push(`${camp}: 第${r + 1}行 精准关键词未用方括号包裹`);
+        if (mt === '词组' && !quoted) bad.push(`${camp}: 第${r + 1}行 词组关键词未用英文双引号包裹`);
         if (mt === '广泛' && (quoted || bracketed)) {
           bad.push(`${camp}: 第${r + 1}行 广泛关键词不应带精准/词组标记`);
         }
