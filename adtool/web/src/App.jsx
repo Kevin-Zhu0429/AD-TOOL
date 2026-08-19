@@ -48,7 +48,7 @@ export default function App() {
   const body =
     page === 'builder' ? (
       <BuilderPage key={market} market={market} />
-    ) : page === 'manual' ? (
+    ) : page === 'manual' && user.manualAds ? (
       <ManualPage key={market} market={market} />
     ) : page === 'library' ? (
       <LibraryPage key={market} market={market} />
