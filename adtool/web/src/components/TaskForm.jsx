@@ -1,16 +1,20 @@
+import { useState } from 'react';
 import {
   AUTO_TYPES, STRATEGIES, PLACEMENTS, AUTO_ZH, parseLines,
 } from '../adEngine.js';
 import { Chips, Sec } from './FormBits.jsx';
 import { LibraryNegatives, ExtraNegatives } from './NegPanels.jsx';
+import SkuPicker from './SkuPicker.jsx';
 
 /* 一个任务 = 一整页表单,所有区块同时可见,不再分标签页 */
 
 const tiersOf = (text) =>
   String(text ?? '').split(',').map((x) => parseInt(x.trim(), 10)).filter((n) => !isNaN(n));
 
-export default function TaskForm({ task, plan, index, libCount, lib, onChange }) {
+export default function TaskForm({ task, plan, index, libCount, lib, market, onChange }) {
   const set = (patch) => onChange(patch);
+  const [pick, setPick] = useState(false);
+  const [pickNote, setPickNote] = useState('');
 
   const skuCount = parseLines(task.skus).length;
   const negCount = plan?.negs?.length ?? 0;
@@ -40,10 +44,21 @@ export default function TaskForm({ task, plan, index, libCount, lib, onChange })
             value={task.skus}
             onChange={(e) => set({ skus: e.target.value })}
           />
-          <div className="row" style={{ marginTop: 9 }}>
-            <p className="hint" style={{ flex: 1 }}>自动去重、去空行、压缩多余空格。</p>
-            <button className="btn sm" onClick={() => set({ skus: '' })}>清空</button>
+          <div className="row wrap" style={{ marginTop: 9 }}>
+            <button className="btn sm" onClick={() => setPick(true)}>从 SKU 库选</button>
+            <button className="btn sm" onClick={() => { set({ skus: '' }); setPickNote(''); }}>清空</button>
+            <div className="spacer" />
+            <p className="hint">自动去重、去空行、压缩多余空格。</p>
           </div>
+          {pickNote && <p className="hint c-ok" style={{ marginTop: 6 }}>{pickNote}</p>}
+          {pick && (
+            <SkuPicker
+              market={market}
+              current={task.skus}
+              onApply={(text, note) => { set({ skus: text }); setPickNote(note); }}
+              onClose={() => setPick(false)}
+            />
+          )}
         </Sec>
 
         <Sec

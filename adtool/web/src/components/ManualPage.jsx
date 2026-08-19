@@ -242,6 +242,7 @@ export default function ManualPage({ market }) {
           plan={activePlan}
           libCount={libCount}
           lib={libData}
+          market={market}
           onChange={(patch) => updateTask(active.id, patch)}
         />
       )}

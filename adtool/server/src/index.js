@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { db } from './db.js';
 import { authRouter } from './auth.js';
 import { negRouter } from './keywords.js';
+import { skuRouter } from './skus.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -34,6 +35,7 @@ app.use(
 
 app.use('/api/auth', authRouter);
 app.use('/api/neg', negRouter);
+app.use('/api/sku', skuRouter);
 
 app.get('/api/health', (req, res) => {
   res.json({ ok: true, time: new Date().toISOString() });

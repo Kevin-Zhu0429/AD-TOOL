@@ -38,4 +38,18 @@ export const api = {
   deleteRows: (ids) => request('/neg/delete', { method: 'POST', body: { ids } }),
   setLibConfig: (marketplace, body) =>
     request('/neg/config', { method: 'POST', body: { marketplace, ...body } }),
+
+  // ---------- SKU 库(每个账号各存各的) ----------
+  skus: ({ marketplace, scope } = {}) => {
+    const q = new URLSearchParams();
+    if (marketplace) q.set('marketplace', marketplace);
+    if (scope) q.set('scope', scope);
+    return request(`/sku${q.toString() ? `?${q}` : ''}`);
+  },
+  addSkuText: (text, replace = false) =>
+    request('/sku/bulk', { method: 'POST', body: { text, replace } }),
+  addSkuRows: (rows, replace = false) =>
+    request('/sku/rows', { method: 'POST', body: { rows, replace } }),
+  updateSku: (id, body) => request(`/sku/${id}`, { method: 'PATCH', body }),
+  deleteSkus: (ids) => request('/sku/delete', { method: 'POST', body: { ids } }),
 };

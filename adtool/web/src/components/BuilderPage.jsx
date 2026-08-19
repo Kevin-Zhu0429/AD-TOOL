@@ -251,6 +251,7 @@ export default function BuilderPage({ market }) {
           index={tasks.findIndex((t) => t.id === active.id)}
           libCount={libCount}
           lib={libData}
+          market={market}
           onChange={(patch) => updateTask(active.id, patch)}
         />
       )}

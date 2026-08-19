@@ -1,9 +1,11 @@
+import { useState } from 'react';
 import { PLACEMENTS, parseLines } from '../adEngine.js';
 import {
   MANUAL_STRATEGIES, MATCH_TYPES, TARGET_TYPES, parseKeywordLines, formatKeyword,
 } from '../manualEngine.js';
 import { Sec } from './FormBits.jsx';
 import { LibraryNegatives, ExtraNegatives } from './NegPanels.jsx';
+import SkuPicker from './SkuPicker.jsx';
 
 /* 一条手动广告活动 = 一整页表单,和自动广告页一样所有区块同时可见 */
 
@@ -32,8 +34,10 @@ function Unit({ on, label, hint, bid, text, count, placeholder, onChange }) {
   );
 }
 
-export default function ManualForm({ task, plan, libCount, lib, onChange }) {
+export default function ManualForm({ task, plan, libCount, lib, market, onChange }) {
   const set = (patch) => onChange(patch);
+  const [pick, setPick] = useState(false);
+  const [pickNote, setPickNote] = useState('');
   const setUnit = (bucket, key, patch) =>
     onChange({ [bucket]: { ...task[bucket], [key]: { ...task[bucket][key], ...patch } } });
 
@@ -127,10 +131,21 @@ export default function ManualForm({ task, plan, libCount, lib, onChange }) {
             className="inp" rows={10} placeholder="这条活动要投的 SKU"
             value={task.skus} onChange={(e) => set({ skus: e.target.value })}
           />
-          <div className="row" style={{ marginTop: 9 }}>
-            <p className="hint" style={{ flex: 1 }}>自动去重、去空行、压缩多余空格。</p>
-            <button className="btn sm" onClick={() => set({ skus: '' })}>清空</button>
+          <div className="row wrap" style={{ marginTop: 9 }}>
+            <button className="btn sm" onClick={() => setPick(true)}>从 SKU 库选</button>
+            <button className="btn sm" onClick={() => { set({ skus: '' }); setPickNote(''); }}>清空</button>
+            <div className="spacer" />
+            <p className="hint">自动去重、去空行、压缩多余空格。</p>
           </div>
+          {pickNote && <p className="hint c-ok" style={{ marginTop: 6 }}>{pickNote}</p>}
+          {pick && (
+            <SkuPicker
+              market={market}
+              current={task.skus}
+              onApply={(text, note) => { set({ skus: text }); setPickNote(note); }}
+              onClose={() => setPick(false)}
+            />
+          )}
         </Sec>
       </div>
 

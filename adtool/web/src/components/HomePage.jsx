@@ -87,6 +87,12 @@ export default function HomePage({ user, market, onNav, theme }) {
           meta={user.goodsAdmin ? 'A–E 都可编辑' : 'A 类可编辑,B–E 只读'}
           onClick={() => onNav('library')}
         />
+        <EntryCard
+          tone="amber" icon="file" title="我的 SKU 库"
+          desc="按国家 / 品牌 / 型号 / 套组存自己负责的 SKU 和库存。每个账号一份自己的,开广告时在「投放 SKU」那里一键挑进去。"
+          meta="模板导入 · 只有自己看得到"
+          onClick={() => onNav('skus')}
+        />
         {user.role === 'owner' && (
           <EntryCard
             tone="violet" icon="users" title="账号管理"
