@@ -3,9 +3,9 @@ import { api } from '../api.js';
 import './AdminPage.css';
 
 const ROLES = [
-  { id: 'operator', label: '运营', desc: '负责站点的词库可编辑 · 可开广告' },
-  { id: 'admin', label: '国家管理员', desc: '负责站点的词库可编辑 · 可开广告' },
-  { id: 'owner', label: '超级管理员', desc: '所有站点 + 账号管理' },
+  { id: 'operator', label: '运营', desc: '负责站点的词库可编辑 · 可开自动广告' },
+  { id: 'admin', label: '国家管理员', desc: '负责站点的词库可编辑 · 可开自动广告' },
+  { id: 'owner', label: '超级管理员', desc: '所有站点 + 账号管理 + 手动广告' },
 ];
 
 /** 站点多选:创建表单和账号列表共用 */
@@ -35,7 +35,7 @@ export default function AdminPage({ user, markets }) {
   const [tab, setTab] = useState('users');
   const [form, setForm] = useState({
     username: '', displayName: '', password: '', role: 'operator',
-    markets: [markets[0] ?? 'ES'], goodsAdmin: false,
+    markets: [markets[0] ?? 'ES'], goodsAdmin: false, manualAds: false,
   });
   // 正在改站点的那一行:{id, markets}
   const [mkEdit, setMkEdit] = useState(null);
@@ -75,7 +75,7 @@ export default function AdminPage({ user, markets }) {
     ).then(() =>
       setForm({
         username: '', displayName: '', password: '', role: 'operator',
-        markets: [markets[0] ?? 'ES'], goodsAdmin: false,
+        markets: [markets[0] ?? 'ES'], goodsAdmin: false, manualAds: false,
       })
     );
   }
@@ -90,7 +90,10 @@ export default function AdminPage({ user, markets }) {
     <div className="admin">
       <div className="admin-head">
         <h1>账号管理</h1>
-        <p className="hint">只有超级管理员能看到这一页。</p>
+        <p className="hint">
+          只有超级管理员能看到这一页。手动广告还在试用,勾了「手动广告」的人才看得到那一页,
+          其他人只有自动广告。
+        </p>
       </div>
 
       <div className="lib-tabs">
@@ -147,6 +150,16 @@ export default function AdminPage({ user, markets }) {
                     勾上以后可以改所有区域的非售品牌、干扰墨盒、在售墨盒和竞品 ASIN,
                     并且能看到全部站点;纯商品部账号可以不选负责站点。
                   </p>
+                  <label className="row">
+                    <input
+                      type="checkbox" checked={form.manualAds}
+                      onChange={(e) => setForm({ ...form, manualAds: e.target.checked })}
+                    />
+                    <span style={{ fontSize: 12.5 }}>手动广告使用权(试用中)</span>
+                  </label>
+                  <p className="hint" style={{ marginTop: -4 }}>
+                    不勾的人看不到「手动广告」这一页,只能用自动广告。
+                  </p>
                   <div className="field">
                     <span>负责站点(可多选,决定 A 类无名词改哪个站)</span>
                     <MarketChips
@@ -165,7 +178,8 @@ export default function AdminPage({ user, markets }) {
               <table className="tbl">
                 <thead>
                   <tr>
-                    <th>姓名</th><th>用户名</th><th>角色</th><th>商品部</th><th>站点</th><th>状态</th><th></th>
+                    <th>姓名</th><th>用户名</th><th>角色</th><th>商品部</th><th>手动广告</th>
+                    <th>站点</th><th>状态</th><th></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -197,6 +211,25 @@ export default function AdminPage({ user, markets }) {
                                   e.target.checked
                                     ? `${u.display_name} 现在能维护 B/C/D/E 词库`
                                     : `${u.display_name} 的商品部维护权已取消`
+                                )
+                              }
+                            />
+                          </label>
+                        )}
+                      </td>
+                      <td>
+                        {u.role === 'owner' ? (
+                          <span className="tag blue">天然有</span>
+                        ) : (
+                          <label className="row" title="能不能看到「手动广告」这一页">
+                            <input
+                              type="checkbox" checked={!!u.manualAds}
+                              onChange={(e) =>
+                                act(
+                                  () => api.updateUser(u.id, { manualAds: e.target.checked }),
+                                  e.target.checked
+                                    ? `${u.display_name} 现在能用手动广告`
+                                    : `${u.display_name} 的手动广告权限已收回`
                                 )
                               }
                             />

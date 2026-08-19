@@ -1,0 +1,31 @@
+/* 手动广告页:布局沿用 BuilderPage.css,这里只加投放粘贴框相关的样式 */
+
+.unitbox {
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  padding: 9px;
+  margin-bottom: 9px;
+  background: var(--panel-2);
+  transition: border-color .14s var(--ease), opacity .14s var(--ease);
+}
+.unitbox:last-of-type { margin-bottom: 0; }
+.unitbox.on { border-color: var(--accent-line); }
+.unitbox:not(.on) { opacity: .62; }
+.unitbox:not(.on) textarea { display: none; }
+
+.unitbox-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 7px;
+}
+.unitbox-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.unitbox-name b { font-weight: 600; }
+.bidmini { width: 78px; padding: 4px 7px; font-size: 12px; }

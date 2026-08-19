@@ -39,6 +39,11 @@ export function isGoods(row) {
   return row.role === 'owner' || !!(row.goods_admin ?? row.goodsAdmin);
 }
 
+/** 手动广告页的使用权:还在试用期,超级管理员天然有,其他人由超管逐个开 */
+export function canManualAds(row) {
+  return row.role === 'owner' || !!(row.manual_ads ?? row.manualAds);
+}
+
 /**
  * 该用户在界面上能选哪些站点。
  * 超级管理员和商品部要跨站点看词库,给全部;其他人只给分配到的站点。
@@ -54,6 +59,7 @@ function publicUser(row) {
     displayName: row.display_name,
     role: row.role,
     goodsAdmin: isGoods(row),
+    manualAds: canManualAds(row),
     // 商品部账号可以不挂站点,这里单独留一份「自己负责的站点」给 A 类词库判权限
     ownMarkets: parseMarkets(row.marketplace),
     markets: visibleMarkets(row),
@@ -149,8 +155,20 @@ authRouter.post('/logout', (req, res) => {
   req.session.destroy(() => res.json({ ok: true }));
 });
 
+/**
+ * 开页面时读一次。这里也按库里的最新状态刷新会话 ——
+ * owner 改了角色 / 站点 / 手动广告权限,对方刷新一下页面就生效。
+ */
 authRouter.get('/me', (req, res) => {
-  res.json({ user: req.session?.user ?? null, marketplaces: MARKETPLACES });
+  const sess = req.session?.user;
+  if (!sess) return res.json({ user: null, marketplaces: MARKETPLACES });
+
+  const row = db.prepare('SELECT * FROM users WHERE id = ?').get(sess.id);
+  if (!row || !row.is_active) {
+    return req.session.destroy(() => res.json({ user: null, marketplaces: MARKETPLACES }));
+  }
+  req.session.user = publicUser(row);
+  res.json({ user: req.session.user, marketplaces: MARKETPLACES });
 });
 
 /** 改自己的显示名 */
@@ -188,7 +206,8 @@ authRouter.post('/change-password', requireLogin, (req, res) => {
 authRouter.get('/users', requireRole('owner'), (req, res) => {
   const users = db
     .prepare(
-      `SELECT id, username, display_name, role, marketplace, goods_admin, is_active, created_at
+      `SELECT id, username, display_name, role, marketplace, goods_admin, manual_ads,
+              is_active, created_at
          FROM users ORDER BY role, marketplace, id`
     )
     .all()
@@ -198,6 +217,7 @@ authRouter.get('/users', requireRole('owner'), (req, res) => {
       // 商品部账号 markets 是全部站点,这里单独给一份「实际分配到的站点」供账号管理显示和编辑
       ownMarkets: parseMarkets(u.marketplace),
       goodsAdmin: isGoods(u),
+      manualAds: canManualAds(u),
     }));
   res.json({ users });
 });
@@ -214,6 +234,7 @@ authRouter.post('/users', requireRole('owner'), (req, res) => {
     return res.status(400).json({ error: '角色不合法' });
   }
   const goods = role === 'owner' || !!req.body?.goodsAdmin;
+  const manual = role === 'owner' || !!req.body?.manualAds;
   let mk = 'ALL';
   if (role !== 'owner') {
     const list = normMarkets(req.body?.markets ?? req.body?.marketplace);
@@ -227,15 +248,16 @@ authRouter.post('/users', requireRole('owner'), (req, res) => {
   try {
     const info = db
       .prepare(
-        `INSERT INTO users (username, display_name, password_hash, role, marketplace, goods_admin)
-         VALUES (?, ?, ?, ?, ?, ?)`
+        `INSERT INTO users
+           (username, display_name, password_hash, role, marketplace, goods_admin, manual_ads)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         username.trim(), displayName.trim(), bcrypt.hashSync(password, 10),
-        role, mk, goods ? 1 : 0
+        role, mk, goods ? 1 : 0, manual ? 1 : 0
       );
     audit(req.session.user.id, null, 'create', 'user', info.lastInsertRowid, {
-      username, role, markets: mk, goodsAdmin: goods,
+      username, role, markets: mk, goodsAdmin: goods, manualAds: manual,
     });
     res.json({ id: info.lastInsertRowid });
   } catch (e) {
@@ -268,6 +290,12 @@ authRouter.patch('/users/:id', requireRole('owner'), (req, res) => {
       : req.body?.goodsAdmin === undefined
         ? row.goods_admin
         : req.body.goodsAdmin ? 1 : 0;
+  const nextManual =
+    nextRole === 'owner'
+      ? 1
+      : req.body?.manualAds === undefined
+        ? row.manual_ads
+        : req.body.manualAds ? 1 : 0;
 
   let nextMk = 'ALL';
   if (nextRole !== 'owner') {
@@ -289,18 +317,20 @@ authRouter.patch('/users/:id', requireRole('owner'), (req, res) => {
   }
 
   db.prepare(
-    `UPDATE users SET display_name = ?, role = ?, marketplace = ?, goods_admin = ?, is_active = ?
+    `UPDATE users SET display_name = ?, role = ?, marketplace = ?, goods_admin = ?,
+                      manual_ads = ?, is_active = ?
       WHERE id = ?`
   ).run(
     displayName ?? row.display_name,
     nextRole,
     nextMk,
     nextGoods,
+    nextManual,
     isActive === undefined ? row.is_active : isActive ? 1 : 0,
     id
   );
   audit(req.session.user.id, null, 'update', 'user', id, {
-    role: nextRole, markets: nextMk, goodsAdmin: !!nextGoods,
+    role: nextRole, markets: nextMk, goodsAdmin: !!nextGoods, manualAds: !!nextManual,
   });
   res.json({ ok: true });
 });

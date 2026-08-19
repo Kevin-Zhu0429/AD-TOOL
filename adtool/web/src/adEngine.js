@@ -37,7 +37,7 @@ export const PLACEMENTS = [
   ['ROS', '广告位：搜索结果的其余位置', 2, 1.5],
   ['TOS', '广告位：搜索结果首页首位', 3, 2],
 ];
-const PLACE_ROWS = [...PLACEMENTS].sort((a, b) => a[2] - b[2]);
+export const PLACE_ROWS = [...PLACEMENTS].sort((a, b) => a[2] - b[2]);
 
 export const STRATEGIES = [
   { id: 'down_zh', label: '仅降低', suffix: '仅降低', sheet: '动态竞价 - 仅降低', factor: false },

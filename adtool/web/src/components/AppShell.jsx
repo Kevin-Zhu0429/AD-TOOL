@@ -25,8 +25,10 @@ export default function AppShell({
 
   const nav = [
     { id: 'home', label: '首页', icon: 'home' },
-    { id: 'builder', label: '开设广告', icon: 'layers' },
+    { id: 'builder', label: '自动广告', icon: 'layers' },
+    ...(user.manualAds ? [{ id: 'manual', label: '手动广告', icon: 'sliders' }] : []),
     { id: 'library', label: '否定词库', icon: 'book' },
+    { id: 'skus', label: 'SKU 库', icon: 'file' },
     ...(user.role === 'owner' ? [{ id: 'admin', label: '账号管理', icon: 'users' }] : []),
   ];
 

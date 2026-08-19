@@ -5,7 +5,9 @@ import LoginPage from './components/LoginPage.jsx';
 import AppShell from './components/AppShell.jsx';
 import HomePage from './components/HomePage.jsx';
 import BuilderPage from './components/BuilderPage.jsx';
+import ManualPage from './components/ManualPage.jsx';
 import LibraryPage from './components/LibraryPage.jsx';
+import SkuPage from './components/SkuPage.jsx';
 import AdminPage from './components/AdminPage.jsx';
 import ProfilePage from './components/ProfilePage.jsx';
 
@@ -47,6 +49,10 @@ export default function App() {
   const body =
     page === 'builder' ? (
       <BuilderPage key={market} market={market} />
+    ) : page === 'manual' && user.manualAds ? (
+      <ManualPage key={market} market={market} />
+    ) : page === 'skus' ? (
+      <SkuPage key={market} market={market} />
     ) : page === 'library' ? (
       <LibraryPage key={market} market={market} />
     ) : page === 'admin' && user.role === 'owner' ? (

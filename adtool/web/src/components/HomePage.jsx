@@ -68,16 +68,30 @@ export default function HomePage({ user, market, onNav, theme }) {
 
       <div className="home-grid">
         <EntryCard
-          tone="blue" icon="layers" title="开设广告"
+          tone="blue" icon="layers" title="自动广告"
           desc="按任务批量配置自动广告,一次生成可直接上传的总表。词库里的否定词会自动带进每一条活动;开系列广告时还会按 D 类反推,把其它墨盒和打印机型号一起否掉。"
           meta="生成 xlsx 批量表"
           onClick={() => onNav('builder')}
         />
+        {user.manualAds && (
+          <EntryCard
+            tone="violet" icon="sliders" title="手动广告"
+            desc="关键词投放和商品投放(ASIN / 品类定向)。关键词和 ASIN 自己粘贴,不接词表库;否定词照样联动本站词库,精准 / 词组 / 广泛可以分别给出价、也可以各自拆广告组。"
+            meta="试用中 · 生成 xlsx 批量表"
+            onClick={() => onNav('manual')}
+          />
+        )}
         <EntryCard
           tone="green" icon="book" title={`${market} 站否定词库`}
           desc="A 无名词 · B 非售品牌 · C 非售流量干扰墨盒 · D 在售墨盒和打印机 · E 原装竞品 ASIN。改动立即生效。"
           meta={user.goodsAdmin ? 'A–E 都可编辑' : 'A 类可编辑,B–E 只读'}
           onClick={() => onNav('library')}
+        />
+        <EntryCard
+          tone="amber" icon="file" title="我的 SKU 库"
+          desc="按国家 / 品牌 / 型号 / 套组存自己负责的 SKU 和库存。每个账号一份自己的,开广告时在「投放 SKU」那里一键挑进去。"
+          meta="模板导入 · 只有自己看得到"
+          onClick={() => onNav('skus')}
         />
         {user.role === 'owner' && (
           <EntryCard

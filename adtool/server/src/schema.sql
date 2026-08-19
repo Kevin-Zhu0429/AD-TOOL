@@ -9,6 +9,8 @@ PRAGMA foreign_keys = ON;
 --       admin    = 国家管理员,负责站点的词库可编辑
 --       operator = 运营,权限与 admin 相同(仅名称区分职级)
 -- marketplace: 该用户负责的站点,逗号分隔可以填多个,例如 'ES,FR'。owner 填 ALL
+-- goods_admin: 商品部维护权,B/C/D/E 四类词库归他们管
+-- manual_ads : 手动广告页的使用权。这一页还在试用期,默认谁都没有,由超级管理员逐个开
 CREATE TABLE IF NOT EXISTS users (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   username      TEXT    NOT NULL UNIQUE,
@@ -17,6 +19,8 @@ CREATE TABLE IF NOT EXISTS users (
   role          TEXT    NOT NULL DEFAULT 'operator'
                         CHECK (role IN ('owner', 'admin', 'operator')),
   marketplace   TEXT    NOT NULL DEFAULT 'ES',
+  goods_admin   INTEGER NOT NULL DEFAULT 0,
+  manual_ads    INTEGER NOT NULL DEFAULT 0,
   is_active     INTEGER NOT NULL DEFAULT 1,
   created_at    TEXT    NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
@@ -96,3 +100,25 @@ CREATE TABLE IF NOT EXISTS lib_items (
 -- 同一个 scope 同一类词库里,判重列一样的只留一条
 CREATE UNIQUE INDEX IF NOT EXISTS idx_lib_unique ON lib_items (lib, scope, dedupe);
 CREATE INDEX IF NOT EXISTS idx_lib_scope ON lib_items (lib, scope);
+
+-- ---------- SKU 库 ----------
+-- 每个账号各存各的:user_id 就是上传人,别人看不到,大家只传自己负责的品牌。
+-- 开广告时按「国家 + 型号」筛出 SKU,勾选后填进投放 SKU 框。
+-- dedupe = 国家|小写SKU,同一个账号同一个国家里同一个 SKU 只留一条,再传就更新库存。
+CREATE TABLE IF NOT EXISTS sku_items (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id    INTEGER NOT NULL REFERENCES users(id),
+  country    TEXT    NOT NULL,
+  brand      TEXT,
+  model      TEXT,
+  set_group  TEXT,
+  sku        TEXT    NOT NULL,
+  stock      INTEGER,
+  transit    INTEGER,
+  dedupe     TEXT    NOT NULL,
+  created_at TEXT    NOT NULL DEFAULT (datetime('now', 'localtime')),
+  updated_at TEXT    NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_sku_unique ON sku_items (user_id, dedupe);
+CREATE INDEX IF NOT EXISTS idx_sku_user ON sku_items (user_id, country);

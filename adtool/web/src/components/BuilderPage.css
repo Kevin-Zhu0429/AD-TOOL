@@ -298,6 +298,7 @@
 .c-dim { color: var(--text-dim); }
 .c-faint { color: var(--text-faint); }
 .c-text { color: var(--text); }
+.c-ok { color: var(--green-text); }
 
 /* ---------- 自适应 ---------- */
 @media (max-width: 1400px) {
