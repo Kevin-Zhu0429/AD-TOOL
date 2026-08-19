@@ -27,6 +27,7 @@ export default function AppShell({
     { id: 'home', label: '首页', icon: 'home' },
     { id: 'builder', label: '自动广告', icon: 'layers' },
     ...(user.manualAds ? [{ id: 'manual', label: '手动广告', icon: 'sliders' }] : []),
+    ...(user.adOpt ? [{ id: 'optimizer', label: '广告优化', icon: 'chart' }] : []),
     { id: 'library', label: '否定词库', icon: 'book' },
     { id: 'skus', label: 'SKU 库', icon: 'file' },
     ...(user.role === 'owner' ? [{ id: 'admin', label: '账号管理', icon: 'users' }] : []),

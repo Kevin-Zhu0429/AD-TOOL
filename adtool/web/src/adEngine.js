@@ -140,14 +140,29 @@ export function campName(p, params) {
   return parts.filter((x) => x !== '').join(sep);
 }
 
-/** 解析「TOS:100 ROS:50」这类溢价组合,一行一条活动 */
+/** 「0」「无」「不加溢价」这类写法 = 这一行不加任何溢价 */
+const NO_PREM_LINE = /^(0+%?|无|不加溢价|无溢价|不溢价|none|no)$/i;
+
+/**
+ * 解析「TOS:100 ROS:50」这类溢价组合,一行一条活动。
+ * 整段留空 = 一条不加溢价的活动;单独写一行「0 / 无 / 不加溢价」也是同样意思,
+ * 可以和别的溢价组合混着写。
+ */
 export function parseCombos(text) {
   const out = [];
   const problems = [];
   const seen = new Set();
-  for (const line of parseLines(text)) {
+  const lines = parseLines(text);
+  if (!lines.length) return { out: [{}], problems };
+  for (const line of lines) {
     const prem = {};
     let found = 0;
+    if (NO_PREM_LINE.test(line)) {
+      if (seen.has('')) continue;
+      seen.add('');
+      out.push({});
+      continue;
+    }
     const re = /(TOS|ROS|PP)\s*[:=＝]?\s*(\d+)\s*%?/gi;
     let m;
     while ((m = re.exec(line))) {
