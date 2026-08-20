@@ -1,5 +1,7 @@
 import { useMemo, useState } from 'react';
 import { seriesGroups } from '../adEngine.js';
+import { printerLib } from '../printerLib.js';
+import PrinterPicker from './PrinterPicker.jsx';
 
 /**
  * 否定相关的两块面板 —— 自动广告页和手动广告页共用。
@@ -162,12 +164,33 @@ export function LibraryNegatives({ task, lib, plan, onChange }) {
   );
 }
 
-/** 本任务临时否定:两级否定关键词 + 否定商品定向 */
-export function ExtraNegatives({ task, negCount, asinCount, onChange }) {
+/** 本任务临时否定:两级否定关键词 + 否定商品定向,可以从 D 类打印机库直接挑词进来 */
+export function ExtraNegatives({ task, negCount, asinCount, lib, market, onChange }) {
   const setNeg = (patch) => onChange({ extraNeg: { ...task.extraNeg, ...patch } });
+  const [pick, setPick] = useState(false);
+  const [pickNote, setPickNote] = useState('');
+  const printerCount = useMemo(() => printerLib(lib).items.length, [lib]);
 
   return (
     <>
+      <div className="row wrap" style={{ marginBottom: 9 }}>
+        <button className="btn sm" onClick={() => setPick(true)}>从打印机库选</button>
+        <span className="hint">
+          在 D 类库里搜墨盒型号或打印机机型,勾中的一键写进下面的否定词框
+          {printerCount ? `(本区 ${printerCount} 行)` : ''}
+        </span>
+      </div>
+      {pickNote && <p className="hint c-ok" style={{ marginBottom: 9 }}>{pickNote}</p>}
+      {pick && (
+        <PrinterPicker
+          market={market}
+          lib={lib}
+          task={task}
+          onApply={(patch, note) => { setNeg(patch); setPickNote(note); }}
+          onClose={() => setPick(false)}
+        />
+      )}
+
       <p className="hint" style={{ marginBottom: 11 }}>
         只对这个任务生效,和词库合并后一起写进每条活动,重复的自动去掉。
       </p>

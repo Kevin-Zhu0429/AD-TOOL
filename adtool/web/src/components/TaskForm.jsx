@@ -77,7 +77,8 @@ export default function TaskForm({ task, plan, index, libCount, lib, market, onC
           meta={<span className="stat">+<b>{negCount + asinCount}</b> 行/条</span>}
         >
           <ExtraNegatives
-            task={task} negCount={negCount} asinCount={asinCount} onChange={onChange}
+            task={task} negCount={negCount} asinCount={asinCount}
+            lib={lib} market={market} onChange={onChange}
           />
         </Sec>
       </div>
