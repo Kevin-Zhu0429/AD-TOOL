@@ -239,7 +239,8 @@ export default function ManualForm({ task, plan, libCount, lib, market, onChange
           meta={<span className="stat">+<b>{negCount + asinCount}</b> 行/条</span>}
         >
           <ExtraNegatives
-            task={task} negCount={negCount} asinCount={asinCount} onChange={onChange}
+            task={task} negCount={negCount} asinCount={asinCount}
+            lib={lib} market={market} onChange={onChange}
           />
         </Sec>
       </div>
