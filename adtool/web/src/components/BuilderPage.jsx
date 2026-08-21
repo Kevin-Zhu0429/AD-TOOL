@@ -144,7 +144,7 @@ export default function BuilderPage({ market }) {
         });
         return;
       }
-      const file = `CYES-批量开广告-${market}-${todayStamp()}.xlsx`;
+      const file = `批量开广告-${market}-${todayStamp()}.xlsx`;
       downloadWorkbook(wb.aoa, file);
       setResult({
         kind: 'ok',

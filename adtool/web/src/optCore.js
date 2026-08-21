@@ -2,7 +2,7 @@
  * 广告优化工作台 · 解析 / 指标 / 异常 / 变更 / 导出
  * 从单文件版「批量表工作台 V7」移植进来,逻辑保持一致,只是改成 ES 模块:
  * XLSX 直接用项目里的依赖,不再从全局拿。
- * 这里全是纯函数,不碰 DOM。周期快照相关的几个函数在文件末尾。
+ * 这里全是纯函数,不碰 DOM。日期 / 搜索词合并 / 工作表过滤这几个工具在文件末尾。
  */
 import * as XLSX from 'xlsx';
 
@@ -311,6 +311,8 @@ function parse(arrayBuffer) {
   model.searchTerms = searchTerms;
   model.rows = rows;
   model.sheetNames = wb.SheetNames;
+  // 后台只收前三列是「产品 / 实体层级 / 操作」的工作表,别的(搜索词报告等)导出时要摘掉
+  model.dropSheets = nonBulkSheets(wb).filter(function (n) { return n !== sheetName; });
   return model;
 }
 
@@ -645,9 +647,9 @@ function changeList(model, changes) {
   return list;
 }
 
+
 /* ===========================================================
-   周期快照 —— 一份批量表就是一个周期的数据。
-   基准表负责结构和导出,别的周期只留指标,按时间段选中哪几期就用哪几期重算。
+   日期 / 周期名 / 搜索词合并
    =========================================================== */
 
 /** Excel 序列号 / 2025-07-24 / 2025.7.24 / 20250724,统一成 yyyy-mm-dd;认不出给空串 */
@@ -678,16 +680,8 @@ export function todayStr() {
   return fmtDate(d.getFullYear(), d.getMonth() + 1, d.getDate());
 }
 
-/** day 往前/往后挪 n 天,传空串原样返回 */
-export function shiftDate(day, n) {
-  if (!day) return '';
-  const [y, mo, d] = day.split('-').map(Number);
-  const t = new Date(Date.UTC(y, mo - 1, d) + n * 86400000);
-  return fmtDate(t.getUTCFullYear(), t.getUTCMonth() + 1, t.getUTCDate());
-}
-
 /** 一批带 date 的行里最早和最晚的一天 */
-function dateSpan(rows) {
+export function dateSpan(rows) {
   let start = '', end = '';
   for (const r of rows || []) {
     const d = r.date;
@@ -717,87 +711,25 @@ export function parsePeriodFromName(name) {
   return { start: '', end: '' };
 }
 
-/* 各层实体在快照之间对得上的键 —— 编号优先,没编号退回名字 */
-const groupKey = (campId, gid) => campId + '|' + gid;
-const placeKey = (campId, key) => campId + '|' + key;
-const adKey = (campId, gid, sku, id) => campId + '|' + gid + '|' + (sku || '#' + id);
-const targetKey = (campId, gid, id, text, match) =>
-  campId + '|' + (id ? '#' + id : gid + '|' + String(text).toLowerCase() + '|' + match);
-
-/** 一个周期的显示名:「7.24-7.30」这种 */
+/** 一个周期的显示名:「7.24-7.30」这种,只用来给导出文件命名 */
 export function periodLabel(start, end) {
   const short = (d) => (d ? d.slice(5).split('-').map((x) => String(+x)).join('.') : '');
-  if (!start && !end) return '未标注周期';
+  if (!start && !end) return '';
   if (start === end) return short(start);
   return short(start) + '-' + short(end);
 }
 
 /**
- * 把解析好的 model 榨成一份快照:只留各层指标和搜索词,原表几万行不留在内存里。
- * meta: { file, start, end, base }
+ * 搜索词合并:同一条活动 / 广告组 / 投放下的同一个词,指标相加。
+ * 按天下载的报告一个词会有很多行,合成整期一行再上界面。
  */
-export function snapshotFromModel(model, meta) {
-  const o = meta || {};
-  const maps = { camp: new Map(), group: new Map(), place: new Map(), ad: new Map(), target: new Map() };
-  for (const cp of model.campaigns) {
-    maps.camp.set(cp.id, cp.m);
-    for (const g of cp.adGroups) maps.group.set(groupKey(cp.id, g.id), g.m);
-    for (const pl of cp.placements) maps.place.set(placeKey(cp.id, pl.key), pl.m);
-    for (const a of cp.ads) maps.ad.set(adKey(cp.id, a.adGroupId, a.sku, a.id), a.m);
-    for (const t of cp.targets) maps.target.set(targetKey(cp.id, t.adGroupId, t.id, t.text, t.matchType), t.m);
-  }
-  return {
-    id: o.id || 'p' + Math.random().toString(36).slice(2, 8),
-    file: o.file || '',
-    base: !!o.base,
-    start: o.start || '',
-    end: o.end || '',
-    maps,
-    terms: (model.searchTerms || []).slice(),
-    campaigns: model.campaigns.length,
-    m: totals(model),
-  };
-}
-
-/** 快照整段落在 [from,to] 里(没标周期的一律不算) */
-export function snapInRange(snap, from, to) {
-  if (!snap.start || !snap.end) return false;
-  if (from && snap.start < from) return false;
-  if (to && snap.end > to) return false;
-  return true;
-}
-
-/**
- * 快照和 [from,to] 沾边就算。
- * 批量表的数字是整期的,拆不到天,所以只是部分重叠时也整期计入 ——
- * 界面上那一期会标成虚线,并提示这几期是整期算进来的。
- */
-export function snapTouches(snap, from, to) {
-  if (!snap.start || !snap.end) return false;
-  if (from && snap.end < from) return false;
-  if (to && snap.start > to) return false;
-  return true;
-}
-
-/** 快照和 [from,to] 有重叠,但没整段落在里面 */
-export function snapOverlaps(snap, from, to) {
-  return snapTouches(snap, from, to) && !snapInRange(snap, from, to);
-}
-
-/** 多期搜索词合并:同一条活动 / 投放下的同一个词,指标相加 */
-function mergeTerms(snaps, range) {
-  const from = range?.from || '';
-  const to = range?.to || '';
+export function mergeSearchTerms(list) {
   const map = new Map();
-  for (const s of snaps) {
-    for (const t of s.terms) {
-      // 按天下载的报告才有日期,有日期就精确到天卡时间段
-      if (t.date && ((from && t.date < from) || (to && t.date > to))) continue;
-      const k = t.campaignId + '|' + t.adGroupId + '|' + t.targetId + '|' + String(t.term).toLowerCase();
-      const cur = map.get(k);
-      if (cur) cur.items.push(t);
-      else map.set(k, { head: t, items: [t] });
-    }
+  for (const t of list || []) {
+    const k = t.campaignId + '|' + t.adGroupId + '|' + t.targetId + '|' + String(t.term).toLowerCase();
+    const cur = map.get(k);
+    if (cur) cur.items.push(t);
+    else map.set(k, { head: t, items: [t] });
   }
   const out = [];
   for (const { head, items } of map.values()) {
@@ -810,38 +742,37 @@ function mergeTerms(snaps, range) {
   return out;
 }
 
-/**
- * 按选中的快照重算 model 里每一层的指标。
- * 只动 .m 和 searchTerms —— 行数据、改动清单、导出都还是基准表那一份。
- */
-export function applySnapshots(model, snaps, range) {
-  const list = snaps || [];
-  const zero = () => metricsOf(0, 0, 0, 0, 0, 0);
-  const pull = (name, key) => {
-    const hit = [];
-    for (const s of list) {
-      const m = s.maps[name].get(key);
-      if (m) hit.push(m);
-    }
-    return hit.length ? sumMetrics(hit) : zero();
-  };
+/* ===========================================================
+   导出用的工作表过滤
+   亚马逊只收前三列是「产品 / 实体层级 / 操作」的批量表工作表。
+   下载批量表时勾了搜索词报告之类的报表,那些表会跟着留在文件里,
+   原样传回后台会被判「标头无效」,整份文件退回、一行都不生效。
+   =========================================================== */
 
-  for (const cp of model.campaigns) {
-    cp.m = pull('camp', cp.id);
-    for (const g of cp.adGroups) g.m = pull('group', groupKey(cp.id, g.id));
-    for (const pl of cp.placements) pl.m = pull('place', placeKey(cp.id, pl.key));
-    for (const a of cp.ads) a.m = pull('ad', adKey(cp.id, a.adGroupId, a.sku, a.id));
-    for (const t of cp.targets) {
-      t.m = pull('target', targetKey(cp.id, t.adGroupId, t.id, t.text, t.matchType));
-    }
-    // 活动行缺失时和 buildModel 一样,用广告组汇总兜底
-    if (!cp.row && cp.adGroups.length) cp.m = sumMetrics(cp.adGroups.map((g) => g.m));
+/** 这一页是不是亚马逊收的批量表工作表 */
+export function isBulkSheet(ws) {
+  if (!ws || !ws['!ref']) return false;
+  const r = XLSX.utils.decode_range(ws['!ref']);
+  const head = [];
+  for (let i = 0; i < 3; i++) {
+    const cell = ws[XLSX.utils.encode_cell({ r: r.s.r, c: r.s.c + i })];
+    head.push(cell ? String(cell.v === null || cell.v === undefined ? '' : cell.v).trim() : '');
   }
+  return H.product.indexOf(head[0]) >= 0 && H.entity.indexOf(head[1]) >= 0 && H.operation.indexOf(head[2]) >= 0;
+}
 
-  model.searchTerms = mergeTerms(list, range);
-  model._stIdx = null;
-  model._skuIdx = null;
-  return model;
+/** 传不上去的工作表名单(不改工作簿,只是列出来) */
+export function nonBulkSheets(wb) {
+  return (wb.SheetNames || []).filter((n) => !isBulkSheet(wb.Sheets[n]));
+}
+
+/** 把传不上去的工作表从工作簿里摘掉,返回摘掉的表名 */
+export function stripNonBulkSheets(wb, keep) {
+  const drop = nonBulkSheets(wb).filter((n) => n !== keep);
+  if (!drop.length) return drop;
+  wb.SheetNames = wb.SheetNames.filter((n) => drop.indexOf(n) < 0);
+  drop.forEach((n) => { delete wb.Sheets[n]; });
+  return drop;
 }
 
 export {

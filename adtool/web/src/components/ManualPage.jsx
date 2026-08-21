@@ -138,7 +138,7 @@ export default function ManualPage({ market }) {
         });
         return;
       }
-      const file = `CYES-手动广告-${market}-${todayStamp()}.xlsx`;
+      const file = `手动广告-${market}-${todayStamp()}.xlsx`;
       downloadWorkbook(wb.aoa, file);
       const kw = wb.placed.reduce((a, x) => a + x.plan.targets, 0);
       setResult({
