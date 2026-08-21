@@ -2,7 +2,6 @@
  * 广告优化工作台 · 界面层
  * 从单文件版「批量表工作台 V7」移植:原来的整页应用改成挂在一个容器上的模块,
  * 所有 DOM 查询都限定在挂载根里(页面用 Shadow DOM 挂载,和站内样式互不干扰)。
- * 新增的「时间段筛选」在文件末尾那一段。
  */
 import * as XLSX from 'xlsx';
 import * as C from './optCore.js';
@@ -19,29 +18,12 @@ const MARKUP = `
     </div>
     <div class="spacer"></div>
     <button class="btn" id="btnLoadA">载入本期批量表</button>
-    <button class="btn ghost" id="btnAddPeriod">＋ 载入其他周期</button>
     <button class="btn ghost" id="btnLoadS">载入搜索词报告</button>
     <button class="btn ghost" id="btnBneg">批量否定</button>
     <button class="btn ghost" id="btnSet">规则设置</button>
     <button class="btn pri" id="btnExport">导出批量表</button>
   </div>
   <div class="cmyk"><i></i><i></i><i></i><i></i></div>
-
-  <div class="periodbar" id="periodbar" style="display:none">
-    <span class="pb-lab">时间段</span>
-    <input type="date" class="pdate" id="pFrom">
-    <span class="pb-to">→</span>
-    <input type="date" class="pdate" id="pTo">
-    <div class="seg">
-      <span class="sgb" data-quick="all">全部</span>
-      <span class="sgb" data-quick="7">近 7 天</span>
-      <span class="sgb" data-quick="14">近 14 天</span>
-      <span class="sgb" data-quick="30">近 30 天</span>
-    </div>
-    <div class="pb-chips" id="pbChips"></div>
-    <div class="spacer"></div>
-    <span class="pb-sum" id="pbSum"></span>
-  </div>
 
   <div class="kpibar" id="kpibar" style="display:none"></div>
 
@@ -92,7 +74,6 @@ const MARKUP = `
           <li>后台路径：广告 → 批量操作 → 下载广告活动</li>
           <li>日期范围选好你要复盘的周期，勾选你需要的Sheet</li>
           <li>建议同时勾上搜索词报告，工作台里可以一键否定</li>
-          <li>想按时间段看数据，就把每个周期的表分别下载，进来后用「＋ 载入其他周期」一期期加进来</li>
           <li>优化完点右上角导出，得到的表直接回后台上传</li>
         </ol>
       </div>
@@ -181,27 +162,10 @@ const MARKUP = `
   <footer><button class="btn" data-close>再检查一下</button><button class="btn pri" id="expGo">生成文件</button></footer>
 </div></div>
 
-<div class="mask" id="maskPeriod"><div class="modal" style="max-width:480px">
-  <header><h3 id="pmTitle">标注周期</h3><div style="flex:1"></div><button class="btn sm" data-close>关闭</button></header>
-  <div class="body">
-    <div class="pmgrid">
-      <label>数据文件</label><span class="mono" id="pmFile"></span>
-      <div class="pmdates" id="pmDates">
-        <label>起始日期</label><input type="date" id="pmStart">
-        <label>结束日期</label><input type="date" id="pmEnd">
-      </div>
-      <div class="pmpick" id="pmPickRow"><label>归到哪一期</label><select id="pmPick"></select></div>
-    </div>
-    <p class="hint" id="pmHint"></p>
-  </div>
-  <footer><button class="btn" data-close>取消</button><button class="btn pri" id="pmSave">保存</button></footer>
-</div></div>
-
 <div class="toast" id="toast"></div>
 <input type="file" id="fileA" accept=".xlsx,.xls" style="display:none">
 <input type="file" id="fileS" accept=".xlsx,.xls,.csv" style="display:none">
 <input type="file" id="fileP" accept=".json" style="display:none">
-<input type="file" id="fileX" accept=".xlsx,.xls" style="display:none">
 `;
 
 /**
@@ -220,9 +184,8 @@ export function mountOptimizer(root, host) {
     changes:new C.ChangeSet(), cfg:Object.assign({},C.DEFAULT_CFG),
     cur:'€', vocab:'', scope:'changed',
     sel:null, tab:'placement', filter:'all', pf:'', sort:'spend', q:'',
-    // 周期数据:snaps 是已载入的各期快照,range 是时间段筛选,pick 是手动勾掉/勾上的覆盖
-    snaps:[], range:{from:'',to:''}, pick:{}, pendingSnap:null, stPending:null,
-    pmMode:'', pmId:'', periodTouched:false,
+    // terms 是搜索词原始行(按天下载的报告一个词有很多行),上界面前合并成整期一行
+    terms:[], periodTouched:false,
     checked:{}, stAll:false, stTgt:'', expT:{}, stRptName:'', bnSel:{}, bnQ:'', bnPf:'',
     view:'work', an:{tab:'sku',byAsin:false,q:'',pf:'',minClicks:0,mark:'',tf:'',kf:'',exp:{},stSel:{},
       skuSub:{},skuExcl:{},sku:'',skuOnlyEx:false,_skuStList:[],adSel:{},_skuAds:[],
@@ -254,14 +217,15 @@ export function mountOptimizer(root, host) {
       try{
         var m=C.parse(bytes);
         S.model=m; S.raw=bytes; S.fileName=file.name; S.changes=new C.ChangeSet();
-        initSnaps(m,file.name);
+        S.periodTouched=false; S.stRptName='';
+        setTerms(m.searchTerms||[]);
+        autoPeriodLabel(file.name);
         if(m.currency) S.cur=m.currency==='EUR'?'€':(m.currency==='USD'?'$':(m.currency==='GBP'?'£':m.currency+' '));
         S.sel=null; S.checked={}; S.an.exp={}; S.an.stSel={}; S.an.q=''; setView('work');
         $('#fileAName').textContent=file.name;
         $('#drop').style.display='none'; $('#main').style.display='grid';
         $('#kpibar').style.display='flex'; $('#footbar').style.display='flex';
-        $('#periodbar').style.display='flex';
-        buildPortfolios(); applyPeriod();
+        buildPortfolios(); renderAll();
         toast('已载入 '+m.campaigns.length+' 条广告活动');
       }catch(err){ alert('解析失败：'+err.message); }
     });
@@ -277,11 +241,7 @@ export function mountOptimizer(root, host) {
       try{
         var res=C.parseSearchTermReport(bytes,S.model);
         if(!res.matched){ alert('报告解析成功，但没有一条能匹配到当前批量表里的广告活动。请确认两份文件来自同一个店铺。'); return; }
-        S.stPending={terms:res.terms,file:file.name,matched:res.matched,unmatched:res.unmatched,
-          start:res.start,end:res.end};
-        // 载入了多期数据时,先问这份报告算哪一期的
-        if(S.snaps.length>1){ openPeriodModal('st'); return; }
-        applyStReport(S.snaps[0]);
+        mergeStReport({terms:res.terms,file:file.name,matched:res.matched,unmatched:res.unmatched});
       }catch(err){ alert('搜索词报告解析失败：'+err.message); }
     });
   }
@@ -928,6 +888,7 @@ export function mountOptimizer(root, host) {
     var list=C.changeList(S.model,S.changes);
     var byEntity={};
     list.forEach(function(x){ byEntity[x.entity]=(byEntity[x.entity]||0)+1 });
+    var drop=S.model.dropSheets||[];
     $('#expBody').innerHTML=
       '<p style="margin:0 0 10px">将导出 <b>'+S.changes.rowCount()+'</b> 行、<b>'+S.changes.count()+'</b> 处改动。</p>'+
       '<table class="tbl"><tbody>'+Object.keys(byEntity).map(function(k){
@@ -935,7 +896,11 @@ export function mountOptimizer(root, host) {
       (issues.length?'<div class="diag" style="margin:12px 0 0"><h4>导出前检查</h4><ul>'+issues.map(function(i){
         return '<li><span class="flagchip '+(i.level==='error'?'bad':'warn')+'">'+(i.level==='error'?'必须修正':'留意')+'</span>'+esc(i.text)+'</li>'}).join('')+'</ul></div>'
        :'<div class="diag" style="border-left-color:var(--gd);margin:12px 0 0"><h4>导出前检查</h4><div style="font-size:12px">竞价、预算、溢价数值都在允许范围内。</div></div>')+
-      '<p class="muted" style="font-size:11px;margin:12px 0 0">导出的文件保留原表全部工作表结构，只有改动行的「操作」列被填成 '+
+      (drop.length?'<div class="diag" style="margin:12px 0 0"><h4>会摘掉的工作表</h4><ul>'+
+        drop.map(function(n){return '<li>'+esc(n)+'</li>'}).join('')+
+        '</ul><div style="font-size:11px;margin-top:6px">这些表的前三列不是「产品 / 实体层级 / 操作」，'+
+        '后台只认批量表工作表，原样传回去会判「标头无效」把整份文件退回。导出时自动去掉，不影响你在工作台里看这些数据。</div></div>':'')+
+      '<p class="muted" style="font-size:11px;margin:12px 0 0">导出的文件保留原表的批量表工作表结构，只有改动行的「操作」列被填成 '+
         ((C.VOCAB[S.vocab||S.model.lang]||C.VOCAB.zh).op.update)+'，其余行亚马逊会自动忽略。回后台走「上传批量文件」即可。</p>';
     $('#expGo').disabled=issues.some(function(i){return i.level==='error'});
     $('#maskExp').classList.add('on');
@@ -959,10 +924,12 @@ export function mountOptimizer(root, host) {
         aoa=[S.model.header].concat(rows);
       }
       wb.Sheets[S.model.sheetName]=XLSX.utils.aoa_to_sheet(aoa);
+      // 搜索词报告之类的表后台不收,留着会让整份文件被退回
+      var dropped=C.stripNonBulkSheets(wb,S.model.sheetName);
       var out=XLSX.write(wb,{type:'array',bookType:'xlsx'});
       download(new Blob([out],{type:'application/octet-stream'}),exportName('xlsx'));
       $('#maskExp').classList.remove('on');
-      toast('已生成批量表，回后台上传即可');
+      toast('已生成批量表，回后台上传即可'+(dropped.length?'（已摘掉 '+dropped.length+' 个后台不收的工作表）':''));
     }catch(err){ alert('导出失败：'+err.message); }
   };
   $('#btnCsv').onclick=$('#chgCsv').onclick=function(){
@@ -1700,220 +1667,40 @@ export function mountOptimizer(root, host) {
 
 
   /* ---------- 渲染入口 ---------- */
-  function renderAll(){ if(!S.model)return; renderPeriod(); renderKpi(); renderRail(); renderDetail(); renderFoot(); if(S.view==='analysis')renderAnalysis(); }
+  function renderAll(){ if(!S.model)return; renderKpi(); renderRail(); renderDetail(); renderFoot(); if(S.view==='analysis')renderAnalysis(); }
   on(window,'beforeunload',function(e){ if(S.changes.count()){ e.preventDefault(); e.returnValue=''; } });
 
-  /* ================= 时间段筛选 =================
-     一份批量表 = 一个周期的数据。第一份载入的是基准表,结构和导出都以它为准;
-     再载入的其它周期只留各层指标和搜索词,不占内存也不参与导出。
-     选好时间段后,页面上所有数字都按落在这个时间段里的周期重新汇总。 */
+  /* ================= 搜索词 / 周期名 =================
+     搜索词原始行存在 S.terms 里(按天下载的报告一个词有很多行),
+     上界面前按活动 / 投放 / 词合并成整期一行。 */
 
-  function initSnaps(m,fileName){
-    var g=C.parsePeriodFromName(fileName), span=stSpan(m.searchTerms);
-    S.snaps=[C.snapshotFromModel(m,{id:'base',file:fileName,base:true,
-      start:g.start||span.start, end:g.end||span.end})];
-    S.range={from:'',to:''}; S.pick={}; S.periodTouched=false;
-    S.pendingSnap=null; S.stPending=null;
+  function setTerms(list){
+    S.terms=list;
+    S.model.searchTerms=C.mergeSearchTerms(list);
+    S.model._stIdx=null; S.model._skuIdx=null;
   }
-  /* 按天下载的搜索词报告才有日期,拿它兜底猜这一期是哪几天 */
-  function stSpan(list){
-    var s='',e='';
-    (list||[]).forEach(function(x){ if(!x.date)return; if(!s||x.date<s)s=x.date; if(!e||x.date>e)e=x.date; });
-    return {start:s,end:e};
-  }
-  function snapById(id){ return S.snaps.filter(function(s){return s.id===id})[0] }
-  function snapPicked(sn){
-    if(S.pick[sn.id]!==undefined)return S.pick[sn.id];          // 手动点过的以手动为准
-    if(!S.range.from&&!S.range.to)return true;                  // 没设时间段 = 全部
-    return C.snapTouches(sn,S.range.from,S.range.to);
-  }
-  function pickedSnaps(){ return S.snaps.filter(snapPicked) }
-  function maxEnd(){
-    var e=''; S.snaps.forEach(function(s){ if(s.end&&(!e||s.end>e))e=s.end }); return e;
-  }
-  function applyPeriod(){
-    if(!S.model)return;
-    C.applySnapshots(S.model,pickedSnaps(),S.range);
-    autoPeriodLabel();
-    renderAll();
-  }
-  /* 导出文件名里的周期:用户没自己写过就跟着时间段走 */
-  function autoPeriodLabel(){
-    if(S.periodTouched)return;
-    var el=$('#periodA'); if(!el)return;
-    var picked=pickedSnaps();
-    if(!picked.length){ el.value=''; return; }
-    var st=picked.map(function(s){return s.start}).filter(Boolean).sort()[0]||'';
-    var en=picked.map(function(s){return s.end}).filter(Boolean).sort().pop()||'';
-    el.value=(st||en)?C.periodLabel(st,en):'';
-  }
-  function renderPeriod(){
-    if(!S.model)return;
-    $('#pFrom').value=S.range.from; $('#pTo').value=S.range.to;
-    var picked={}; pickedSnaps().forEach(function(s){picked[s.id]=1});
-    var n=0;
-    $('#pbChips').innerHTML=S.snaps.map(function(s){
-      var on=!!picked[s.id]; if(on)n++;
-      var part=C.snapOverlaps(s,S.range.from,S.range.to);
-      var manual=S.pick[s.id]!==undefined;
-      return '<span class="pchip'+(on?' on':'')+(part?' part':'')+'" data-pid="'+esc(s.id)+'" title="'+
-          esc(s.file)+(s.base?'（基准表）':'')+(part?' · 只有部分落在所选时间段里,是整期算进来的;点一下可以排除':'')+'">'+
-        '<b>'+esc(C.periodLabel(s.start,s.end))+'</b>'+
-        '<span class="pf">'+fm(s.m.spend)+'</span>'+
-        (manual?'<span class="pm">手选</span>':'')+
-        '<i class="pico" data-pedit="'+esc(s.id)+'" title="改周期">改</i>'+
-        (s.base?'':'<i class="pico" data-pdel="'+esc(s.id)+'" title="移除这一期">×</i>')+
-      '</span>';
-    }).join('');
-    $$('#periodbar [data-quick]').forEach(function(b){
-      var v=b.dataset.quick, on=false;
-      if(v==='all')on=!S.range.from&&!S.range.to;
-      else on=!!S.range.to&&S.range.to===maxEnd()&&S.range.from===C.shiftDate(S.range.to,-(parseInt(v,10)-1));
-      b.classList.toggle('on',on);
-    });
-    var picks=pickedSnaps();
-    var spend=picks.reduce(function(a,s){return a+s.m.spend},0);
-    var undated=S.snaps.filter(function(s){return !s.start||!s.end}).length;
-    var partial=picks.filter(function(s){return C.snapOverlaps(s,S.range.from,S.range.to)}).length;
-    $('#pbSum').innerHTML= !n
-      ? '<span class="pb-warn">所选时间段里没有已载入的周期,下面的数字都是 0</span>'
-      : '计入 <b>'+n+'</b> / '+S.snaps.length+' 期 · 花费 '+fm(spend)+
-        (partial?' · <span class="pb-warn">其中 '+partial+' 期只有部分落在时间段里,批量表拆不到天,整期算进来的</span>':'')+
-        (undated?' · <span class="pb-warn">'+undated+' 期还没标周期</span>':'')+
-        (S.snaps.length===1?' · <span class="muted">载入其它周期后可以按时间段合并 / 对比</span>':'');
-  }
-  function setQuick(v){
-    if(v==='all'){ S.range={from:'',to:''}; }
-    else{
-      var end=maxEnd();
-      if(!end){ toast('先给至少一期数据标上周期'); return; }
-      S.range={from:C.shiftDate(end,-(parseInt(v,10)-1)),to:end};
-    }
-    S.pick={}; applyPeriod();
-  }
-  function togglePick(id){
-    var sn=snapById(id); if(!sn)return;
-    S.pick[id]=!snapPicked(sn);
-    applyPeriod();
-  }
-  function removeSnap(id){
-    var sn=snapById(id); if(!sn||sn.base)return;
-    if(!confirm('移除 '+C.periodLabel(sn.start,sn.end)+' 这一期数据？'))return;
-    S.snaps=S.snaps.filter(function(s){return s!==sn});
-    delete S.pick[id];
-    applyPeriod(); toast('已移除这一期');
-  }
-  function loadPeriodFile(file){
-    readFile(file,function(bytes){
-      try{
-        var m=C.parse(bytes);
-        var g=C.parsePeriodFromName(file.name), span=stSpan(m.searchTerms);
-        var snap=C.snapshotFromModel(m,{file:file.name,start:g.start||span.start,end:g.end||span.end});
-        var hit=0;
-        S.model.campaigns.forEach(function(cp){ if(snap.maps.camp.has(cp.id))hit++ });
-        if(!hit){ alert('这份表里的广告活动和当前基准表对不上,可能不是同一个店铺的批量表。'); return; }
-        S.pendingSnap=snap; S.pendingHit=hit;
-        openPeriodModal('new');
-      }catch(err){ alert('解析失败：'+err.message); }
-    });
-  }
-  /* 搜索词报告并进指定的那一期 */
-  function applyStReport(sn){
-    var d=S.stPending;
-    if(!d||!sn){ S.stPending=null; return; }
+  /* 同一份报告重复载入时按原始行覆盖,指标不会翻倍 */
+  function mergeStReport(d){
     var key=function(x){return x.campaignId+'|'+x.targetId+'|'+String(x.term).toLowerCase()+'|'+(x.date||'')};
     var map={};
-    sn.terms.forEach(function(x){ map[key(x)]=x });
+    S.terms.forEach(function(x){ map[key(x)]=x });
     d.terms.forEach(function(x){ map[key(x)]=x });
-    sn.terms=Object.keys(map).map(function(k){return map[k]});
-    if(!sn.start&&d.start)sn.start=d.start;
-    if(!sn.end&&d.end)sn.end=d.end;
-    S.stRptName=d.file; S.stPending=null;
-    applyPeriod();
-    toast('已把 '+d.matched+' 条搜索词并进 '+C.periodLabel(sn.start,sn.end)+
-      (d.unmatched?'（'+d.unmatched+' 条没匹配到活动，已跳过）':''));
+    setTerms(Object.keys(map).map(function(k){return map[k]}));
+    S.stRptName=d.file;
+    if(!S.periodTouched&&!$('#periodA').value)autoPeriodLabel('');
+    renderAll();
+    toast('已并入 '+d.matched+' 条搜索词'+(d.unmatched?'（'+d.unmatched+' 条没匹配到活动，已跳过）':''));
   }
-  function openPeriodModal(mode,id){
-    S.pmMode=mode; S.pmId=id||'';
-    var isSt=mode==='st';
-    var sn=mode==='new'?S.pendingSnap:(mode==='edit'?snapById(id):null);
-    if(isSt&&!S.stPending)return;
-    if(!isSt&&!sn)return;
-    $('#pmTitle').textContent=isSt?'这份搜索词报告算哪一期':(mode==='new'?'新载入一期数据':'改这一期的周期');
-    $('#pmFile').textContent=isSt?S.stPending.file:sn.file;
-    $('#pmDates').style.display=isSt?'none':'';
-    $('#pmPickRow').style.display=isSt?'':'none';
-    if(isSt){
-      $('#pmPick').innerHTML=S.snaps.map(function(s){
-        return '<option value="'+esc(s.id)+'">'+esc(C.periodLabel(s.start,s.end))+' · '+esc(s.file)+'</option>';
-      }).join('');
-      var d=S.stPending.start;
-      if(d)S.snaps.forEach(function(s){ if(s.start&&s.end&&d>=s.start&&d<=s.end)$('#pmPick').value=s.id });
-      $('#pmHint').innerHTML=S.stPending.start
-        ? '这份报告带日期（'+esc(S.stPending.start)+' 到 '+esc(S.stPending.end)+'），选时间段时会精确到天。'
-        : '这份报告没有日期列，只能整份算在某一期上。想按天筛，下载报告时把汇总方式选成「每日」。';
-    }else{
-      $('#pmStart').value=sn.start||''; $('#pmEnd').value=sn.end||'';
-      $('#pmHint').innerHTML= mode==='new'
-        ? '这份表和基准表对上了 <b>'+S.pendingHit+'</b> 条广告活动，只有对得上的才会算进这一期。'+
-          '批量表本身不带日期，填的是你下载它时选的那个日期范围。'
-        : '批量表本身不带日期，这里填的是你下载它时选的那个日期范围。';
-    }
-    $('#maskPeriod').classList.add('on');
+  /* 导出文件名里的周期:先认文件名,认不出就拿搜索词报告的日期兜底,用户自己写过就不动 */
+  function autoPeriodLabel(fileName){
+    if(S.periodTouched)return;
+    var el=$('#periodA'); if(!el)return;
+    var g=C.parsePeriodFromName(fileName||'');
+    if(!g.start&&!g.end)g=C.dateSpan(S.terms);
+    el.value=C.periodLabel(g.start,g.end);
   }
-  $('#pmSave').onclick=function(){
-    if(S.pmMode==='st'){
-      var target=snapById($('#pmPick').value)||S.snaps[0];
-      $('#maskPeriod').classList.remove('on');
-      applyStReport(target);
-      return;
-    }
-    var start=$('#pmStart').value, end=$('#pmEnd').value;
-    if(start&&end&&start>end){ alert('起始日期不能晚于结束日期'); return; }
-    if(S.pmMode==='new'){
-      var snap=S.pendingSnap; if(!snap)return;
-      var same=start?S.snaps.filter(function(s){return s.start===start&&s.end===end})[0]:null;
-      if(same&&same.base){ alert('这一期和基准表的周期一样，不用重复载入。'); return; }
-      if(same&&!confirm('已经有一期是 '+C.periodLabel(start,end)+'（'+same.file+'），继续会把它换掉。'))return;
-      if(same)S.snaps=S.snaps.filter(function(s){return s!==same});
-      snap.start=start; snap.end=end;
-      S.snaps.push(snap); sortSnaps(); S.pendingSnap=null;
-      $('#maskPeriod').classList.remove('on');
-      S.pick={}; applyPeriod();
-      toast('已加入 '+C.periodLabel(start,end)+' 这一期（'+S.pendingHit+' 条活动对上）');
-    }else{
-      var sn=snapById(S.pmId); if(!sn)return;
-      sn.start=start; sn.end=end; sortSnaps();
-      $('#maskPeriod').classList.remove('on');
-      applyPeriod(); toast('周期已更新');
-    }
-  };
-  function sortSnaps(){
-    S.snaps.sort(function(a,b){ return String(a.start).localeCompare(String(b.start)) });
-  }
-  $('#periodbar').addEventListener('click',function(e){
-    var q=e.target.closest('[data-quick]');
-    if(q){ setQuick(q.dataset.quick); return; }
-    var ed=e.target.closest('[data-pedit]');
-    if(ed){ openPeriodModal('edit',ed.dataset.pedit); return; }
-    var dl=e.target.closest('[data-pdel]');
-    if(dl){ removeSnap(dl.dataset.pdel); return; }
-    var ch=e.target.closest('[data-pid]');
-    if(ch){ togglePick(ch.dataset.pid); return; }
-  });
-  $('#periodbar').addEventListener('change',function(e){
-    if(e.target.id==='pFrom'||e.target.id==='pTo'){
-      S.range={from:$('#pFrom').value,to:$('#pTo').value};
-      S.pick={};
-      applyPeriod();
-    }
-  });
-  $('#btnAddPeriod').onclick=function(){
-    if(!S.model){toast('先载入本期批量表');return;}
-    $('#fileX').click();
-  };
-  $('#fileX').onchange=function(e){ if(e.target.files[0])loadPeriodFile(e.target.files[0]); e.target.value=''; };
   $('#periodA').addEventListener('input',function(){ S.periodTouched=true });
+
 
   return function unmount() {
     offs.forEach((f) => f());
