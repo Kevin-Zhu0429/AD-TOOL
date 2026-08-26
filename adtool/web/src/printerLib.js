@@ -63,24 +63,51 @@ export function modelTerms(row) {
 }
 
 /**
- * 搜索:空格分开的关键词要全部命中。
- * 每个词先按普通包含匹配(输 301 能查到 301XL、输 DeskJet 能查到整个系列),
+ * 一个词命不命中这一行:
+ * 先按普通包含匹配(输 301 能查到 301XL、输 DeskJet 能查到整个系列),
  * 再按型号归一键比一次(输 301XL 也能查到 301、输 PG-545 能查到 545)。
  */
+function hitsTerm(row, term) {
+  const t = String(term ?? '').toLowerCase();
+  if (!t) return true;
+  const fields = [row.brand, row.term, row.series, row.printer]
+    .map((v) => String(v ?? '').toLowerCase());
+  if (fields.some((f) => f.includes(t))) return true;
+  const k = modelKey(t);
+  return !!k && [...modelTerms(row), row.printer].filter(Boolean).map(modelKey).includes(k);
+}
+
+/**
+ * 搜索框怎么拆:**逗号 / 顿号 / 分号 / 换行分开的是「或」**,空格分开的是「并且」。
+ * 「305, 304, 3720」= 一次搜三个型号;「hp deskjet」= 两个词都要命中。
+ */
+export function parseQuery(text) {
+  return String(text ?? '')
+    .split(/[,，、;；\n\r]+/)
+    .map((g) => g.trim().toLowerCase().split(/\s+/).filter(Boolean))
+    .filter((g) => g.length);
+}
+
+const facetOk = (row, facet) =>
+  (!facet?.brand || row.brand === facet.brand) && (!facet?.series || row.series === facet.series);
+
+/** 搜索:任意一组词全部命中就算命中 */
 export function searchPrinters(rows, query, facet = {}) {
-  const tokens = String(query ?? '').trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const groups = parseQuery(query);
   return (rows || []).filter((r) => {
-    if (facet.brand && r.brand !== facet.brand) return false;
-    if (facet.series && r.series !== facet.series) return false;
-    if (!tokens.length) return true;
-    const fields = [r.brand, r.term, r.series, r.printer].map((v) => String(v ?? '').toLowerCase());
-    const keys = [...modelTerms(r), r.printer].filter(Boolean).map(modelKey);
-    return tokens.every((t) => {
-      if (fields.some((f) => f.includes(t))) return true;
-      const k = modelKey(t);
-      return !!k && keys.includes(k);
-    });
+    if (!facetOk(r, facet)) return false;
+    if (!groups.length) return true;
+    return groups.some((g) => g.every((t) => hitsTerm(r, t)));
   });
+}
+
+/** 一次搜多个型号时,每个型号各命中几行 —— 用来提示哪几个型号库里根本没有 */
+export function queryReport(rows, query, facet = {}) {
+  const groups = parseQuery(query);
+  return groups.map((g) => ({
+    label: g.join(' '),
+    count: (rows || []).filter((r) => facetOk(r, facet) && g.every((t) => hitsTerm(r, t))).length,
+  }));
 }
 
 /** 系列广告选中的墨盒型号集合,用来给「正在投」的行打标 */
@@ -132,4 +159,31 @@ export function appendTerms(current, terms) {
     add.push(t);
   }
   return { text: [...cur, ...add].join('\n'), added: add.length, dup: terms.length - add.length };
+}
+
+/* 复制到后台时用哪种分隔符 —— 亚马逊后台的否定词框一行一个,Excel 里习惯逗号 */
+export const TERM_SEPS = [
+  ['line', '每行一个', '\n'],
+  ['comma', '逗号分隔', ', '],
+  ['space', '空格分隔', ' '],
+];
+
+export function joinTerms(terms, sepId) {
+  const sep = TERM_SEPS.find(([id]) => id === sepId)?.[2] ?? '\n';
+  return (terms || []).join(sep);
+}
+
+/** 挑中的行里有哪些墨盒型号(去重,保持出现顺序) */
+export function rowsModels(rows) {
+  const out = [];
+  const seen = new Set();
+  for (const r of rows || []) {
+    for (const m of modelTerms(r)) {
+      const k = m.toLowerCase();
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push(m);
+    }
+  }
+  return out;
 }

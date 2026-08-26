@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
+import { copyText } from '../clipboard.js';
 import {
   printerLib, printerFacets, printerSeriesMap, printerTerm, modelTerms,
-  searchPrinters, targetedModels, isTargeted, pickedTerms, appendTerms,
+  searchPrinters, targetedModels, isTargeted, pickedTerms, appendTerms, joinTerms,
 } from '../printerLib.js';
 import './SkuPicker.css';
 import './PrinterPicker.css';
@@ -37,6 +38,7 @@ export default function PrinterPicker({ market, lib, task, onApply, onClose }) {
   const [pick, setPick] = useState('printer');
   const [target, setTarget] = useState('cnegPhrase');
   const [picked, setPicked] = useState(() => new Set());
+  const [copied, setCopied] = useState('');
 
   const facets = useMemo(() => printerFacets(items), [items]);
   const seriesMap = useMemo(() => printerSeriesMap(items), [items]);
@@ -79,6 +81,12 @@ export default function PrinterPicker({ market, lib, task, onApply, onClose }) {
     });
   }
 
+  /** 只想拿去后台手动否定、不写进这个任务时,直接复制走 */
+  async function copyPicked() {
+    const ok = await copyText(joinTerms(terms, 'line'));
+    setCopied(ok ? `已复制 ${terms.length} 个词` : '复制失败,换「后台否定助手」试试');
+  }
+
   function apply() {
     if (!terms.length) return;
     const { text, added, dup } = appendTerms(task?.extraNeg?.[target], terms);
@@ -113,8 +121,8 @@ export default function PrinterPicker({ market, lib, task, onApply, onClose }) {
             <div className="row wrap pickbar">
               <input
                 className="inp" style={{ flex: 1, minWidth: 160 }} autoFocus
-                placeholder="搜墨盒型号或打印机机型…(空格分开可以搜多个词)"
-                value={query} onChange={(e) => setQuery(e.target.value)}
+                placeholder="搜墨盒型号或打印机机型…(逗号分开一次搜多个型号,空格分开 = 都要命中)"
+                value={query} onChange={(e) => { setQuery(e.target.value); setCopied(''); }}
               />
               {facets.brands.length > 1 && (
                 <select className="inp" style={{ width: 110 }} value={facet.brand}
@@ -207,7 +215,11 @@ export default function PrinterPicker({ market, lib, task, onApply, onClose }) {
               <button className="btn sm" onClick={() => setPicked(new Set())}>全不选</button>
               <span className="stat">已选 <b>{picked.size}</b> / {hits.length}</span>
               <span className="stat">写入 <b>{terms.length}</b> 个词</span>
+              {copied && <span className="hint c-ok">{copied}</span>}
               <div className="spacer" />
+              <button className="btn sm" disabled={!terms.length} onClick={copyPicked} title="复制走,拿去后台手动否定">
+                复制
+              </button>
               <button className="btn sm" onClick={onClose}>取消</button>
               <button className="btn sm primary" disabled={!terms.length} onClick={apply}>
                 添加到否定词
