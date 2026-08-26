@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import * as XLSX from 'xlsx';
 import { api } from '../api.js';
+import NegHelper from './NegHelper.jsx';
 import './LibraryPage.css';
 
 const TONE = { A: 'gray', B: 'amber', C: 'blue', D: 'green', E: 'violet' };
@@ -51,6 +52,7 @@ export default function LibraryPage({ market }) {
   const [facet, setFacet] = useState({ brand: '', series: '' });
   const [checked, setChecked] = useState(() => new Set());
   const [busy, setBusy] = useState(false);
+  const [helper, setHelper] = useState(false);
 
   async function load() {
     setError('');
@@ -224,6 +226,11 @@ export default function LibraryPage({ market }) {
           </p>
         </div>
         <div className="spacer" />
+        {lib.special === 'series' && scope && (
+          <button className="btn primary" onClick={() => setHelper(true)}>
+            后台否定助手
+          </button>
+        )}
         <button className="btn" onClick={exportXlsx}>导出 Excel</button>
         {canEdit && (
           <>
@@ -266,6 +273,10 @@ export default function LibraryPage({ market }) {
         })}
       </div>
 
+      {helper && (
+        <NegHelper market={market} lib={data} onClose={() => setHelper(false)} />
+      )}
+
       <div className="lib-body">
         <div className="lib-side stack">
           <div className="card">
@@ -276,6 +287,12 @@ export default function LibraryPage({ market }) {
               <div><span>更新节奏</span><b>{lib.cadence}</b></div>
               <div><span>范围</span><b>{scope ? syncText : '本站点没有这一类'}</b></div>
             </div>
+            {lib.special === 'series' && scope && (
+              <p className="hint" style={{ marginTop: 10 }}>
+                这一类也能当型号库单独用:点右上角<b>后台否定助手</b>,一次搜多个墨盒型号,
+                把墨盒型号或打印机型号复制走,直接粘进亚马逊后台的否定词框。
+              </p>
+            )}
             {lib.draft && (
               <p className="note warn" style={{ marginTop: 10 }}>
                 数据格式还没定,先按 ASIN + 品牌 + 对应墨盒型号存着,定了再调整。

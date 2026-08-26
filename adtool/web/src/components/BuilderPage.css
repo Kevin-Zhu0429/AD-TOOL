@@ -278,7 +278,8 @@
 .mini span { font-size: 10.5px; color: var(--text-faint); }
 .mini b { font-size: 17px; font-weight: 650; font-variant-numeric: tabular-nums; }
 
-.probs { margin-bottom: 11px; max-height: 132px; overflow: auto; }
+/* 提示条能自己滚,所以在吸顶预览列里要显式禁止被压扁 */
+.probs { margin-bottom: 11px; max-height: 132px; overflow: auto; flex: 0 0 auto; }
 
 .previewbox { flex: 1; min-height: 160px; max-height: none; }
 .col-preview .previewbox { max-height: calc(100vh - 330px); }

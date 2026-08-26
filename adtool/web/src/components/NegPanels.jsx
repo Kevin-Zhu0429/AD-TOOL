@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { seriesGroups } from '../adEngine.js';
-import { printerLib } from '../printerLib.js';
+import { modelKey } from '../skuMatch.js';
+import { parseQuery, printerLib } from '../printerLib.js';
 import PrinterPicker from './PrinterPicker.jsx';
 
 /**
@@ -22,10 +23,23 @@ export function LibraryNegatives({ task, lib, plan, onChange }) {
   );
   const picked = task.seriesModels ?? [];
   const pickedSet = new Set(picked.map((m) => m.toLowerCase()));
+  // 搜索框认逗号 / 换行分开的多个型号,「305, 304」一次筛出两个系列
   const shownGroups = useMemo(() => {
-    const f = modelFilter.trim().toLowerCase();
-    return f ? groups.filter((g) => g.label.toLowerCase().includes(f)) : groups;
+    const terms = parseQuery(modelFilter).map((g) => g.join(' '));
+    if (!terms.length) return groups;
+    return groups.filter((g) => terms.some((t) =>
+      g.label.toLowerCase().includes(t) || g.models.some((m) => modelKey(m) === modelKey(t))));
   }, [groups, modelFilter]);
+  const filtering = shownGroups.length !== groups.length;
+
+  /** 把筛出来的型号一次全勾上 —— 一个系列广告投好几个型号时省得一个个点 */
+  function pickShown() {
+    const add = [];
+    for (const g of shownGroups) {
+      for (const m of g.models) if (!pickedSet.has(m.toLowerCase())) add.push(m);
+    }
+    if (add.length) set({ seriesModels: [...picked, ...add] });
+  }
 
   function toggleGroup(g) {
     const on = g.models.some((m) => pickedSet.has(m.toLowerCase()));
@@ -60,10 +74,13 @@ export function LibraryNegatives({ task, lib, plan, onChange }) {
           <div className="row wrap" style={{ marginBottom: 8 }}>
             <input
               className="inp" style={{ flex: 1, minWidth: 120 }}
-              placeholder="搜墨盒型号…"
+              placeholder="搜墨盒型号…(逗号分开一次搜多个,例 305, 304)"
               value={modelFilter}
               onChange={(e) => setModelFilter(e.target.value)}
             />
+            {filtering && shownGroups.length > 0 && (
+              <button className="btn sm" onClick={pickShown}>全选搜到的 {shownGroups.length}</button>
+            )}
             {picked.length > 0 && (
               <button className="btn sm" onClick={() => set({ seriesModels: [] })}>清空</button>
             )}

@@ -76,7 +76,7 @@ export default function HomePage({ user, market, onNav, theme }) {
         {user.manualAds && (
           <EntryCard
             tone="violet" icon="sliders" title="手动广告"
-            desc="关键词投放和商品投放(ASIN / 品类定向)。关键词和 ASIN 自己粘贴,不接词表库;否定词照样联动本站词库,精准 / 词组 / 广泛可以分别给出价、也可以各自拆广告组。"
+            desc="关键词投放和商品投放(ASIN / 品类定向)。关键词和 ASIN 自己粘贴,不接词表库;否定词照样联动本站词库,精准 / 词组 / 广泛可以分别给出价、也可以各自拆广告组。出价可以自己填,也可以填目标 CPC 按溢价和系数反推。"
             meta="试用中 · 生成 xlsx 批量表"
             onClick={() => onNav('manual')}
           />
@@ -91,7 +91,7 @@ export default function HomePage({ user, market, onNav, theme }) {
         )}
         <EntryCard
           tone="green" icon="book" title={`${market} 站否定词库`}
-          desc="A 无名词 · B 非售品牌 · C 非售流量干扰墨盒 · D 在售墨盒和打印机 · E 原装竞品 ASIN。改动立即生效。"
+          desc="A 无名词 · B 非售品牌 · C 非售流量干扰墨盒 · D 在售墨盒和打印机 · E 原装竞品 ASIN。改动立即生效。D 类还能当型号库单独用:后台否定助手里一次搜多个墨盒型号,把墨盒或打印机型号复制走,直接粘进后台否定。"
           meta={user.goodsAdmin ? 'A–E 都可编辑' : 'A 类可编辑,B–E 只读'}
           onClick={() => onNav('library')}
         />

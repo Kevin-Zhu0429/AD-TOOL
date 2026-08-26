@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api.js';
+import { draftKey, dropDraft, isPristine, restoreTasks, writeDraft } from '../draft.js';
 import Icon from './Icon.jsx';
 import TaskForm from './TaskForm.jsx';
 import {
@@ -43,6 +44,24 @@ export function newTask(overrides = {}) {
   };
 }
 
+/**
+ * 草稿里的命名字段和当前版本对齐:顺序和勾选按草稿走,
+ * 后来加的字段补到末尾,已经删掉的丢掉 —— 免得以后改 NAME_TOKENS 把老草稿弄坏。
+ */
+function fixTokens(list) {
+  const known = new Map(NAME_TOKENS.map((t) => [t.id, t]));
+  const out = [];
+  const seen = new Set();
+  for (const t of list ?? []) {
+    const base = known.get(t?.id);
+    if (!base || seen.has(t.id)) continue;
+    seen.add(t.id);
+    out.push({ ...base, on: !!t.on });
+  }
+  for (const t of NAME_TOKENS) if (!seen.has(t.id)) out.push({ ...t, on: t.id !== 'bid' });
+  return out;
+}
+
 function autoTitle(task, index) {
   if (task.title.trim()) return task.title.trim();
   const autos = task.autoTypes.join('+') || '未选投放方式';
@@ -53,10 +72,19 @@ function autoTitle(task, index) {
 }
 
 export default function BuilderPage({ market }) {
+  const key = draftKey('builder', market);
+  // 填到一半切去别的页面(或者手滑刷新)不该白填一遍 —— 进来先把草稿捞回来
+  const [restored] = useState(() => {
+    const r = restoreTasks(key, newTask, 't');
+    if (!r) return null;
+    seq = Math.max(seq, r.seq);
+    return { ...r, tasks: r.tasks.map((t) => ({ ...t, tokens: fixTokens(t.tokens) })) };
+  });
   const [lib, setLib] = useState(null);
   const [libError, setLibError] = useState('');
-  const [tasks, setTasks] = useState(() => [newTask()]);
-  const [activeId, setActiveId] = useState(null);
+  const [tasks, setTasks] = useState(() => restored?.tasks ?? [newTask()]);
+  const [activeId, setActiveId] = useState(() => restored?.activeId ?? null);
+  const [fromDraft, setFromDraft] = useState(!!restored);
   const [result, setResult] = useState(null);
 
   useEffect(() => {
@@ -67,6 +95,15 @@ export default function BuilderPage({ market }) {
   useEffect(() => {
     if (!activeId && tasks.length) setActiveId(tasks[0].id);
   }, [tasks, activeId]);
+
+  // 改一下存一次(慢半拍,免得每敲一个字都写一遍 localStorage)
+  useEffect(() => {
+    const t = setTimeout(() => {
+      if (isPristine(tasks, newTask)) dropDraft(key);   // 空表单不留草稿
+      else writeDraft(key, { tasks, activeId });
+    }, 400);
+    return () => clearTimeout(t);
+  }, [key, tasks, activeId]);
 
   /** 词库数据整理成引擎要的形状:定义 + 各类行 + 本站点的套用设置 */
   const libData = useMemo(() => {
@@ -134,6 +171,17 @@ export default function BuilderPage({ market }) {
     setResult(null);
   }
 
+  /** 清空这个站点的全部任务,连本地草稿一起删 */
+  function resetAll() {
+    if (!confirm('清空这个站点的全部任务?浏览器里存的草稿也会一起删掉。')) return;
+    dropDraft(key);
+    const t = newTask();
+    setTasks([t]);
+    setActiveId(t.id);
+    setFromDraft(false);
+    setResult(null);
+  }
+
   function generate() {
     try {
       const wb = buildWorkbookData(plans);
@@ -171,7 +219,8 @@ export default function BuilderPage({ market }) {
             <span className="bhero-mk">{market} 站</span>
           </h1>
           <p className="hint">
-            一页填完:SKU、组合、命名、参数、否定,右边实时预览。
+            一页填完:SKU、组合、命名、参数、否定,右边实时预览。填的内容会自动存在这台电脑上,
+            切到别的页面再回来、或者刷新都还在。
             {libError ? ` 词库读取失败:${libError}` : ` 本站点词库共 ${libCount} 条,可在每个任务里选择是否套用。`}
           </p>
         </div>
@@ -234,6 +283,14 @@ export default function BuilderPage({ market }) {
         {totals.problems > 0 && (
           <span className="tag amber">{totals.problems} 个任务待处理</span>
         )}
+        {fromDraft && (
+          <span className="tag gray" title="上次填的内容存在这台电脑的浏览器里,已经帮你恢复">
+            草稿已恢复
+          </span>
+        )}
+        <button className="btn sm ghost" onClick={resetAll} title="清空这个站点的全部任务">
+          清空重来
+        </button>
         <button className="btn primary" disabled={blocked} onClick={generate}>
           <Icon name="download" className="ico-sm" />
           生成总表并下载

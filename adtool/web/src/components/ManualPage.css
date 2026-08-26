@@ -29,3 +29,27 @@
 }
 .unitbox-name b { font-weight: 600; }
 .bidmini { width: 78px; padding: 4px 7px; font-size: 12px; }
+
+/* 出价框下面那行「目标 CPC 0.36 ÷ 2 → 出价 0.18」 */
+.unitbox-bid { margin: -2px 0 7px; }
+
+/* ---------- 最终 CPC ---------- */
+.cpcbox {
+  margin-top: 13px;
+  padding: 12px;
+  background: var(--bg-2);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+}
+.cpcbox .coefbox-title { margin-bottom: 9px; }
+.cpctbl { background: var(--panel); border-radius: var(--radius); overflow: hidden; }
+.cpctbl th, .cpctbl td { padding: 5px 9px; }
+.cpctbl tbody tr.drv { background: var(--accent-soft); }
+
+/*
+ * 预览列是吸顶的,有高度上限;里面的提示条不能跟着被压扁,
+ * 否则错误信息只剩半行(能滚动的元素在 flex 里默认是可以被压到 0 的)。
+ */
+.mform .col-preview .probs,
+.mform .col-preview .minigrid { flex: 0 0 auto; }
+.mform .col-preview .sec { overflow: hidden; }

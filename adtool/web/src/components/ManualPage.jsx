@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api.js';
+import { draftKey, dropDraft, isPristine, restoreTasks, writeDraft } from '../draft.js';
 import Icon from './Icon.jsx';
 import ManualForm from './ManualForm.jsx';
 import { parseLines, buildNegatives, downloadWorkbook, todayStamp } from '../adEngine.js';
-import { buildManualPlan, buildManualWorkbookData, MATCH_TYPES, TARGET_TYPES } from '../manualEngine.js';
+import {
+  buildManualPlan, buildManualWorkbookData, DEFAULT_COEFS, MATCH_TYPES, TARGET_TYPES,
+} from '../manualEngine.js';
 import './BuilderPage.css';
 import './ManualPage.css';
 
@@ -28,6 +31,11 @@ function newManualTask(overrides = {}) {
     defBid: 0.3,
     strategy: 'down',
     places: { TOS: '', ROS: '', PP: '' },
+    // 出价:bid = 自己填出价;cpc = 填目标 CPC,按溢价和系数反推出价(和自动广告页一个口径)
+    bidMode: 'bid',
+    baseBid: 0.36,
+    rounding: 'round',
+    coefs: { ...DEFAULT_COEFS },
     skus: '',
     mode: 'kw',                // kw = 关键词投放;tgt = 商品投放(ASIN / 品类)
     splitGroup: false,
@@ -44,10 +52,18 @@ function newManualTask(overrides = {}) {
 }
 
 export default function ManualPage({ market }) {
+  const key = draftKey('manual', market);
+  // 和自动广告页一样:填到一半切页面 / 刷新都不丢,进来先把草稿捞回来
+  const [restored] = useState(() => {
+    const r = restoreTasks(key, newManualTask, 'm');
+    if (r) seq = Math.max(seq, r.seq);
+    return r;
+  });
   const [lib, setLib] = useState(null);
   const [libError, setLibError] = useState('');
-  const [tasks, setTasks] = useState(() => [newManualTask()]);
-  const [activeId, setActiveId] = useState(null);
+  const [tasks, setTasks] = useState(() => restored?.tasks ?? [newManualTask()]);
+  const [activeId, setActiveId] = useState(() => restored?.activeId ?? null);
+  const [fromDraft, setFromDraft] = useState(!!restored);
   const [result, setResult] = useState(null);
 
   useEffect(() => {
@@ -58,6 +74,14 @@ export default function ManualPage({ market }) {
   useEffect(() => {
     if (!activeId && tasks.length) setActiveId(tasks[0].id);
   }, [tasks, activeId]);
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      if (isPristine(tasks, newManualTask)) dropDraft(key);   // 空表单不留草稿
+      else writeDraft(key, { tasks, activeId });
+    }, 400);
+    return () => clearTimeout(t);
+  }, [key, tasks, activeId]);
 
   const libData = useMemo(() => {
     const config = {};
@@ -128,6 +152,17 @@ export default function ManualPage({ market }) {
     setResult(null);
   }
 
+  /** 清空这个站点的全部活动,连本地草稿一起删 */
+  function resetAll() {
+    if (!confirm('清空这个站点的全部活动?浏览器里存的草稿也会一起删掉。')) return;
+    dropDraft(key);
+    const t = newManualTask();
+    setTasks([t]);
+    setActiveId(t.id);
+    setFromDraft(false);
+    setResult(null);
+  }
+
   function generate() {
     try {
       const wb = buildManualWorkbookData(plans);
@@ -166,6 +201,7 @@ export default function ManualPage({ market }) {
           </h1>
           <p className="hint">
             关键词投放和商品投放(ASIN 定向)。关键词和 ASIN 自己粘贴,不接任何词表库;
+            填的内容会自动存在这台电脑上,切到别的页面再回来、或者刷新都还在;
             {libError ? ` 词库读取失败:${libError}` : ` 否定词仍然联动本站词库(共 ${libCount} 条)。`}
           </p>
         </div>
@@ -227,6 +263,14 @@ export default function ManualPage({ market }) {
         {totals.problems > 0 && (
           <span className="tag amber">{totals.problems} 条活动待处理</span>
         )}
+        {fromDraft && (
+          <span className="tag gray" title="上次填的内容存在这台电脑的浏览器里,已经帮你恢复">
+            草稿已恢复
+          </span>
+        )}
+        <button className="btn sm ghost" onClick={resetAll} title="清空这个站点的全部活动">
+          清空重来
+        </button>
         <button className="btn primary" disabled={blocked} onClick={generate}>
           <Icon name="download" className="ico-sm" />
           生成总表并下载

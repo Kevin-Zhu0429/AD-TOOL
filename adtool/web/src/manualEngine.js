@@ -10,16 +10,19 @@
  * 这里全是纯函数,不碰 DOM。
  */
 import {
-  HEADERS, C, SHEET, PLACEMENTS, PLACE_ROWS, MIN_BID, KW_MAX_CHARS, parseLines,
+  HEADERS, C, SHEET, PLACEMENTS, PLACE_ROWS, ORDER, MIN_BID, KW_MAX_CHARS, parseLines,
 } from './adEngine.js';
 
 const W = HEADERS.length;
 
-/* 竞价方案: 界面短名 -> 表格写入值(手动广告不参与命名,所以不带后缀) */
+/*
+ * 竞价方案: 界面短名 -> 表格写入值(手动广告不参与命名,所以不带后缀)
+ * factor = 亚马逊还会在广告位上自己往上加价,折算出价时要多除一个系数
+ */
 export const MANUAL_STRATEGIES = [
-  { id: 'down', label: '仅降低', sheet: '动态竞价 - 仅降低' },
-  { id: 'updown', label: '提高和降低', sheet: '动态竞价 - 提高和降低' },
-  { id: 'fixed', label: '固定竞价', sheet: '固定竞价' },
+  { id: 'down', label: '仅降低', sheet: '动态竞价 - 仅降低', factor: false },
+  { id: 'updown', label: '提高和降低', sheet: '动态竞价 - 提高和降低', factor: true },
+  { id: 'fixed', label: '固定竞价', sheet: '固定竞价', factor: false },
 ];
 
 /* 匹配类型: id 就是写进「匹配类型」列的值 */
@@ -47,6 +50,65 @@ const AUTO_EXPR = ['close-match', 'loose-match', 'substitutes', 'complements'];
 
 export function strategyOf(id) {
   return MANUAL_STRATEGIES.find((s) => s.id === id) ?? MANUAL_STRATEGIES[0];
+}
+
+/* ---------------- 出价 ↔ 落地 CPC ---------------- */
+
+/** 广告位默认系数,和自动广告页同一份(PLACEMENTS 第四列) */
+export const DEFAULT_COEFS = Object.fromEntries(PLACEMENTS.map(([k, , , c]) => [k, c]));
+
+/** 「提高和降低」才打系数,仅降低 / 固定竞价一律 ×1 —— 和自动广告页口径一致 */
+export function placeCoef(place, strategyId, coefs) {
+  if (!strategyOf(strategyId).factor) return 1;
+  const p = PLACEMENTS.find((x) => x[0] === place);
+  if (!p) return 1;
+  const v = Number(coefs?.[place]);
+  return isFinite(v) && v > 0 ? v : p[3];
+}
+
+/**
+ * 每个广告位把出价放大多少倍:(1 + 溢价) × 系数,按 TOS / ROS / PP 的顺序给。
+ * 溢价填 0 的广告位不参与折算(系数按 ×1 算)—— 和自动广告页「不加溢价就不打系数」一个口径。
+ */
+export function placeFactors(places, strategyId, coefs) {
+  return ORDER.map((key) => {
+    const raw = Number(String(places?.[key] ?? '').trim());
+    const pct = isFinite(raw) && raw > 0 ? raw : 0;
+    const coef = pct > 0 ? placeCoef(key, strategyId, coefs) : 1;
+    return { key, pct, coef, factor: Math.round((1 + pct / 100) * coef * 1000) / 1000 };
+  });
+}
+
+/** 一条活动按最贵的那个广告位折算,保证任何位置的落地 CPC 都不超过目标 */
+export function topFactor(rows) {
+  let factor = 1;
+  let driver = null;
+  for (const r of rows || []) {
+    if (r.factor > factor) {
+      factor = r.factor;
+      driver = r.key;
+    }
+  }
+  return { factor: Math.round(factor * 1000) / 1000, driver };
+}
+
+export function roundBid(value, rounding) {
+  const v = Number(value);
+  if (!isFinite(v)) return 0;
+  return rounding === 'trunc'
+    ? Math.floor(v * 100) / 100
+    : Math.round((v + Number.EPSILON) * 100) / 100;
+}
+
+/** 目标 CPC -> 出价 */
+export function bidFromCpc(cpc, factor, rounding) {
+  return roundBid((Number(cpc) || 0) / (factor || 1), rounding);
+}
+
+/** 出价 -> 各广告位的落地 CPC(实际会被扣到多少钱) */
+export function landedCpc(bid, rows) {
+  const b = Number(bid) || 0;
+  return (rows || []).map((r) => ({ ...r, cpc: Math.round(b * r.factor * 1000) / 1000 }));
 }
 
 /* ---------------- 关键词 / 投放表达式 ---------------- */
@@ -154,13 +216,8 @@ export function buildManualPlan(task, negData) {
     warnings.push(`每日预算 ${rawBudget} 低于常见最低值 ${MIN_BUDGET},亚马逊可能拒绝`);
   }
 
-  const rawDefBid = num(task.defBid);
-  if (rawDefBid === null || isNaN(rawDefBid)) problems.push('广告组默认竞价必须是数字');
-  else if (rawDefBid < MIN_BID) problems.push(`广告组默认竞价不能低于 ${MIN_BID}(当前 ${rawDefBid})`);
-
   // 填得不对时后面的预览还要照常算,先给个兜底值(这时 problems 已经拦住生成了)
   const budget = rawBudget === null || isNaN(rawBudget) ? 0 : rawBudget;
-  const defBid = rawDefBid === null || isNaN(rawDefBid) ? MIN_BID : rawDefBid;
 
   const places = {};
   for (const [key] of PLACEMENTS) {
@@ -172,14 +229,55 @@ export function buildManualPlan(task, negData) {
     places[key] = v;
   }
 
+  // 出价:要么自己填,要么填目标 CPC 由溢价和系数反推(和自动广告页同一套折算)
+  const bidMode = task.bidMode === 'cpc' ? 'cpc' : 'bid';
+  const rounding = task.rounding === 'trunc' ? 'trunc' : 'round';
+  const coefs = { ...DEFAULT_COEFS, ...(task.coefs ?? {}) };
+  const factors = placeFactors(places, task.strategy, coefs);
+  const { factor, driver } = topFactor(factors);
+
+  let defBid;
+  let baseCpc = null;
+  if (bidMode === 'cpc') {
+    const raw = num(task.baseBid);
+    if (raw === null || isNaN(raw)) {
+      problems.push('目标 CPC 必须是数字');
+      defBid = MIN_BID;
+    } else {
+      baseCpc = raw;
+      defBid = bidFromCpc(raw, factor, rounding);
+      if (!(defBid >= MIN_BID)) {
+        problems.push(
+          `目标 CPC ${raw} 按 ÷${factor} 折算出来是 ${defBid},低于亚马逊最低出价 ${MIN_BID}`
+        );
+      }
+    }
+  } else {
+    const raw = num(task.defBid);
+    if (raw === null || isNaN(raw)) problems.push('广告组默认竞价必须是数字');
+    else if (raw < MIN_BID) problems.push(`广告组默认竞价不能低于 ${MIN_BID}(当前 ${raw})`);
+    defBid = raw === null || isNaN(raw) ? MIN_BID : raw;
+  }
+
   const skus = parseLines(task.skus);
   if (!skus.length) problems.push('至少要填一个投放 SKU');
 
+  // 留空 = 用广告组默认竞价;CPC 模式下填进来的数字也是目标 CPC,一样要折算
   const bidOf = (raw, name) => {
     const v = num(raw);
-    if (v === null) return defBid;                          // 留空 = 用广告组默认竞价
-    if (isNaN(v)) { problems.push(`${name}必须是数字`); return defBid; }
-    if (v < MIN_BID) problems.push(`${name}不能低于 ${MIN_BID}(当前 ${v})`);
+    if (v === null) return defBid;
+    if (isNaN(v)) {
+      problems.push(`${name}${bidMode === 'cpc' ? '的目标 CPC' : '出价'}必须是数字`);
+      return defBid;
+    }
+    if (bidMode === 'cpc') {
+      const b = bidFromCpc(v, factor, rounding);
+      if (!(b >= MIN_BID)) {
+        problems.push(`${name}的目标 CPC ${v} 折算成出价是 ${b},低于亚马逊最低出价 ${MIN_BID}`);
+      }
+      return b;
+    }
+    if (v < MIN_BID) problems.push(`${name}出价不能低于 ${MIN_BID}(当前 ${v})`);
     return v;
   };
 
@@ -196,7 +294,7 @@ export function buildManualPlan(task, negData) {
       const words = parseKeywordLines(cfg.text);
       if (!words.length) continue;
       anyInput = true;
-      const bid = bidOf(cfg.bid, `${mt.label}出价`);
+      const bid = bidOf(cfg.bid, mt.label);
       const items = [];
       for (const w of words) {
         const text = formatKeyword(w, mt.id);
@@ -226,7 +324,7 @@ export function buildManualPlan(task, negData) {
       const raws = parseLines(cfg.text);
       if (!raws.length) continue;
       anyInput = true;
-      const bid = bidOf(cfg.bid, `${tt.label}出价`);
+      const bid = bidOf(cfg.bid, tt.label);
       const items = [];
       for (const raw of raws) {
         const bad = targetProblem(raw, tt.id);
@@ -285,6 +383,10 @@ export function buildManualPlan(task, negData) {
     budget,
     defBid,
     strategy: strategyOf(task.strategy).sheet,
+    // 出价折算:factor 是按最贵的广告位算的倍数,landing 是各位置的落地 CPC
+    bidMode, baseCpc, factor, driver, rounding, coefs,
+    factors,
+    landing: landedCpc(defBid, factors),
     campNegs, groupNegs, asins, targets, rows,
     problems, warnings,
     series: negData?.series ?? null,

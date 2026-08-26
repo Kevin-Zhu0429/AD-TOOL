@@ -1,0 +1,33 @@
+/* 后台否定助手:左边搜 + 勾,右边出词 + 复制。外壳沿用 SkuPicker.css / PrinterPicker.css */
+
+.pickbox.neghelp { width: min(1080px, 100%); max-height: min(760px, 92vh); }
+
+.neghelp-body {
+  display: grid;
+  grid-template-columns: 1.35fr 1fr;
+  gap: 12px;
+  min-height: 0;
+  flex: 1;
+}
+.neghelp-pane {
+  display: flex; flex-direction: column; gap: 9px;
+  min-height: 0; min-width: 0;
+}
+.neghelp-q { font-size: 12.5px; }
+.neghelp-terms { max-height: 62px; overflow: auto; }
+.neghelp-terms .chip { cursor: default; }
+.neghelp-terms .chip.miss { border-color: var(--amber); color: var(--amber-text); }
+.neghelp-seg { margin-bottom: 0; grid-template-columns: 1fr; }
+.neghelp-mini { margin-bottom: 0; }
+.neghelp-out {
+  flex: 1;
+  min-height: 150px;
+  font-family: var(--mono);
+  font-size: 12px;
+  resize: none;
+}
+
+@media (max-width: 860px) {
+  .neghelp-body { grid-template-columns: 1fr; overflow: auto; }
+  .neghelp-out { min-height: 120px; }
+}
