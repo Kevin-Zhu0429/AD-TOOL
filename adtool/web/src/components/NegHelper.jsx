@@ -3,7 +3,8 @@ import { buildSeriesNegatives } from '../adEngine.js';
 import { copyText } from '../clipboard.js';
 import {
   printerLib, printerFacets, printerSeriesMap, printerTerm, modelTerms,
-  searchPrinters, queryReport, pickedTerms, rowsModels, joinTerms, TERM_SEPS,
+  searchPrinters, queryReport, pickedTerms, rowsModels, joinTerms,
+  SEARCH_FIELDS, TERM_SEPS,
 } from '../printerLib.js';
 import './SkuPicker.css';
 import './PrinterPicker.css';
@@ -41,9 +42,18 @@ const SCOPES = [
   ['printers', '只否打印机型号'],
 ];
 
+/** 搜索框按搜哪一列换提示语 —— 大部分时候是拿一串墨盒型号来搜 */
+const PLACEHOLDER = {
+  model: '一次搜多个墨盒型号:305, 304, 951XL\n(逗号 / 换行分开 = 或;从 Excel 整列粘进来也认)',
+  printer: '一次搜多个打印机机型:2540, DeskJet 3750\n(逗号 / 换行分开 = 或;系列名和机型号都能搜)',
+  all: '型号 / 机型 / 品牌 / 系列都搜:305, DeskJet 2540\n(逗号 / 换行分开 = 或,空格分开 = 两个词都要命中)',
+};
+
 export default function NegHelper({ market, lib, onClose }) {
   const { spec, items, scope } = useMemo(() => printerLib(lib), [lib]);
   const [query, setQuery] = useState('');
+  // 搜哪一列:默认只搜墨盒型号 —— 搜 305 时不该把「墨盒 302、机型 3050」那种行也捞出来
+  const [field, setField] = useState('model');
   const [facet, setFacet] = useState({ brand: '', series: '' });
   const [picked, setPicked] = useState(() => new Set());
   const [mode, setMode] = useState('pick');
@@ -54,8 +64,14 @@ export default function NegHelper({ market, lib, onClose }) {
 
   const facets = useMemo(() => printerFacets(items), [items]);
   const seriesMap = useMemo(() => printerSeriesMap(items), [items]);
-  const hits = useMemo(() => searchPrinters(items, query, facet), [items, query, facet]);
-  const report = useMemo(() => queryReport(items, query, facet), [items, query, facet]);
+  const hits = useMemo(
+    () => searchPrinters(items, query, facet, field),
+    [items, query, facet, field]
+  );
+  const report = useMemo(
+    () => queryReport(items, query, facet, field),
+    [items, query, facet, field]
+  );
   const misses = report.filter((r) => !r.count);
   const shown = hits.slice(0, SHOW_MAX);
 
@@ -66,7 +82,7 @@ export default function NegHelper({ market, lib, onClose }) {
     setPicked(filtered ? new Set(hits.map((r) => r.id)) : new Set());
   }, [hits, filtered]);
 
-  useEffect(() => { setCopied(''); }, [query, facet, picked, mode, pick, negScope, sep]);
+  useEffect(() => { setCopied(''); }, [query, field, facet, picked, mode, pick, negScope, sep]);
 
   const pickedRows = useMemo(() => hits.filter((r) => picked.has(r.id)), [hits, picked]);
   const models = useMemo(() => rowsModels(pickedRows), [pickedRows]);
@@ -125,15 +141,26 @@ export default function NegHelper({ market, lib, onClose }) {
           <>
             <p className="hint">
               在后台手动开广告 / 手动否定时用:一次搜多个墨盒型号 → 勾中要否的行 → 复制 → 粘进后台的否定词框。
-              不生成批量表,也不改词库。
+              不生成批量表,也不改词库。搜之前先选<b>搜哪一列</b> —— 305 这种数字在别的系列里可能是机型号,
+              只想要 305 墨盒的行就搜墨盒型号那一列。
             </p>
 
             <div className="neghelp-body">
               {/* ---------- 左:搜 + 勾 ---------- */}
               <div className="neghelp-pane">
+                <div className="row wrap neghelp-field">
+                  <span className="hint">搜哪一列</span>
+                  {SEARCH_FIELDS.map(([id, label]) => (
+                    <button
+                      key={id}
+                      className={`btn sm${field === id ? ' primary' : ''}`}
+                      onClick={() => setField(id)}
+                    >{label}</button>
+                  ))}
+                </div>
                 <textarea
                   className="inp neghelp-q" rows={2} autoFocus
-                  placeholder={'一次搜多个墨盒型号:305, 304, 3720\n(逗号 / 换行分开 = 或,空格分开 = 两个词都要命中;从 Excel 整列粘进来也认)'}
+                  placeholder={PLACEHOLDER[field]}
                   value={query} onChange={(e) => setQuery(e.target.value)}
                 />
                 <div className="row wrap pickbar">
@@ -169,8 +196,10 @@ export default function NegHelper({ market, lib, onClose }) {
                 )}
                 {misses.length > 0 && (
                   <p className="hint printwarn">
-                    这 {misses.length} 个在 {spec?.id ?? 'D'} 类库里没找到:
-                    {misses.map((m) => m.label).join('、')} —— 确认有没有写错,或者让商品部补进库里。
+                    这 {misses.length} 个在 {spec?.id ?? 'D'} 类库的
+                    {SEARCH_FIELDS.find(([id]) => id === field)?.[1]}里没找到:
+                    {misses.map((m) => m.label).join('、')} —— 确认有没有写错、是不是该换一列搜,
+                    或者让商品部补进库里。
                   </p>
                 )}
 

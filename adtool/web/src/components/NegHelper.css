@@ -31,3 +31,7 @@
   .neghelp-body { grid-template-columns: 1fr; overflow: auto; }
   .neghelp-out { min-height: 120px; }
 }
+
+/* 搜哪一列:墨盒型号 / 打印机机型 / 全部 */
+.neghelp-field { gap: 6px; margin-bottom: 7px; }
+.neghelp-field .hint { margin-right: 1px; }

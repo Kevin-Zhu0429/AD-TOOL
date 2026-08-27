@@ -1,6 +1,9 @@
 /**
  * D 类「在售墨盒型号和相关打印机」当打印机库用的前端小工具:搜索 + 把挑中的行变成否定词。
  *
+ * 搜索可以限定搜哪一列(见 SEARCH_FIELDS):305 既是墨盒型号也可能是别的系列的机型号,
+ * 只想要 305 墨盒的行时就把搜索限定在墨盒型号这一列。
+ *
  * 和系列广告的联动否定(adEngine.buildSeriesNegatives)是两回事:
  * 那边是「留下要投的系列,其余全否」,整库反推;这里是运营自己搜某个型号 / 机型,
  * 手动挑几条加进本任务的否定词框。判重复数字的口径两边保持一致 ——
@@ -63,18 +66,45 @@ export function modelTerms(row) {
 }
 
 /**
+ * 搜哪一列 —— 305 这种数字既是墨盒型号也可能是别的系列的机型号,
+ * 不分开搜就会把「墨盒是 302、机型叫 3050」这种行也捞出来。
+ *  model   只搜墨盒型号
+ *  printer 只搜打印机(系列名 + 机型号,搜 DeskJet 或 2540 都行)
+ *  all     四列都搜,和以前一样
+ */
+export const SEARCH_FIELDS = [
+  ['model', '墨盒型号'],
+  ['printer', '打印机机型'],
+  ['all', '全部'],
+];
+
+/** 这一行参与匹配的原文 */
+function fieldTexts(row, field) {
+  if (field === 'model') return [row.term];
+  if (field === 'printer') return [row.series, row.printer];
+  return [row.brand, row.term, row.series, row.printer];
+}
+
+/** 这一行参与「型号归一」比对的值(输 301XL 也能查到 301) */
+function fieldModels(row, field) {
+  if (field === 'model') return modelTerms(row);
+  if (field === 'printer') return [row.printer];
+  return [...modelTerms(row), row.printer];
+}
+
+/**
  * 一个词命不命中这一行:
  * 先按普通包含匹配(输 301 能查到 301XL、输 DeskJet 能查到整个系列),
  * 再按型号归一键比一次(输 301XL 也能查到 301、输 PG-545 能查到 545)。
+ * field 决定拿这一行的哪几列去比。
  */
-function hitsTerm(row, term) {
+function hitsTerm(row, term, field) {
   const t = String(term ?? '').toLowerCase();
   if (!t) return true;
-  const fields = [row.brand, row.term, row.series, row.printer]
-    .map((v) => String(v ?? '').toLowerCase());
-  if (fields.some((f) => f.includes(t))) return true;
+  const texts = fieldTexts(row, field).map((v) => String(v ?? '').toLowerCase());
+  if (texts.some((f) => f.includes(t))) return true;
   const k = modelKey(t);
-  return !!k && [...modelTerms(row), row.printer].filter(Boolean).map(modelKey).includes(k);
+  return !!k && fieldModels(row, field).filter(Boolean).map(modelKey).includes(k);
 }
 
 /**
@@ -91,22 +121,24 @@ export function parseQuery(text) {
 const facetOk = (row, facet) =>
   (!facet?.brand || row.brand === facet.brand) && (!facet?.series || row.series === facet.series);
 
-/** 搜索:任意一组词全部命中就算命中 */
-export function searchPrinters(rows, query, facet = {}) {
+/** 搜索:任意一组词全部命中就算命中。field 见 SEARCH_FIELDS,默认四列都搜 */
+export function searchPrinters(rows, query, facet = {}, field = 'all') {
   const groups = parseQuery(query);
   return (rows || []).filter((r) => {
     if (!facetOk(r, facet)) return false;
     if (!groups.length) return true;
-    return groups.some((g) => g.every((t) => hitsTerm(r, t)));
+    return groups.some((g) => g.every((t) => hitsTerm(r, t, field)));
   });
 }
 
 /** 一次搜多个型号时,每个型号各命中几行 —— 用来提示哪几个型号库里根本没有 */
-export function queryReport(rows, query, facet = {}) {
+export function queryReport(rows, query, facet = {}, field = 'all') {
   const groups = parseQuery(query);
   return groups.map((g) => ({
     label: g.join(' '),
-    count: (rows || []).filter((r) => facetOk(r, facet) && g.every((t) => hitsTerm(r, t))).length,
+    count: (rows || []).filter(
+      (r) => facetOk(r, facet) && g.every((t) => hitsTerm(r, t, field))
+    ).length,
   }));
 }
 
