@@ -84,7 +84,7 @@ export default function HomePage({ user, market, onNav, theme }) {
         {user.adOpt && (
           <EntryCard
             tone="blue" icon="chart" title="广告优化"
-            desc="把后台下载的批量表拖进来,逐条活动看广告位 / SKU / 投放 / 搜索词的表现,改竞价、调溢价、批量否定,最后导出能直接回传的批量表。多载入几期数据还能按时间段合并着看。"
+            desc="把后台下载的批量表拖进来,逐条活动看广告位 / SKU / 投放 / 搜索词的表现,改竞价、调溢价、批量否定,最后导出能直接回传的批量表。批量否定可以直接勾本站词库的 A–E 类,D 类还能按在投的墨盒型号反推该否掉的其它型号。"
             meta="试用中 · 数据只在本机浏览器里解析"
             onClick={() => onNav('optimizer')}
           />

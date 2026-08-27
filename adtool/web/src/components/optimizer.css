@@ -277,11 +277,37 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px;background:var(--ca
 .bnitem:hover{background:var(--hover)}
 .bnitem input{margin-top:3px}
 .bnitem .t{flex:1;min-width:0}
-.bnitem .nm2{font-weight:600;word-break:break-all;line-height:1.35}
-.bnitem .s2{color:var(--ink45);font-size:11px;margin-top:1px}
+.bnitem .nm2{display:block;font-weight:600;word-break:break-all;line-height:1.35}
+.bnitem .s2{display:block;color:var(--ink45);font-size:11px;margin-top:1px}
 .bnitem .f2{font-family:var(--mono);font-size:11px;color:var(--ink70);white-space:nowrap;text-align:right}
 #bnSum{font-size:12px}
 #bnSum b{font-family:var(--mono);color:var(--ink);font-size:13px}
+
+/* ---------- 批量否定 · 从否定词库取词 ---------- */
+.bnwrap .lbl{font-size:11px;color:var(--ink45);letter-spacing:.08em;display:block;margin-bottom:5px}
+.bnlib{width:334px;flex:none}
+.bnlibhead{display:flex;align-items:baseline;gap:8px}
+.bnlibhead .muted{font-size:11px;font-family:var(--mono)}
+.bnlibcats{margin:0 0 8px}
+.bnlib .chip{display:inline-flex;align-items:center;gap:5px}
+.chip-sub{font-family:var(--mono);font-size:10px;opacity:.7}
+.chip.off{opacity:.42;cursor:default}
+.chip.off:hover{border-color:var(--line)}
+.bnfollow{display:flex;gap:7px;align-items:flex-start;font-size:12px;color:var(--ink70);cursor:pointer;margin-bottom:4px}
+.bnfollow input{margin-top:2px}
+.bnfollow .muted{font-family:var(--mono);font-size:10.5px;display:block;margin-top:2px;line-height:1.5}
+.bnsub{font-size:11px;color:var(--ink45);line-height:1.6;margin:6px 0}
+.bnseries{border:1px solid var(--line);border-left:3px solid var(--cy);border-radius:0 3px 3px 0;padding:8px 10px;margin:4px 0 10px;background:var(--head)}
+.bnseries .bnsub{margin:0 0 6px}
+.bnseries .bnbar{margin:0 0 6px}
+.bnmodels{max-height:118px;overflow-y:auto;margin:0 0 6px}
+.bnterms{max-height:238px}
+.bnterm{display:flex;gap:8px;align-items:center;padding:5px 10px;border-bottom:1px solid var(--line2);cursor:pointer;font-size:12px}
+.bnterm:last-child{border-bottom:0}
+.bnterm:hover{background:var(--hover)}
+.bnterm.off{opacity:.45}
+.bnterm .t3{flex:1;min-width:0;word-break:break-all}
+.bnterm .s3{color:var(--ink45);font-size:10.5px;white-space:nowrap}
 
 /* ---------- 搜索词下钻子表 ---------- */
 .subrow>td{background:var(--hover);padding:0 14px 0 32px;border-bottom:1px solid var(--line);border-left:3px solid var(--cy)}

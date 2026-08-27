@@ -53,7 +53,8 @@ export default function App() {
     ) : page === 'manual' && user.manualAds ? (
       <ManualPage key={market} market={market} />
     ) : page === 'optimizer' && user.adOpt ? (
-      <OptimizerPage theme={theme} />
+      // 工作台里载的批量表跟站点无关,切站点不重挂载(改动会丢),只换一份词库
+      <OptimizerPage theme={theme} market={market} />
     ) : page === 'skus' ? (
       <SkuPage key={market} market={market} />
     ) : page === 'library' ? (
