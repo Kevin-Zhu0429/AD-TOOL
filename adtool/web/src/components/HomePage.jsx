@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
+import { CHANGELOG, VERSION, hasUnseen } from '../changelog.js';
 import Icon from './Icon.jsx';
 import CloudShader from './CloudShader.jsx';
 import './HomePage.css';
@@ -19,7 +20,7 @@ function EntryCard({ tone, icon, title, desc, meta, onClick }) {
   );
 }
 
-export default function HomePage({ user, market, onNav, theme }) {
+export default function HomePage({ user, market, onNav, theme, onOpenChangelog }) {
   const [libCount, setLibCount] = useState(null);
   const [noWebgl, setNoWebgl] = useState(false);
 
@@ -33,6 +34,9 @@ export default function HomePage({ user, market, onNav, theme }) {
       .catch(() => alive && setLibCount(0));
     return () => { alive = false; };
   }, [market]);
+
+  const latest = CHANGELOG[0];
+  const unseen = hasUnseen(user.seenVersion);
 
   const hour = new Date().getHours();
   const greet = hour < 6 ? '这么晚还在忙' : hour < 12 ? '早上好' : hour < 18 ? '下午好' : '晚上好';
@@ -110,6 +114,27 @@ export default function HomePage({ user, market, onNav, theme }) {
           />
         )}
       </div>
+
+      <section className={`home-log${unseen ? ' unseen' : ''}`}>
+        <div className="home-log-head">
+          <span className="home-log-label">更新日志</span>
+          <span className="tag gray mono">v{VERSION}</span>
+          {unseen && <span className="tag blue">有新更新</span>}
+          <span className="hint">{latest.date}</span>
+          <div className="spacer" />
+          <button className="btn sm" onClick={onOpenChangelog}>查看全部</button>
+        </div>
+        <h2 className="home-log-title">{latest.title}</h2>
+        <ul className="home-log-items">
+          {latest.items.slice(0, 3).map((t, i) => <li key={i}>{t}</li>)}
+        </ul>
+        {latest.items.length > 3 && (
+          <button className="home-log-more" onClick={onOpenChangelog}>
+            还有 {latest.items.length - 3} 条,以及更早的版本
+            <Icon name="down" className="ico-sm" />
+          </button>
+        )}
+      </section>
     </div>
   );
 }

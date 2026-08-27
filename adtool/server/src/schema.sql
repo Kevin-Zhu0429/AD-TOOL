@@ -12,6 +12,8 @@ PRAGMA foreign_keys = ON;
 -- goods_admin: 商品部维护权,B/C/D/E 四类词库归他们管
 -- manual_ads : 手动广告页的使用权。这一页还在试用期,默认谁都没有,由超级管理员逐个开
 -- ad_opt     : 广告优化工作台的使用权。同样在试用期,默认全关,由超级管理员逐个开
+-- seen_version: 这个人看过的更新日志版本号。比它新的更新会在首页自动弹一次,
+--               看过就不再弹,直到下次发新版。存在账号上,换台电脑登录也不会重复弹
 CREATE TABLE IF NOT EXISTS users (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   username      TEXT    NOT NULL UNIQUE,
@@ -24,6 +26,7 @@ CREATE TABLE IF NOT EXISTS users (
   manual_ads    INTEGER NOT NULL DEFAULT 0,
   ad_opt        INTEGER NOT NULL DEFAULT 0,
   is_active     INTEGER NOT NULL DEFAULT 1,
+  seen_version  TEXT    NOT NULL DEFAULT '',
   created_at    TEXT    NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
 

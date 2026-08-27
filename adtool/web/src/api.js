@@ -19,6 +19,9 @@ export const api = {
     request('/auth/profile', { method: 'PATCH', body: { displayName } }),
   changePassword: (oldPassword, newPassword) =>
     request('/auth/change-password', { method: 'POST', body: { oldPassword, newPassword } }),
+  // 记下这个人看过的更新日志版本,下次登录不再自动弹同一版
+  seenVersion: (version) =>
+    request('/auth/seen-version', { method: 'POST', body: { version } }),
 
   listUsers: () => request('/auth/users'),
   createUser: (body) => request('/auth/users', { method: 'POST', body }),

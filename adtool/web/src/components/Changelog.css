@@ -1,0 +1,62 @@
+/* 更新日志弹窗 + 右下角版本号(弹窗外壳沿用 SkuPicker.css 的 pickmask / pickbox) */
+.logbox { width: min(560px, 100%); }
+
+.loglist { max-height: min(56vh, 460px); padding: 4px 2px; }
+
+.logrel {
+  padding: 13px 14px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.logrel:last-child { border-bottom: none; }
+/* 没看过的那几条左边亮一条 */
+.logrel.new {
+  border-left: 2px solid var(--accent);
+  background: var(--accent-soft);
+  border-radius: 0 var(--radius) var(--radius) 0;
+}
+
+.logmeta { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.logver { font-size: 12.5px; color: var(--text-dim); }
+.logdate { font-size: 11px; color: var(--text-faint); }
+
+.logtitle { font-size: 13.5px; margin-bottom: 7px; }
+
+.logitems {
+  margin: 0;
+  padding-left: 17px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+  line-height: 1.72;
+}
+.logitems li { margin-bottom: 2px; }
+.logitems li::marker { color: var(--text-faint); }
+
+/* ---------- 右下角版本号 ---------- */
+.verbadge {
+  position: fixed;
+  right: 14px;
+  bottom: 12px;
+  z-index: 25;
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 10px;
+  border-radius: 20px;
+  border: 1px solid var(--border-soft);
+  background: var(--panel);
+  color: var(--text-faint);
+  font-size: 11px;
+  box-shadow: var(--shadow-sm);
+  opacity: .72;
+  transition: all .15s var(--ease);
+}
+.verbadge:hover { opacity: 1; color: var(--text-dim); border-color: var(--border); }
+.verbadge.unseen { opacity: 1; color: var(--accent-text); border-color: var(--accent-line); }
+
+.verdot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+@media (max-width: 560px) {
+  .verbadge { right: 10px; bottom: 8px; }
+}
