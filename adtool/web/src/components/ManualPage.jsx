@@ -4,6 +4,7 @@ import { draftKey, dropDraft, isPristine, restoreTasks, writeDraft } from '../dr
 import Icon from './Icon.jsx';
 import ManualForm from './ManualForm.jsx';
 import { parseLines, buildNegatives, downloadWorkbook, todayStamp } from '../adEngine.js';
+import { normLibData } from '../negLib.js';
 import {
   buildManualPlan, buildManualWorkbookData, DEFAULT_COEFS, MATCH_TYPES, TARGET_TYPES,
 } from '../manualEngine.js';
@@ -83,13 +84,7 @@ export default function ManualPage({ market }) {
     return () => clearTimeout(t);
   }, [key, tasks, activeId]);
 
-  const libData = useMemo(() => {
-    const config = {};
-    for (const c of lib?.config ?? []) {
-      config[c.lib] = { enabled: c.enabled !== 0, matchType: c.match_type, level: c.level };
-    }
-    return { libs: lib?.libs ?? [], items: lib?.items ?? {}, config, scopes: lib?.scopes ?? {} };
-  }, [lib]);
+  const libData = useMemo(() => normLibData(lib), [lib]);
 
   const plans = useMemo(
     () => tasks.map((task) => ({ task, plan: buildManualPlan(task, buildNegatives(libData, task)) })),

@@ -77,14 +77,15 @@ var VOCAB = {
     state: { enabled: '已启用', paused: '已暂停', archived: '已存档' },
     op:    { create: '创建', update: '更新', archive: '存档' },
     neg:   { phrase: '否定词组', exact: '否定精准匹配' },
-    entity:{ negKeyword: '否定关键词', campNegKw: '广告活动否定关键词' },
+    entity:{ negKeyword: '否定关键词', campNegKw: '广告活动否定关键词', negTarget: '否定商品定向' },
     product: '商品推广'
   },
   en: {
     state: { enabled: 'enabled', paused: 'paused', archived: 'archived' },
     op:    { create: 'Create', update: 'Update', archive: 'Archive' },
     neg:   { phrase: 'negativePhrase', exact: 'negativeExact' },
-    entity:{ negKeyword: 'Negative Keyword', campNegKw: 'Campaign Negative Keyword' },
+    entity:{ negKeyword: 'Negative Keyword', campNegKw: 'Campaign Negative Keyword',
+             negTarget: 'Negative Product Targeting' },
     product: 'Sponsored Products'
   }
 };
@@ -499,12 +500,14 @@ function totals(model) {
 /* ===========================================================
    变更管理
    changes: { rowIndex: { colIdx: newValue, ... } }
-   creates: [ {kind:'negKeyword'|'campNegKw', campaignId, adGroupId, text, match, campaignName, adGroupName} ]
+   creates: [ {kind:'negKeyword'|'campNegKw'|'negTarget', campaignId, adGroupId, text, match, campaignName, adGroupName} ]
+   negTarget 是否定商品定向(ASIN),text 直接写 asin="B0…",只有广告组级
    =========================================================== */
 function ChangeSet() {
   this.edits = {};   // rowIndex -> {col: {from, to, field}}
   this.creates = [];
   this.seq = 0;
+  this.keys = {};    // 新增否定的去重索引:词库一次能塞进来几千条,逐条回头找会卡死
 }
 ChangeSet.prototype.set = function (rowIndex, col, from, to, field) {
   if (!this.edits[rowIndex]) this.edits[rowIndex] = {};
@@ -529,18 +532,36 @@ ChangeSet.prototype.count = function () {
 ChangeSet.prototype.rowCount = function () {
   return Object.keys(this.edits).length + this.creates.length;
 };
+ChangeSet.prototype.negKey = function (o) {
+  return o.campaignId + '|' + o.adGroupId + '|' + String(o.text).toLowerCase() + '|' + o.match;
+};
 ChangeSet.prototype.addNegative = function (obj) {
+  var k = this.negKey(obj);
+  if (this.keys[k]) return false;
   obj._id = ++this.seq;
-  var dup = this.creates.some(function (x) {
-    return x.campaignId === obj.campaignId && x.adGroupId === obj.adGroupId &&
-           String(x.text).toLowerCase() === String(obj.text).toLowerCase() && x.match === obj.match;
-  });
-  if (dup) return false;
+  this.keys[k] = 1;
   this.creates.push(obj);
   return true;
 };
 ChangeSet.prototype.removeCreate = function (id) {
-  this.creates = this.creates.filter(function (x) { return x._id !== id; });
+  var self = this;
+  this.creates = this.creates.filter(function (x) {
+    if (x._id !== id) return true;
+    delete self.keys[self.negKey(x)];
+    return false;
+  });
+};
+/** 从进度文件恢复时用:直接给 creates 赋值会漏掉去重索引 */
+ChangeSet.prototype.setCreates = function (list) {
+  var self = this;
+  this.creates = [];
+  this.keys = {};
+  (list || []).forEach(function (x) {
+    var k = self.negKey(x);
+    if (self.keys[k]) return;
+    self.keys[k] = 1;
+    self.creates.push(x);
+  });
 };
 
 /* ---------- 取当前值（含未导出的改动） ---------- */
@@ -574,8 +595,17 @@ function validate(model, changes) {
     });
   });
   changes.creates.forEach(function (n) {
-    if (!String(n.text || '').trim()) issues.push({ level: 'error', text: '否定词为空' });
-    if (String(n.text || '').split(/\s+/).length > 10) issues.push({ level: 'warn', text: '否定词「' + n.text + '」超过 10 个单词，亚马逊可能拒收' });
+    if (!String(n.text || '').trim()) { issues.push({ level: 'error', text: '否定词为空' }); return; }
+    if (n.kind === 'negTarget') {
+      if (!/^asin="B0[0-9A-Z]{8}"$/.test(String(n.text))) {
+        issues.push({ level: 'error', text: '否定商品定向「' + n.text + '」不是 asin="B0…" 的写法' });
+      }
+      if (!String(n.adGroupId || '').trim()) {
+        issues.push({ level: 'error', text: '否定商品定向「' + n.text + '」缺广告组编号，后台只收广告组级' });
+      }
+      return;
+    }
+    if (String(n.text).split(/\s+/).length > 10) issues.push({ level: 'warn', text: '否定词「' + n.text + '」超过 10 个单词，亚马逊可能拒收' });
   });
   return issues;
 }
@@ -600,13 +630,18 @@ function buildExportRows(model, changes, opts) {
   changes.creates.forEach(function (n) {
     var d = new Array(model.header.length).fill(null);
     if (c.product >= 0) d[c.product] = voc.product;
-    if (c.entity >= 0) d[c.entity] = n.kind === 'campNegKw' ? voc.entity.campNegKw : voc.entity.negKeyword;
+    if (c.entity >= 0) d[c.entity] = voc.entity[n.kind] || voc.entity.negKeyword;
     if (c.operation >= 0) d[c.operation] = voc.op.create;
     if (c.campaignId >= 0) d[c.campaignId] = n.campaignId;
     if (c.adGroupId >= 0 && n.kind !== 'campNegKw') d[c.adGroupId] = n.adGroupId;
     if (c.state >= 0) d[c.state] = voc.state.enabled;
-    if (c.keywordText >= 0) d[c.keywordText] = n.text;
-    if (c.matchType >= 0) d[c.matchType] = n.match === 'exact' ? voc.neg.exact : voc.neg.phrase;
+    if (n.kind === 'negTarget') {
+      // 否定商品定向写在商品投放表达式列,没有关键词文本和匹配类型
+      if (c.targetExpr >= 0) d[c.targetExpr] = n.text;
+    } else {
+      if (c.keywordText >= 0) d[c.keywordText] = n.text;
+      if (c.matchType >= 0) d[c.matchType] = n.match === 'exact' ? voc.neg.exact : voc.neg.phrase;
+    }
     out.push(d);
   });
 
@@ -640,8 +675,10 @@ function changeList(model, changes) {
   changes.creates.forEach(function (n) {
     list.push({
       createId: n._id, campaign: n.campaignName, adGroup: n.kind === 'campNegKw' ? '(活动级)' : n.adGroupName,
-      entity: n.kind === 'campNegKw' ? '广告活动否定关键词' : '否定关键词',
-      object: n.text, field: '新增否定', from: '', to: n.match === 'exact' ? '否定精准匹配' : '否定词组', type: 'create'
+      entity: n.kind === 'campNegKw' ? '广告活动否定关键词'
+            : n.kind === 'negTarget' ? '否定商品定向' : '否定关键词',
+      object: n.text, field: '新增否定', type: 'create', from: '',
+      to: n.kind === 'negTarget' ? '否定商品定向' : n.match === 'exact' ? '否定精准匹配' : '否定词组'
     });
   });
   return list;

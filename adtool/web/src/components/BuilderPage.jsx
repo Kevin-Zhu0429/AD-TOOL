@@ -7,6 +7,7 @@ import {
   AUTO_TYPES, STRATEGIES, NAME_TOKENS, parseLines,
   buildNegatives, buildTaskPlan, buildWorkbookData, downloadWorkbook, todayStamp,
 } from '../adEngine.js';
+import { normLibData } from '../negLib.js';
 import './BuilderPage.css';
 
 let seq = 1;
@@ -106,13 +107,7 @@ export default function BuilderPage({ market }) {
   }, [key, tasks, activeId]);
 
   /** 词库数据整理成引擎要的形状:定义 + 各类行 + 本站点的套用设置 */
-  const libData = useMemo(() => {
-    const config = {};
-    for (const c of lib?.config ?? []) {
-      config[c.lib] = { enabled: c.enabled !== 0, matchType: c.match_type, level: c.level };
-    }
-    return { libs: lib?.libs ?? [], items: lib?.items ?? {}, config, scopes: lib?.scopes ?? {} };
-  }, [lib]);
+  const libData = useMemo(() => normLibData(lib), [lib]);
 
   /** 每个任务各自算一遍计划,词库按任务开关决定带不带 */
   const plans = useMemo(() => {

@@ -5,6 +5,7 @@
  */
 import * as XLSX from 'xlsx';
 import * as C from './optCore.js';
+import * as NL from './negLib.js';
 
 const MARKUP = `
 <div class="app">
@@ -118,13 +119,13 @@ const MARKUP = `
   <footer><button class="btn" data-close>取消</button><button class="btn pri" id="setSave">保存并重算</button></footer>
 </div></div>
 
-<div class="mask" id="maskBneg"><div class="modal" style="max-width:960px">
+<div class="mask" id="maskBneg"><div class="modal" style="max-width:1180px">
   <header><h3>批量否定</h3><span class="muted">把一批否定词一次性加到多个广告活动</span><div style="flex:1"></div><button class="btn sm" data-close>关闭</button></header>
   <div class="body">
     <div class="bnwrap">
       <div class="bnleft">
-        <span class="lbl">否定词</span>
-        <textarea id="bnText" rows="8" placeholder="一行一个，也可以用逗号分隔&#10;&#10;305&#10;hp 305 xl&#10;canon 545, canon 546"></textarea>
+        <span class="lbl">自己填的否定词</span>
+        <textarea id="bnText" rows="7" placeholder="一行一个，也可以用逗号分隔&#10;&#10;305&#10;hp 305 xl&#10;canon 545, canon 546"></textarea>
         <div class="bnopts">
           <div><span class="lbl">匹配方式</span><select id="bnMatch"><option value="phrase">否定词组</option><option value="exact">否定精准匹配</option></select></div>
           <div><span class="lbl">否定范围</span><select id="bnScope">
@@ -132,6 +133,11 @@ const MARKUP = `
             <option value="adgroup">广告组级（活动下每个广告组各一条）</option>
           </select></div>
         </div>
+        <div class="bnsub">这两项管的是自己填的词；从词库来的词默认跟词库里设的走。</div>
+      </div>
+      <div class="bnlib">
+        <div class="bnlibhead"><span class="lbl">从否定词库取词</span><span class="muted" id="bnLibMk"></span></div>
+        <div id="bnLibBody"></div>
       </div>
       <div class="bnright">
         <span class="lbl">选择广告活动</span>
@@ -169,8 +175,10 @@ const MARKUP = `
 `;
 
 /**
- * 把工作台挂到 root 上(document 片段或 shadowRoot 都行),返回卸载函数。
+ * 把工作台挂到 root 上(document 片段或 shadowRoot 都行)。
  * host 是接收拖拽的那个元素。
+ * 返回 { unmount, setLibrary } —— 站点否定词库由外面的 React 页面拉好再送进来,
+ * 批量否定就能直接用词库里的词。
  */
 export function mountOptimizer(root, host) {
   root.innerHTML = MARKUP;
@@ -187,6 +195,9 @@ export function mountOptimizer(root, host) {
     // terms 是搜索词原始行(按天下载的报告一个词有很多行),上界面前合并成整期一行
     terms:[], periodTouched:false,
     checked:{}, stAll:false, stTgt:'', expT:{}, stRptName:'', bnSel:{}, bnQ:'', bnPf:'',
+    // 否定词库(站点级,页面挂载后由 setLibrary 送进来)和批量否定里的选词状态
+    lib:null, libErr:'', market:'',
+    bnLib:{on:{},follow:true,q:'',off:{},models:[],only:'both',mq:'',ver:0,_sig:'',_all:[]},
     view:'work', an:{tab:'sku',byAsin:false,q:'',pf:'',minClicks:0,mark:'',tf:'',kf:'',exp:{},stSel:{},
       skuSub:{},skuExcl:{},sku:'',skuOnlyEx:false,_skuStList:[],adSel:{},_skuAds:[],
       sort:{sku:{k:'clicks',d:-1},term:{k:'spend',d:-1},kw:{k:'spend',d:-1},pf:{k:'spend',d:-1}}}
@@ -527,7 +538,8 @@ export function mountOptimizer(root, host) {
     var form='<div class="negform">'+
       '<div class="negleft"><span class="lbl">否定词</span>'+
         '<textarea id="negText" rows="5" placeholder="一行一个，也可以用逗号分隔，支持整段粘贴&#10;&#10;305&#10;hp 305 xl&#10;canon 545, canon 546"></textarea>'+
-        '<div class="neghint">一次可以贴很多个词，重复的会自动跳过。要删掉已有的否定词，把下面表里那一行的状态改成「已存档」。</div></div>'+
+        '<div class="neghint">一次可以贴很多个词，重复的会自动跳过。要删掉已有的否定词，把下面表里那一行的状态改成「已存档」。'+
+        '要按站点否定词库整类否，点右边的「批量否定到多个活动…」。</div></div>'+
       '<div class="negright">'+
         '<div><span class="lbl">匹配方式</span><select id="negMatch"><option value="phrase">否定词组</option><option value="exact">否定精准匹配</option></select></div>'+
         '<div><span class="lbl">否定范围</span><select id="negScope"><option value="adgroup">广告组级</option><option value="campaign">活动级</option></select></div>'+
@@ -536,7 +548,8 @@ export function mountOptimizer(root, host) {
         '<button class="btn" id="negBulk">批量否定到多个活动…</button>'+
       '</div></div>';
     var pendHtml=pend.length?'<table class="tbl"><thead><tr><th>待新增否定词</th><th>匹配</th><th>范围</th><th>广告组</th><th></th></tr></thead><tbody>'+
-      pend.map(function(n){return '<tr><td class="nmcell"><b>'+esc(n.text)+'</b></td><td><span class="tag cy">'+(n.match==='exact'?'否定精准':'否定词组')+'</span></td>'+
+      pend.map(function(n){return '<tr><td class="nmcell"><b>'+esc(n.text)+'</b></td><td><span class="tag cy">'+
+        (n.kind==='negTarget'?'商品定向':n.match==='exact'?'否定精准':'否定词组')+'</span></td>'+
         '<td>'+(n.kind==='campNegKw'?'活动级':'广告组级')+'</td><td class="muted">'+esc(n.adGroupName||'-')+'</td>'+
         '<td><button class="btn sm" data-rmneg="'+n._id+'">撤销</button></td></tr>'}).join('')+'</tbody></table>':'';
     var exist=cp.negatives.length?'<table class="tbl"><thead><tr><th>已有否定</th><th>类型</th><th>匹配</th><th>范围</th><th>广告组</th><th>状态</th></tr></thead><tbody>'+
@@ -570,10 +583,21 @@ export function mountOptimizer(root, host) {
         '<button class="btn sm" data-neg="'+i+'" data-match="phrase">词组</button> '+
         '<button class="btn sm" data-neg="'+i+'" data-match="exact">精准</button>')+'</td></tr>';
   }
+  /**
+   * 搜索词那几张表每一行都要问一次「这个词加过否定没有」,
+   * 而变更清单在词库批量否定之后可能有上万条,所以按变更清单的状态建一次索引再查。
+   */
+  function negatedIdx(){
+    var sig=S.changes.creates.length+'|'+S.changes.seq;
+    if(S._negSig!==sig){
+      var m={};
+      S.changes.creates.forEach(function(n){ m[n.campaignId+'|'+String(n.text).toLowerCase()]=1 });
+      S._negSig=sig; S._negIdx=m;
+    }
+    return S._negIdx;
+  }
   function alreadyNegated(campaignId,text){
-    return S.changes.creates.some(function(n){
-      return n.campaignId===campaignId && String(n.text).toLowerCase()===String(text).toLowerCase();
-    });
+    return !!negatedIdx()[campaignId+'|'+String(text).toLowerCase()];
   }
   function stTab(cp){
     if(!S.model.searchTerms.length)
@@ -693,6 +717,8 @@ export function mountOptimizer(root, host) {
   }
 
   /* ---------- 批量否定 ---------- */
+  var BN_TERM_MAX=300, BN_MODEL_MAX=160;
+
   function bnMatchSame(raw,match){
     var t=String(raw||'');
     return match==='exact' ? /精准|exact/i.test(t) : /词组|phrase/i.test(t);
@@ -713,36 +739,102 @@ export function mountOptimizer(root, host) {
     });
     return out;
   }
-  function bnPlan(){
-    var words=bnWords(), match=$('#bnMatch').value, scope=$('#bnScope').value;
-    var c=S.model.colIdx, out=[], skip=0, camps=0, groups=0;
+
+  /* ---------- 批量否定 · 词库 ---------- */
+  function bnLibOn(){ return Object.keys(S.bnLib.on).filter(function(k){return S.bnLib.on[k]}) }
+  /**
+   * 选中的几类词库能出的全部词(还没减掉界面上取消勾选的)。
+   * 整库出词不便宜,而且填一个字就要重算一次汇总,所以按选择状态缓存住。
+   */
+  function bnLibAll(){
+    if(!S.lib)return [];
+    var sel={
+      on:S.bnLib.on, follow:S.bnLib.follow,
+      match:$('#bnMatch').value, scope:$('#bnScope').value,
+      models:S.bnLib.models, only:S.bnLib.only
+    };
+    var sig=S.bnLib.ver+'|'+bnLibOn().sort().join(',')+'|'+(sel.follow?'f':sel.match+sel.scope)+
+            '|'+sel.only+'|'+S.bnLib.models.join(',');
+    if(S.bnLib._sig!==sig){ S.bnLib._sig=sig; S.bnLib._all=NL.libEntries(S.lib,sel); }
+    return S.bnLib._all;
+  }
+  /** 真正要否的那些:减掉手动取消勾选的词 */
+  function bnLibPicked(){
+    return bnLibAll().filter(function(en){ return !S.bnLib.off[NL.entryKey(en)] });
+  }
+  /** 自己填的词 + 词库挑中的词,合成一张待否定清单 */
+  function bnEntries(){
+    var match=$('#bnMatch').value, scope=$('#bnScope').value;
+    var out=[],seen={};
+    var push=function(en){
+      var k=(en.asin?'a|':'k|')+String(en.text).toLowerCase()+'|'+en.match+'|'+en.scope;
+      if(seen[k])return; seen[k]=1; out.push(en);
+    };
+    // 自己填的优先,同一个词词库里再出现就不重复排一遍
+    bnWords().forEach(function(w){ push({lib:'',text:w,asin:false,match:match,scope:scope}) });
+    bnLibPicked().forEach(push);
+    return out;
+  }
+
+  /**
+   * 这条活动已有的否定索引 —— 已存档的不算,可以重新加回来。
+   * 词库一来就是几百上千个词 × 几十条活动,逐个线性找会卡,所以每次算计划先建一次索引。
+   */
+  function bnNegIndex(cp){
+    var have={};
+    cp.negatives.forEach(function(nn){
+      if(C.normState(curVal(nn.row,S.model.colIdx.state))==='archived')return;
+      if(nn.kind==='negTarget'){ have['t|'+nn.adGroupId+'|'+NL.asinCode(nn.text)]=1; return }
+      var m=bnMatchSame(nn.matchType,'exact')?'exact':bnMatchSame(nn.matchType,'phrase')?'phrase':'';
+      if(!m)return;
+      var at=nn.kind==='campNegKw'?'c|':'g|'+nn.adGroupId+'|';
+      have['k|'+at+String(nn.text).toLowerCase()+'|'+m]=1;
+    });
+    return have;
+  }
+
+  /** collect=false 只出数字(填汇总用),true 才真的把行建出来 */
+  function bnPlan(collect){
+    var entries=bnEntries();
+    var out=[], n=0, skip=0, camps=0, groups=0, kw=0, asin=0, perGroup=false;
+    var add=function(r){ n++; if(collect)out.push(r) };
+    entries.forEach(function(en){
+      if(en.asin){asin++;perGroup=true}
+      else{kw++; if(en.scope!=='campaign')perGroup=true}
+    });
     Object.keys(S.bnSel).forEach(function(id){
       if(!S.bnSel[id])return;
       var cp=S.model.byCamp[id]; if(!cp)return;
       camps++; groups+=cp.adGroups.length;
-      words.forEach(function(wd){
-        var lw=wd.toLowerCase();
-        if(scope==='campaign'){
-          var ex=cp.negatives.some(function(nn){
-            return nn.kind==='campNegKw'&&String(nn.text).toLowerCase()===lw&&bnMatchSame(nn.matchType,match)&&
-                   C.normState(curVal(nn.row,c.state))!=='archived';
-          });
-          if(ex){skip++;return}
-          out.push({kind:'campNegKw',campaignId:cp.id,adGroupId:'',text:wd,match:match,campaignName:cp.name,adGroupName:''});
-        }else{
+      var have=bnNegIndex(cp);
+      entries.forEach(function(en){
+        // 否定商品定向后台只收广告组级,活动下每个广告组各写一条
+        if(en.asin){
+          var code=String(en.text).toUpperCase(), expr=NL.asinExpr(en.text);
           cp.adGroups.forEach(function(g){
-            var ex2=cp.negatives.some(function(nn){
-              return nn.kind==='negKeyword'&&nn.adGroupId===g.id&&String(nn.text).toLowerCase()===lw&&
-                     bnMatchSame(nn.matchType,match)&&C.normState(curVal(nn.row,c.state))!=='archived';
-            });
-            if(ex2){skip++;return}
-            out.push({kind:'negKeyword',campaignId:cp.id,adGroupId:g.id,text:wd,match:match,campaignName:cp.name,adGroupName:g.name});
+            if(have['t|'+g.id+'|'+code]){skip++;return}
+            add({kind:'negTarget',campaignId:cp.id,adGroupId:g.id,text:expr,match:'',
+              campaignName:cp.name,adGroupName:g.name});
           });
+          return;
         }
+        var lw=String(en.text).toLowerCase();
+        if(en.scope==='campaign'){
+          if(have['k|c|'+lw+'|'+en.match]){skip++;return}
+          add({kind:'campNegKw',campaignId:cp.id,adGroupId:'',text:en.text,match:en.match,
+            campaignName:cp.name,adGroupName:''});
+          return;
+        }
+        cp.adGroups.forEach(function(g){
+          if(have['k|g|'+g.id+'|'+lw+'|'+en.match]){skip++;return}
+          add({kind:'negKeyword',campaignId:cp.id,adGroupId:g.id,text:en.text,match:en.match,
+            campaignName:cp.name,adGroupName:g.name});
+        });
       });
     });
-    return {rows:out,skip:skip,words:words.length,camps:camps,groups:groups};
+    return {rows:out,n:n,skip:skip,words:entries.length,kw:kw,asin:asin,camps:camps,groups:groups,perGroup:perGroup};
   }
+
   function renderBnList(){
     var list=bnCamps();
     $('#bnList').innerHTML=list.map(function(cp){
@@ -755,53 +847,239 @@ export function mountOptimizer(root, host) {
     renderBnSum();
   }
   function renderBnSum(){
-    var p=bnPlan();
+    var p=bnPlan(false);
     var sel=Object.keys(S.bnSel).filter(function(k){return S.bnSel[k]}).length;
     if(!p.words||!sel){
-      $('#bnSum').innerHTML='已选 <b>'+sel+'</b> 个活动 · '+(p.words?('<b>'+p.words+'</b> 个词'):'还没填否定词');
+      $('#bnSum').innerHTML='已选 <b>'+sel+'</b> 个活动 · '+(p.words?('<b>'+p.words+'</b> 个词'):'还没选否定词');
     }else{
-      $('#bnSum').innerHTML=p.words+' 个词 × '+p.camps+' 个活动'+
-        ($('#bnScope').value==='adgroup'?'（'+p.groups+' 个广告组）':'')+
-        ' → 新增 <b>'+p.rows.length+'</b> 条'+(p.skip?'，跳过 <b>'+p.skip+'</b> 条已存在':'');
+      $('#bnSum').innerHTML=p.words+' 个词'+(p.asin?'（含 '+p.asin+' 个 ASIN）':'')+' × '+p.camps+' 个活动'+
+        (p.perGroup?'（'+p.groups+' 个广告组）':'')+
+        ' → 新增 <b>'+p.n+'</b> 条'+(p.skip?'，跳过 <b>'+p.skip+'</b> 条已存在':'');
     }
-    $('#bnGo').disabled=!p.rows.length;
+    $('#bnGo').disabled=!p.n;
   }
+
+  /** 词条右边那行小字:这个词会怎么否 */
+  function bnEntryHow(en){
+    if(en.asin)return '否定商品定向 · 广告组级';
+    return (en.match==='exact'?'否定精准':'否定词组')+' · '+(en.scope==='campaign'?'活动级':'广告组级');
+  }
+  /** 词库面板:选类 + D 类联动 + 逐词勾选,整块重画 */
+  function renderBnLib(){
+    var box=$('#bnLibBody'); if(!box)return;
+    $('#bnLibMk').textContent=S.market?S.market+' 站词库':'';
+    if(S.libErr){ box.innerHTML='<div class="empty">词库没载入：'+esc(S.libErr)+'</div>'; return; }
+    if(!S.lib){ box.innerHTML='<div class="empty">词库载入中…</div>'; return; }
+
+    var cats=NL.libCatalog(S.lib);
+    var chips=cats.map(function(cat){
+      var n=cat.special==='series'?cat.rows:cat.kw.length+cat.asin.length;
+      var usable=!!cat.scope&&n>0;
+      var on=usable&&!!S.bnLib.on[cat.id];
+      var tip=cat.name+(cat.scope?' · '+cat.scope.scope+' 库 '+cat.rows+' 行':' · 本站没有这一类')+
+        (cat.enabled?'':' · 站点已停用');
+      return '<span class="chip'+(on?' on':'')+(usable?'':' off')+'"'+(usable?' data-bnlib="'+esc(cat.id)+'"':'')+
+        ' title="'+esc(tip)+'">'+esc(cat.id+' '+cat.name)+
+        '<span class="chip-sub">'+(cat.scope?(n?n:'空'):'本站没有')+'</span></span>';
+    }).join('');
+
+    var picked=cats.filter(function(cat){return S.bnLib.on[cat.id]});
+    var how=picked.map(function(cat){
+      return cat.id+' '+(cat.match==='exact'?'精准':'词组')+'·'+(cat.level==='campaign'?'活动级':'广告组级');
+    }).join(' · ');
+    var follow='<label class="bnfollow"><input type="checkbox" id="bnFollow"'+(S.bnLib.follow?' checked':'')+'>'+
+      '<span>按词库里设的匹配方式和层级'+(S.bnLib.follow&&how?'<span class="muted"> '+esc(how)+'</span>':'')+'</span></label>';
+    var offNote=picked.some(function(cat){return !cat.enabled})
+      ? '<div class="bnsub">勾中的类里有「站点已停用」的 —— 生成新广告时不带它，这里是你手动挑的，照样会否。</div>' : '';
+
+    var dcat=cats.filter(function(cat){return cat.special==='series'})[0];
+    var series=(dcat&&S.bnLib.on[dcat.id])?bnSeriesHtml(dcat):'';
+
+    var filtering=!!S.bnLib.q;
+    var terms=bnLibOn().length
+      ? '<div class="bnbar"><input type="text" id="bnLibQ" placeholder="筛这些词…" value="'+esc(S.bnLib.q)+'">'+
+        '<button class="btn sm" data-bnpick="all">'+(filtering?'全选筛出的':'全选')+'</button>'+
+        '<button class="btn sm" data-bnpick="none">'+(filtering?'去掉筛出的':'全不选')+'</button></div>'+
+        '<div class="bnlist bnterms" id="bnTermList"></div>'+
+        '<div class="bnsub" id="bnTermCount"></div>'
+      : '<div class="empty">上面点一类，这里就出词</div>';
+
+    box.innerHTML='<div class="chips bnlibcats">'+chips+'</div>'+follow+offNote+series+terms;
+    if(series)renderBnModels();
+    // renderBnTerms 末尾会刷汇总;一个类都没选时没有词条列表,自己刷一次
+    if(bnLibOn().length)renderBnTerms(); else renderBnSum();
+  }
+  /** D 类:先说清楚这些活动在投哪几个墨盒型号,再反推其余该否掉的 */
+  function bnSeriesHtml(dcat){
+    var plan=NL.seriesPlan(S.lib,S.bnLib.models,S.bnLib.only);
+    var only=[['both','墨盒 + 打印机'],['models','只否墨盒'],['printers','只否打印机']].map(function(x){
+      return '<button class="btn sm'+(S.bnLib.only===x[0]?' pri':'')+'" data-bnonly="'+x[0]+'">'+x[1]+'</button>';
+    }).join('');
+    return '<div class="bnseries">'+
+      '<div class="bnsub">这些活动在投的墨盒型号 —— 留下它们，'+esc(dcat.id)+' 类里其余的墨盒和打印机型号全否掉，'+
+        '和开系列广告时一个口径。所以只在「都在投同一批型号」的活动上一起用。</div>'+
+      '<div class="bnbar"><input type="text" id="bnModelQ" placeholder="搜墨盒型号…（逗号分开一次搜多个）" value="'+esc(S.bnLib.mq)+'">'+
+        (S.bnLib.models.length?'<button class="btn sm" data-bnmodel-clear="1">清空 '+S.bnLib.models.length+' 个</button>':'')+'</div>'+
+      '<div class="chips bnmodels" id="bnModels"></div>'+
+      '<div class="bnbar">'+only+'</div>'+
+      (plan
+        ? '<div class="bnsub">投放 '+S.bnLib.models.length+' 个型号 → 否掉 '+plan.series.models.length+' 个墨盒 / '+
+          plan.series.printers.length+' 个打印机'+
+          (plan.series.unknown.length?'。这些型号库里没有：'+esc(plan.series.unknown.join('、')):'')+'</div>'
+        : '<div class="bnsub">先选在投的墨盒型号，这里才算得出该否掉哪些。</div>')+
+      '</div>';
+  }
+  /** D 类型号组,只重画列表本身,搜索框不动 */
+  function renderBnModels(){
+    var box=$('#bnModels'); if(!box)return;
+    var groups=NL.seriesModelGroups(S.lib);
+    var picked={}; S.bnLib.models.forEach(function(m){picked[String(m).toLowerCase()]=1});
+    // 搜索框逗号 / 换行分开的是「或」,一次搜多个型号
+    var q=S.bnLib.mq.toLowerCase().split(/[,，、;；\n]+/).map(function(x){return x.trim()}).filter(Boolean);
+    var shown=groups.filter(function(g){
+      if(!q.length)return true;
+      return q.some(function(t){return g.label.toLowerCase().indexOf(t)>=0});
+    });
+    box.innerHTML=shown.slice(0,BN_MODEL_MAX).map(function(g){
+      var on=g.models.some(function(m){return picked[m.toLowerCase()]});
+      return '<span class="chip'+(on?' on':'')+'" data-bnmodel="'+esc(g.label)+'" title="'+g.count+' 台打印机">'+
+        esc(g.label)+'<span class="chip-sub">'+g.count+'</span></span>';
+    }).join('')+
+      (shown.length>BN_MODEL_MAX?'<span class="muted">…还有 '+(shown.length-BN_MODEL_MAX)+' 个，搜一下缩小范围</span>':'')+
+      (shown.length?'':'<span class="muted">'+(groups.length?'没有匹配的型号':'这个区域的 D 类还没有数据')+'</span>');
+  }
+  /** 词条列表,只重画列表本身,筛选框不动 */
+  function renderBnTerms(){
+    var box=$('#bnTermList'); if(!box)return;
+    var all=bnLibAll();
+    var q=S.bnLib.q.toLowerCase();
+    var shown=q?all.filter(function(en){return String(en.text).toLowerCase().indexOf(q)>=0}):all;
+    box.innerHTML=shown.slice(0,BN_TERM_MAX).map(function(en){
+      var k=NL.entryKey(en), off=!!S.bnLib.off[k];
+      return '<label class="bnterm'+(off?' off':'')+'"><input type="checkbox" data-bnt="'+esc(k)+'"'+(off?'':' checked')+'>'+
+        '<span class="t3 mono">'+esc(en.text)+'</span><span class="tag">'+esc(en.lib)+'</span>'+
+        '<span class="s3">'+esc(bnEntryHow(en))+'</span></label>';
+    }).join('')||'<div class="empty">'+(all.length?'没有匹配的词':'这几类还没出词')+'</div>';
+    renderBnTermCount(all.length,shown.length);
+  }
+  function renderBnTermCount(total,shown){
+    var cnt=$('#bnTermCount');
+    if(cnt){
+      var all=total===undefined?bnLibAll().length:total;
+      cnt.textContent='词库出 '+all+' 个词，勾中 '+bnLibPicked().length+' 个'+
+        (shown>BN_TERM_MAX?'（列表只显示前 '+BN_TERM_MAX+' 个，勾选和统计算的是全部）':'');
+    }
+    renderBnSum();
+  }
+  function bnSetOff(list,off){
+    list.forEach(function(en){
+      var k=NL.entryKey(en);
+      if(off)S.bnLib.off[k]=1; else delete S.bnLib.off[k];
+    });
+  }
+
   function openBneg(){
     if(!S.model){toast('先载入批量表');return}
     var set={};S.model.campaigns.forEach(function(c2){if(c2.portfolio)set[c2.portfolio]=1});
     $('#bnPf').innerHTML='<option value="">全部广告组合</option>'+Object.keys(set).sort().map(function(x){
       return '<option'+(S.bnPf===x?' selected':'')+'>'+esc(x)+'</option>'}).join('');
     $('#bnSrch').value=S.bnQ;
+    renderBnLib();
     renderBnList();
     $('#maskBneg').classList.add('on');
   }
   $('#btnBneg').onclick=openBneg;
   $('#maskBneg').addEventListener('click',function(e){
-    var b=e.target.closest('[data-bnsel]'); if(!b)return;
-    var op=b.dataset.bnsel;
-    if(op==='none')S.bnSel={};
-    else{
-      var src=op==='rail'?filteredCamps():bnCamps();
-      src.forEach(function(cp){
-        if(op==='spend'&&cp.m.spend<=0)return;
-        if(op==='enabled'&&cp.state!=='enabled')return;
-        S.bnSel[cp.id]=1;
-      });
+    var b=e.target.closest('[data-bnsel]');
+    if(b){
+      var op=b.dataset.bnsel;
+      if(op==='none')S.bnSel={};
+      else{
+        var src=op==='rail'?filteredCamps():bnCamps();
+        src.forEach(function(cp){
+          if(op==='spend'&&cp.m.spend<=0)return;
+          if(op==='enabled'&&cp.state!=='enabled')return;
+          S.bnSel[cp.id]=1;
+        });
+      }
+      renderBnList();
+      return;
     }
-    renderBnList();
+    var cat=e.target.closest('[data-bnlib]');
+    if(cat){
+      var id=cat.dataset.bnlib;
+      if(S.bnLib.on[id])delete S.bnLib.on[id]; else S.bnLib.on[id]=1;
+      renderBnLib();
+      return;
+    }
+    var only=e.target.closest('[data-bnonly]');
+    if(only){ S.bnLib.only=only.dataset.bnonly; renderBnLib(); return; }
+    var mg=e.target.closest('[data-bnmodel]');
+    if(mg){
+      var label=mg.dataset.bnmodel;
+      var group=NL.seriesModelGroups(S.lib).filter(function(g){return g.label===label})[0];
+      if(group){
+        var has={};S.bnLib.models.forEach(function(m){has[String(m).toLowerCase()]=1});
+        var on=group.models.some(function(m){return has[m.toLowerCase()]});
+        var drop={};group.models.forEach(function(m){drop[m.toLowerCase()]=1});
+        S.bnLib.models=on
+          ? S.bnLib.models.filter(function(m){return !drop[String(m).toLowerCase()]})
+          : S.bnLib.models.concat(group.models.filter(function(m){return !has[m.toLowerCase()]}));
+      }
+      renderBnLib();
+      return;
+    }
+    if(e.target.closest('[data-bnmodel-clear]')){
+      S.bnLib.models=[]; renderBnLib(); return;
+    }
+    var bt=e.target.closest('[data-bnpick]');
+    if(bt){
+      var q=S.bnLib.q.toLowerCase();
+      var list=bnLibAll().filter(function(en){return !q||String(en.text).toLowerCase().indexOf(q)>=0});
+      bnSetOff(list,bt.dataset.bnpick==='none');
+      renderBnTerms();
+      return;
+    }
   });
   $('#maskBneg').addEventListener('change',function(e){
     var el=e.target;
     if(el.dataset.bnid!==undefined){ S.bnSel[el.dataset.bnid]=el.checked; renderBnSum(); return; }
+    if(el.dataset.bnt!==undefined){
+      if(el.checked)delete S.bnLib.off[el.dataset.bnt]; else S.bnLib.off[el.dataset.bnt]=1;
+      var row=el.closest('.bnterm'); if(row)row.classList.toggle('off',!el.checked);
+      renderBnTermCount();
+      return;
+    }
+    if(el.id==='bnFollow'){ S.bnLib.follow=el.checked; renderBnLib(); return; }
     if(el.id==='bnPf'){ S.bnPf=el.value; renderBnList(); return; }
-    if(el.id==='bnMatch'||el.id==='bnScope'){ renderBnSum(); return; }
+    if(el.id==='bnMatch'||el.id==='bnScope'){
+      // 不跟词库设置走时,词库来的词也跟着这两项变
+      if(!S.bnLib.follow&&bnLibOn().length)renderBnTerms(); else renderBnSum();
+      return;
+    }
   });
   $('#maskBneg').addEventListener('input',function(e){
     if(e.target.id==='bnSrch'){ S.bnQ=e.target.value.trim(); renderBnList(); return; }
-    if(e.target.id==='bnText'){ renderBnSum(); }
+    if(e.target.id==='bnLibQ'){
+      var was=!!S.bnLib.q;
+      S.bnLib.q=e.target.value.trim();
+      renderBnTerms();
+      // 有没有在筛,决定上面两个按钮叫什么;输入框本身不重画,不然焦点会跑
+      if(was!==!!S.bnLib.q){
+        var btns=$$('#bnLibBody [data-bnpick]');
+        if(btns[0])btns[0].textContent=S.bnLib.q?'全选筛出的':'全选';
+        if(btns[1])btns[1].textContent=S.bnLib.q?'去掉筛出的':'全不选';
+      }
+      return;
+    }
+    if(e.target.id==='bnModelQ'){ S.bnLib.mq=e.target.value.trim(); renderBnModels(); return; }
+    if(e.target.id==='bnText'){
+      clearTimeout(S._bnT);
+      S._bnT=setTimeout(renderBnSum,180);
+    }
   });
   $('#bnGo').onclick=function(){
-    var p=bnPlan();
+    var p=bnPlan(true);
     if(!p.rows.length)return;
     if(p.rows.length>1500&&!confirm('这次会新增 '+p.rows.length+' 条否定，数量不小，确定继续？'))return;
     var added=0;
@@ -810,6 +1088,16 @@ export function mountOptimizer(root, host) {
     renderFoot(); renderRail(); renderDetail();
     toast('已加入 '+added+' 条否定'+(p.skip?'，跳过 '+p.skip+' 条已存在':'')+(p.rows.length-added?'，'+(p.rows.length-added)+' 条此前已加过':''));
   };
+
+  /** 站点词库由外面(React 页面)载好再送进来,换站点会再送一次 */
+  function setLibrary(market,raw,err){
+    S.market=market||'';
+    S.lib=raw?NL.normLibData(raw):null;
+    S.libErr=err||'';
+    S.bnLib.on={}; S.bnLib.off={}; S.bnLib.models=[]; S.bnLib.q=''; S.bnLib.mq='';
+    S.bnLib.ver++; S.bnLib._sig=''; S.bnLib._all=[];
+    if($('#maskBneg').classList.contains('on'))renderBnLib();
+  }
 
   /* ---------- 底栏 / 变更清单 ---------- */
   function renderFoot(){
@@ -957,7 +1245,7 @@ export function mountOptimizer(root, host) {
       try{
         var d=JSON.parse(ev.target.result);
         if(d.file&&d.file!==S.fileName&&!confirm('进度文件对应的是「'+d.file+'」，当前载入的是「'+S.fileName+'」。行号可能对不上，继续？'))return;
-        S.changes=new C.ChangeSet(); S.changes.edits=d.edits||{}; S.changes.creates=d.creates||[]; S.changes.seq=d.seq||0;
+        S.changes=new C.ChangeSet(); S.changes.edits=d.edits||{}; S.changes.setCreates(d.creates); S.changes.seq=d.seq||0;
         if(d.cfg)S.cfg=Object.assign({},C.DEFAULT_CFG,d.cfg);
         if(d.cur)S.cur=d.cur; if(d.period)$('#periodA').value=d.period;
         if(d.vocab!==undefined)S.vocab=d.vocab; if(d.scope)S.scope=d.scope;
@@ -1702,11 +1990,14 @@ export function mountOptimizer(root, host) {
   $('#periodA').addEventListener('input',function(){ S.periodTouched=true });
 
 
-  return function unmount() {
+  function unmount() {
     offs.forEach((f) => f());
     clearTimeout(S._anT);
+    clearTimeout(S._bnT);
     const t = root.querySelector('#toast');
     if (t) clearTimeout(t._t);
     root.innerHTML = '';
-  };
+  }
+
+  return { unmount: unmount, setLibrary: setLibrary };
 }

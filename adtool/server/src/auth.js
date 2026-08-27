@@ -69,6 +69,8 @@ function publicUser(row) {
     // 商品部账号可以不挂站点,这里单独留一份「自己负责的站点」给 A 类词库判权限
     ownMarkets: parseMarkets(row.marketplace),
     markets: visibleMarkets(row),
+    // 看过的更新日志版本,前端拿它决定要不要自动弹更新
+    seenVersion: row.seen_version ?? '',
   };
 }
 
@@ -189,6 +191,24 @@ authRouter.patch('/profile', requireLogin, (req, res) => {
   const row = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
   req.session.user = publicUser(row);
   audit(id, null, 'update', 'user', id, { displayName: name });
+  res.json({ user: req.session.user });
+});
+
+/**
+ * 记下这个人看过的更新日志版本。
+ * 存在账号上而不是浏览器里 —— 换台电脑登录也不会再弹同一版。
+ * 版本号对前端来说是不透明的字符串,这里只做长度和字符校验。
+ */
+authRouter.post('/seen-version', requireLogin, (req, res) => {
+  const version = String(req.body?.version ?? '').trim();
+  if (!version || version.length > 24 || !/^[0-9A-Za-z.+-]+$/.test(version)) {
+    return res.status(400).json({ error: '版本号不合法' });
+  }
+  const id = req.session.user.id;
+  db.prepare('UPDATE users SET seen_version = ? WHERE id = ?').run(version, id);
+
+  const row = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+  req.session.user = publicUser(row);
   res.json({ user: req.session.user });
 });
 

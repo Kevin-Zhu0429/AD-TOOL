@@ -223,6 +223,7 @@ export default function LibraryPage({ market }) {
           <h1>{market} 站否定词库</h1>
           <p className="hint">
             A 类由运营和国家管理员按站点维护;B/C/D/E 由商品部维护,欧洲传德国、美洲传美国,同区自动同步。
+            开广告时自动套用,广告优化里的批量否定也能直接勾这几类往在跑的活动上加。
           </p>
         </div>
         <div className="spacer" />
@@ -354,6 +355,7 @@ export default function LibraryPage({ market }) {
             )}
             <p className="hint" style={{ marginTop: 9 }}>
               这里只管 {market} 站怎么用词库,不影响别的站点,也不改词库内容。
+              广告优化里的批量否定默认也按这里设的匹配方式和层级走,那边可以临时改。
             </p>
           </div>
 
