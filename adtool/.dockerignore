@@ -1,0 +1,11 @@
+**/node_modules
+**/dist
+**/.git
+# 开发机的库不进镜像,生产数据只走挂载卷
+server/data
+data-prod
+**/*.log
+**/.env
+**/.DS_Store
+DEPLOY.md
+README.md

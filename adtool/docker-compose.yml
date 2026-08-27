@@ -1,0 +1,29 @@
+services:
+  adtool:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: adtool:latest
+    container_name: adtool
+    restart: unless-stopped
+
+    ports:
+      # 左边是服务器对外端口(改 .env 里的 HOST_PORT),右边固定 8080
+      - "${HOST_PORT:-8080}:8080"
+
+    environment:
+      PORT: 8080
+      DATA_DIR: /data
+      SESSION_SECRET: ${SESSION_SECRET:?请先在 adtool/.env 里设置 SESSION_SECRET}
+      TZ: ${TZ:-Asia/Shanghai}
+
+    volumes:
+      # 数据库 + session 全在这。备份就是打包这一个目录
+      # :Z 是给 CentOS 的 SELinux 打标签,不加可能报 permission denied
+      - ./data-prod:/data:Z
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
