@@ -32,24 +32,62 @@ Docker 和 Compose 服务器上已经装好,直接用即可。
 
 ### 1. 拉代码
 
+仓库是私有的,服务器上要先有访问权。推荐用 Deploy Key(只绑这一个仓库、可设只读、不过期):
+
 ```bash
-ssh kevin@192.168.53.9
+git --version || sudo yum install -y git          # CentOS 7 不一定预装
+
+ssh-keygen -t ed25519 -C "adtool-server" -f ~/.ssh/adtool_deploy -N ""
+cat ~/.ssh/adtool_deploy.pub                      # 整行复制
+```
+
+把输出整行贴到 GitHub 仓库页 → Settings → Deploy keys → Add deploy key,
+**不要勾 Allow write access**(服务器只需要 pull)。然后:
+
+```bash
+cat >> ~/.ssh/config <<'EOF'
+
+Host github-adtool
+  HostName github.com
+  User git
+  IdentityFile ~/.ssh/adtool_deploy
+  IdentitiesOnly yes
+EOF
+chmod 600 ~/.ssh/config
+
+ssh -T git@github-adtool                          # 看到 "Hi ...! You've successfully authenticated" 即可
+```
+
+> 这一步超时的话,多半是公司防火墙封了出站 22 端口。把 config 里的 `HostName` 改成
+> `ssh.github.com` 并加一行 `Port 443`,再试。
+
+```bash
 mkdir -p ~/apps && cd ~/apps
-git clone <仓库地址> AD-TOOL
+git clone git@github-adtool:Kevin-Zhu0429/AD-TOOL.git
 cd AD-TOOL/adtool
 ```
 
+也可以改用 Fine-grained Personal Access Token(仅勾选本仓库 + Contents: Read-only),
+走 https 地址 clone,把 token 当密码输;缺点是有有效期,到期要换。
+
 ### 2. 写 .env
 
+不用开编辑器,一条命令直接生成(`$(openssl rand -hex 32)` 会在写入时自动执行并填进去):
+
 ```bash
-cp .env.example .env
-# 生成一串随机盐,填进 SESSION_SECRET
-openssl rand -hex 32
-vi .env
+cat > .env <<EOF
+HOST_PORT=8080
+SESSION_SECRET=$(openssl rand -hex 32)
+TZ=Asia/Shanghai
+EOF
+cat .env    # 确认 SESSION_SECRET 后面是一长串随机十六进制
 ```
 
 `SESSION_SECRET` 必须填,留空 compose 会直接报错拒绝启动(故意的,防止用默认值上线)。
-换了这个值,所有人的登录态会失效需要重新登录 —— 所以填一次就别再改。
+
+**这条命令只跑一次。** 重跑会生成新的随机串,所有人的登录态立刻失效需要重新登录。
+后面要改别的项(比如 `HOST_PORT`),用 `vi .env`(`i` 进编辑,`Esc` 后 `:wq` 保存退出)
+或者 `nano .env`(`Ctrl+O` 回车保存,`Ctrl+X` 退出),别整个重写。
 
 ### 3. 准备数据目录
 
