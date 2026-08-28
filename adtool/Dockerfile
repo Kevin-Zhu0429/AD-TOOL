@@ -38,8 +38,10 @@ RUN if [ -n "$DEBIAN_MIRROR" ]; then \
  && rm -rf /var/lib/apt/lists/*
 
 COPY server/package.json server/package-lock.json ./
+# disturl 不是 npm 的合法配置项(npm 10 起会直接报错),它是 node-gyp 的选项。
+# node-gyp 会从环境里读 npm_config_* 前缀的变量,所以用 export 传,不要用 npm config set。
 RUN npm config set registry "$NPM_REGISTRY" \
- && if [ -n "$NODE_DISTURL" ]; then npm config set disturl "$NODE_DISTURL"; fi \
+ && if [ -n "$NODE_DISTURL" ]; then export npm_config_disturl="$NODE_DISTURL"; fi \
  && npm ci --omit=dev
 
 # ---------- 3. 运行镜像 ----------
