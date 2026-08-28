@@ -7,6 +7,10 @@ services:
     container_name: adtool
     restart: unless-stopped
 
+    # 容器内进程以宿主机上你自己的 uid/gid 跑,这样 data-prod 归你所有,
+    # 看日志、拷备份都不用 sudo。值由 .env 里的 APP_UID/APP_GID 提供
+    user: "${APP_UID:-1000}:${APP_GID:-1000}"
+
     ports:
       # 左边是服务器对外端口(改 .env 里的 HOST_PORT),右边固定 8080
       - "${HOST_PORT:-8080}:8080"
