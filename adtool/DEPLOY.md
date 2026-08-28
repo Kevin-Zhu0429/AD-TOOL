@@ -271,6 +271,31 @@ docker compose build
 echo 'NPM_REGISTRY=https://registry.npmmirror.com' >> .env
 ```
 
+### better-sqlite3 报「找不到 Python」/ node-gyp 编译失败
+
+它是原生模块,预编译包托管在 GitHub Releases 上,国内下不到就会退回源码编译,
+而编译需要 python3 + make + g++。如果 Debian 官方源也拉不动,工具链装不上,
+就会看到这个错。**换 Debian 源**即可:
+
+```bash
+# 先测哪个通(返回 200 的能用)
+for m in http://mirrors.aliyun.com http://mirrors.tuna.tsinghua.edu.cn \
+         http://mirrors.ustc.edu.cn http://mirrors.cloud.tencent.com ; do
+  echo "$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 $m/debian/dists/bookworm/Release)  $m"
+done
+
+echo 'DEBIAN_MIRROR=http://mirrors.aliyun.com' >> .env
+```
+
+编译还要下 Node 头文件(默认从 nodejs.org)。那边慢的话再加一条:
+
+```bash
+echo 'NODE_DISTURL=https://cdn.npmmirror.com/binaries/node' >> .env
+```
+
+改完 `docker compose build`。源码编译 better-sqlite3 要 2-5 分钟(它要编 SQLite 本体),
+属于正常,之后有层缓存不会每次都编。
+
 ### 两边都不通 —— 离线导入
 
 在能上网的机器上构建好,把镜像整个搬过去:

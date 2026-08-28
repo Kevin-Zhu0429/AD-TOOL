@@ -17,18 +17,30 @@ COPY web/ ./
 RUN npm run build
 
 # ---------- 2. 装后端依赖 ----------
-# better-sqlite3 是原生模块:优先下预编译包,下不到就现场编译,所以带上编译工具链
 FROM ${NODE_IMAGE} AS deps
 ARG NPM_REGISTRY=https://registry.npmjs.org
+# Debian 源。官方 deb.debian.org 在国内基本拉不动,换成 http://mirrors.aliyun.com 之类。
+# 留空则用镜像自带的官方源。
+ARG DEBIAN_MIRROR=
+# node-gyp 编译时要下 Node 头文件,默认从 nodejs.org 取。慢的话换国内镜像。
+ARG NODE_DISTURL=
 WORKDIR /app/server
-# 兜底用的编译工具链:better-sqlite3 有预编译包时根本用不上。
-# Debian 源在国内可能很慢甚至不通,所以限时 180s 且失败不中断构建。
-RUN (timeout 180 apt-get update \
-      && timeout 180 apt-get install -y --no-install-recommends python3 make g++) \
-    || echo "[warn] 编译工具链未装上,继续 —— better-sqlite3 走预编译包时不受影响" ; \
-    rm -rf /var/lib/apt/lists/*
+
+# better-sqlite3 是原生模块。它的预编译包托管在 GitHub Releases 上,国内下不到时
+# 会退回源码编译,所以这套工具链是必需的 —— 装不上就该在这里失败,
+# 而不是拖到 npm ci 那步报一句莫名其妙的「找不到 Python」。
+RUN if [ -n "$DEBIAN_MIRROR" ]; then \
+      sed -i "s|http://deb.debian.org|$DEBIAN_MIRROR|g" \
+        /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list 2>/dev/null || true; \
+    fi \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends python3 make g++ \
+ && rm -rf /var/lib/apt/lists/*
+
 COPY server/package.json server/package-lock.json ./
-RUN npm config set registry "$NPM_REGISTRY" && npm ci --omit=dev
+RUN npm config set registry "$NPM_REGISTRY" \
+ && if [ -n "$NODE_DISTURL" ]; then npm config set disturl "$NODE_DISTURL"; fi \
+ && npm ci --omit=dev
 
 # ---------- 3. 运行镜像 ----------
 FROM ${NODE_IMAGE}
