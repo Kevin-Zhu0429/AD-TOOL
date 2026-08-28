@@ -79,9 +79,15 @@ cat > .env <<EOF
 HOST_PORT=8080
 SESSION_SECRET=$(openssl rand -hex 32)
 TZ=Asia/Shanghai
+APP_UID=$(id -u)
+APP_GID=$(id -g)
 EOF
-cat .env    # 确认 SESSION_SECRET 后面是一长串随机十六进制
+cat .env    # 确认 SESSION_SECRET 是一长串随机十六进制,APP_UID/APP_GID 是你的实际 uid
 ```
+
+`APP_UID`/`APP_GID` 让容器内的进程用**你自己的身份**跑。镜像里默认的 node 用户是 uid 1000,
+而服务器上 kevin 是 1067 —— 不对齐的话容器写不了数据库,启动就报 `SQLITE_CANTOPEN`。
+用 `$(id -u)` 自动取值,不用手填。
 
 `SESSION_SECRET` 必须填,留空 compose 会直接报错拒绝启动(故意的,防止用默认值上线)。
 
@@ -98,9 +104,11 @@ cat .env    # 确认 SESSION_SECRET 后面是一长串随机十六进制
 mkdir -p data-prod
 # 三个文件都要拷!-wal 里有 4MB 还没落盘的数据,只拷 .db 会丢
 cp server/data/adtool.db server/data/adtool.db-wal server/data/adtool.db-shm data-prod/
-# 容器内以 uid 1000(node 用户)运行,kevin 一般也是 1000;不是的话按下面这条对齐
-sudo chown -R 1000:1000 data-prod
+ls -l data-prod    # 属主应该就是你自己,不需要 chown
 ```
+
+目录是你建的,属主自然是你;容器又按 `APP_UID` 用同一个身份跑,两边对得上,
+所以**不需要 `sudo chown`**。
 
 > 拷之前确认开发机上的服务已经停了,否则拷到的可能是写了一半的状态。
 
