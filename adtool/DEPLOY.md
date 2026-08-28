@@ -208,17 +208,72 @@ docker image prune -f                # 清理旧镜像层,省磁盘
 
 服务器根分区已用 88%(剩 218G),镜像每次重建会留旧层,记得偶尔 `docker image prune`。
 
-## 五、服务器连不上外网怎么办
+## 五、构建时拉不动镜像 / 装不上依赖
 
-构建需要访问 npm registry 和 Docker Hub。如果公司网络限制:
+构建要访问两处:Docker Hub(拉基础镜像)和 npm registry(装依赖)。
+国内服务器最常见的情况是**只有 Docker Hub 不通**(DNS 被污染,
+`getent hosts registry-1.docker.io` 会解析到一个明显不对的地址),npm 反而是通的。
 
-**方案 A:换国内源**。在 `Dockerfile` 三个 `npm ci` 之前加一行:
+先分清是哪一边不通:
 
-```dockerfile
-RUN npm config set registry https://registry.npmmirror.com
+```bash
+getent hosts registry-1.docker.io                                    # 解析结果是否合理
+curl -sI --connect-timeout 10 https://registry-1.docker.io/v2/ | head -1
+curl -sI --connect-timeout 10 https://registry.npmjs.org/ | head -1
 ```
 
-**方案 B:本地构建,导过去**。在能上网的机器上:
+### Docker Hub 不通 —— 方案 A:配加速器(需要 sudo,推荐)
+
+公共加速器关停了一批,先测再配。**返回 401 的才是真 registry**,200 多半是落地页:
+
+```bash
+for m in https://docker.m.daocloud.io https://docker.1ms.run https://docker.xuanyuan.me ; do
+  echo "$(curl -s -o /dev/null -w '%{http_code}' --connect-timeout 8 "$m/v2/")  $m"
+done
+```
+
+`/etc/docker/daemon.json` 已有内容的话要手工合并,别整个覆盖:
+
+```bash
+cat /etc/docker/daemon.json 2>/dev/null || echo "文件不存在,可以直接写"
+
+sudo mkdir -p /etc/docker
+sudo tee /etc/docker/daemon.json > /dev/null <<'JSON'
+{
+  "registry-mirrors": [
+    "https://docker.m.daocloud.io",
+    "https://docker.1ms.run",
+    "https://docker.xuanyuan.me"
+  ]
+}
+JSON
+sudo systemctl daemon-reload && sudo systemctl restart docker
+docker pull node:22-bookworm-slim     # 先单独测,比直接 build 好定位
+```
+
+> 长期更稳的是阿里云个人加速器:注册后搜「容器镜像服务」→「镜像加速器」,
+> 会给一个专属地址 `https://xxxxx.mirror.aliyuncs.com`,填到列表第一位。
+
+### Docker Hub 不通 —— 方案 B:改 .env(不需要 sudo)
+
+基础镜像地址是 build arg,直接在 `.env` 里指定带加速器前缀的地址即可:
+
+```bash
+echo 'NODE_IMAGE=docker.m.daocloud.io/library/node:22-bookworm-slim' >> .env
+docker compose build
+```
+
+### npm 慢或不通
+
+同样在 `.env` 里换源,构建会快很多:
+
+```bash
+echo 'NPM_REGISTRY=https://registry.npmmirror.com' >> .env
+```
+
+### 两边都不通 —— 离线导入
+
+在能上网的机器上构建好,把镜像整个搬过去:
 
 ```bash
 cd adtool
@@ -231,9 +286,12 @@ scp adtool.tar.gz kevin@192.168.53.9:~/
 
 ```bash
 gunzip -c ~/adtool.tar.gz | docker load
-# 然后把 docker-compose.yml 里的 build: 那几行注释掉,只留 image: adtool:latest
+docker images | grep adtool          # 确认 adtool:latest 在了
+# 把 docker-compose.yml 里的 build: 整段注释掉,只留 image: adtool:latest
 docker compose up -d
 ```
+
+代价是以后每次更新都要重新 build + 传一遍。
 
 ## 六、几个已知事项
 
