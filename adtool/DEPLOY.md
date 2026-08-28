@@ -190,21 +190,123 @@ sudo firewall-cmd --reload
 
 ---
 
-## 二、日常更新
+## 二、发新版的流程
+
+分两段:先在自己电脑上做完、验证完、写好更新日志,再上服务器拉取重建。
+
+### 在自己电脑上
+
+**1. 改代码,本地跑起来验证**
+
+```bash
+cd adtool/server && node src/index.js    # 后端 8080
+cd adtool/web    && npm run dev          # 前端 5173,浏览器开这个
+```
+
+本地用的是 `server/data/adtool.db`,和服务器上的 `data-prod/` 是两个库,
+本地怎么折腾都影响不到生产。
+
+**2. 打包一次,确认不报错**
+
+```bash
+cd adtool/web && npm run build
+```
+
+这一步在本地先跑通,免得推上去了才发现服务器构建失败。
+
+**3. 写更新日志**(别跳过 —— 版本号是从这里推出来的)
+
+在 `web/src/changelog.js` 数组**最前面**加一条:
+
+```js
+{
+  version: '2.1.0',
+  date: '2026-09-01',
+  title: '一句话说清这版干了什么',
+  items: [
+    '用大白话写「用起来有什么不一样」,别写实现细节',
+  ],
+},
+```
+
+版本号怎么加:
+
+| 改动 | 加法 | 例 |
+|---|---|---|
+| 加了功能 / 改了交互 | 中间位 +1 | 2.0.0 → 2.1.0 |
+| 只修 bug、调文案 | 末位 +1 | 2.1.0 → 2.1.1 |
+| 大改版、不兼容 | 首位 +1 | 2.1.1 → 3.0.0 |
+
+首页右下角的版本号、以及同事登录后自动弹的更新提示,都是靠这条驱动的。
+不写日志,同事就不知道有新版。
+
+**4. 提交推送**
+
+```bash
+git add -A
+git commit -m "简短说明这版改了什么"
+git push
+```
+
+### 在服务器上
+
+**5. 拉取并重建**
+
+```bash
+cd ~/apps/AD-TOOL && git pull && cd adtool && docker compose up -d --build
+```
+
+**不需要停机通知。** `up -d --build` 是先构建新镜像、构建完成才替换容器,
+构建那几分钟同事照常在用,真正中断只有替换瞬间的几秒。
+
+**6. 验证**
+
+```bash
+docker compose ps                    # Up (healthy)
+docker compose logs --tail=30        # 有 [db] 和 [server] 两行,没有报错
+curl http://localhost:8080/api/health
+```
+
+浏览器开 `http://192.168.53.9:8080`,**Ctrl+F5 硬刷新**(普通刷新可能拿的是缓存),
+确认右下角版本号变成了新的。
+
+### 出问题怎么退回去
 
 ```bash
 cd ~/apps/AD-TOOL
-git pull
-cd adtool
-docker compose up -d --build
+git log --oneline -5              # 找上一个好的 commit
+git checkout <那个 commit 的哈希>
+cd adtool && docker compose up -d --build
 ```
 
-`data-prod/` 不在 git 里,`git pull` 不会碰生产数据。
-数据库结构变更由 `src/db.js` 的 `migrate()` 在每次启动时自动跑,不用手工执行 SQL。
+数据不受影响 —— `data-prod/` 不在 git 里,退代码不退数据。
 
-> 注意:`server/data/adtool.db` 目前还在 git 里跟踪着。它**只在第一次部署时用来打底**,
-> 之后 `git pull` 拉下来的是别人提交的旧快照,和生产数据无关,不要再往 `data-prod` 拷。
-> 建议后续把它从 git 里摘掉(见文末)。
+> 一个例外:如果新版在 `db.js` 的 `migrate()` 里加了列,退回旧代码通常还能跑
+> (多出来的列不影响旧代码读写)。但如果改的是表结构或数据格式,退版本就不安全了。
+> 心里没底就在更新前手动备份一次:
+>
+> ```bash
+> cd ~/apps/AD-TOOL/adtool && tar czf ~/adtool-backup/before-$(date +%F).tar.gz data-prod
+> ```
+
+### 关于分支
+
+服务器现在跟的是功能分支。等 PR 合并到 `main` 之后,把服务器切过去,以后只跟 `main`:
+
+```bash
+cd ~/apps/AD-TOOL
+git checkout main && git pull
+cd adtool && docker compose up -d --build
+```
+
+之后每次发版就是 `git pull` + `up -d --build` 两条命令。
+
+### 两点提醒
+
+- 数据库结构变更由 `src/db.js` 的 `migrate()` 在每次启动时自动跑,不用手工执行 SQL
+- `server/data/adtool.db` 目前还在 git 里跟踪着。它**只在第一次部署时用来打底**,
+  之后 `git pull` 拉下来的是旧快照,和生产数据无关,**不要再往 `data-prod` 拷**。
+  建议后续把它从 git 里摘掉(见文末)
 
 ## 三、备份
 
