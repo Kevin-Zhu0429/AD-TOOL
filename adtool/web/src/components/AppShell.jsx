@@ -30,6 +30,7 @@ export default function AppShell({
     ...(user.adOpt ? [{ id: 'optimizer', label: '广告优化', icon: 'chart' }] : []),
     { id: 'library', label: '否定词库', icon: 'book' },
     { id: 'skus', label: 'SKU 库', icon: 'file' },
+    ...(user.productIntel ? [{ id: 'products', label: '产品情报', icon: 'chart' }] : []),
     ...(user.role === 'owner' ? [{ id: 'admin', label: '账号管理', icon: 'users' }] : []),
   ];
 
@@ -47,6 +48,7 @@ export default function AppShell({
               key={it.id}
               className={`topnav-item${page === it.id ? ' on' : ''}`}
               onClick={() => onNav(it.id)}
+              aria-label={it.label}
             >
               <Icon name={it.icon} className="ico-sm" />
               <span>{it.label}</span>

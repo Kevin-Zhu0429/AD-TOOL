@@ -10,6 +10,7 @@ import { db } from './db.js';
 import { authRouter } from './auth.js';
 import { negRouter } from './keywords.js';
 import { skuRouter } from './skus.js';
+import { productRouter } from './products.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -17,7 +18,7 @@ const PORT = Number(process.env.PORT) || 8080;
 
 const SqliteStore = SqliteStoreFactory(session);
 
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '50mb' }));
 app.use(
   session({
     store: new SqliteStore({ client: db, expired: { clear: true, intervalMs: 900_000 } }),
@@ -36,6 +37,7 @@ app.use(
 app.use('/api/auth', authRouter);
 app.use('/api/neg', negRouter);
 app.use('/api/sku', skuRouter);
+app.use('/api/products', productRouter);
 
 app.get('/api/health', (req, res) => {
   res.json({ ok: true, time: new Date().toISOString() });

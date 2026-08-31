@@ -55,4 +55,19 @@ export const api = {
     request('/sku/rows', { method: 'POST', body: { rows, replace } }),
   updateSku: (id, body) => request(`/sku/${id}`, { method: 'PATCH', body }),
   deleteSkus: (ids) => request('/sku/delete', { method: 'POST', body: { ids } }),
+
+  // ---------- 分市场产品库与竞品分析 ----------
+  products: (marketplace) => request(`/products?marketplace=${encodeURIComponent(marketplace)}`),
+  importProducts: (marketplace, products) =>
+    request('/products/import', { method: 'POST', body: { marketplace, products } }),
+  updateProduct: (marketplace, asin, changes) =>
+    request(`/products/${encodeURIComponent(asin)}`, {
+      method: 'PATCH', body: { marketplace, changes },
+    }),
+  deleteProducts: (marketplace, asins) =>
+    request('/products/delete', { method: 'POST', body: { marketplace, asins } }),
+  productSettings: (marketplace, ownBrand, minSales) =>
+    request('/products/settings', {
+      method: 'POST', body: { marketplace, ownBrand, minSales },
+    }),
 };

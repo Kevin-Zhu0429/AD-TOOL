@@ -12,6 +12,7 @@ PRAGMA foreign_keys = ON;
 -- goods_admin: 商品部维护权,B/C/D/E 四类词库归他们管
 -- manual_ads : 手动广告页的使用权。这一页还在试用期,默认谁都没有,由超级管理员逐个开
 -- ad_opt     : 广告优化工作台的使用权。同样在试用期,默认全关,由超级管理员逐个开
+-- product_intel: 产品库与竞品分析使用权,默认全关,由超级管理员逐个开
 -- seen_version: 这个人看过的更新日志版本号。比它新的更新会在首页自动弹一次,
 --               看过就不再弹,直到下次发新版。存在账号上,换台电脑登录也不会重复弹
 CREATE TABLE IF NOT EXISTS users (
@@ -25,6 +26,7 @@ CREATE TABLE IF NOT EXISTS users (
   goods_admin   INTEGER NOT NULL DEFAULT 0,
   manual_ads    INTEGER NOT NULL DEFAULT 0,
   ad_opt        INTEGER NOT NULL DEFAULT 0,
+  product_intel INTEGER NOT NULL DEFAULT 0,
   is_active     INTEGER NOT NULL DEFAULT 1,
   seen_version  TEXT    NOT NULL DEFAULT '',
   created_at    TEXT    NOT NULL DEFAULT (datetime('now', 'localtime'))
@@ -127,3 +129,30 @@ CREATE TABLE IF NOT EXISTS sku_items (
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_sku_unique ON sku_items (user_id, dedupe);
 CREATE INDEX IF NOT EXISTS idx_sku_user ON sku_items (user_id, country);
+
+-- ---------- 分市场产品库 ----------
+-- 完整卖家精灵记录以 JSON 保存；高频筛选字段单独建列并建索引。
+CREATE TABLE IF NOT EXISTS products (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  marketplace TEXT    NOT NULL,
+  asin        TEXT    NOT NULL,
+  brand       TEXT,
+  model       TEXT,
+  color_group TEXT,
+  data_json   TEXT    NOT NULL,
+  created_by  INTEGER REFERENCES users(id),
+  created_at  TEXT    NOT NULL DEFAULT (datetime('now', 'localtime')),
+  updated_at  TEXT    NOT NULL DEFAULT (datetime('now', 'localtime')),
+  UNIQUE (marketplace, asin)
+);
+
+CREATE INDEX IF NOT EXISTS idx_products_market_model
+  ON products (marketplace, model, color_group);
+
+CREATE TABLE IF NOT EXISTS product_settings (
+  marketplace TEXT PRIMARY KEY,
+  own_brand    TEXT NOT NULL DEFAULT '',
+  min_sales    INTEGER NOT NULL DEFAULT 100,
+  updated_by   INTEGER REFERENCES users(id),
+  updated_at   TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);

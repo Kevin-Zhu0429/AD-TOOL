@@ -26,7 +26,8 @@ migrate();
  * 1) users 加「商品部维护权」列:B/C/D/E 四类词库归商品部管
  * 2) users 加「手动广告使用权」「广告优化使用权」两列:默认全关,由超级管理员逐个开
  * 3) users 加「看过的更新日志版本」列:老账号是空的,登录后会看到全部更新
- * 4) 旧的 neg_terms 搬进 lib_items:无关词→A,品牌→B,型号和 ASIN→C
+ * 4) users 加「产品库与竞品分析使用权」列:默认全关,由超级管理员逐个开
+ * 5) 旧的 neg_terms 搬进 lib_items:无关词→A,品牌→B,型号和 ASIN→C
  */
 function migrate() {
   const cols = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
@@ -45,6 +46,10 @@ function migrate() {
   if (!cols.includes('seen_version')) {
     db.exec("ALTER TABLE users ADD COLUMN seen_version TEXT NOT NULL DEFAULT ''");
     console.log('[db] users 加上 seen_version 列');
+  }
+  if (!cols.includes('product_intel')) {
+    db.exec('ALTER TABLE users ADD COLUMN product_intel INTEGER NOT NULL DEFAULT 0');
+    console.log('[db] users 加上 product_intel 列');
   }
 
   if (db.pragma('user_version', { simple: true }) >= 1) return;

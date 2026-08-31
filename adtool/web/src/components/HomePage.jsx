@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
-import { CHANGELOG, VERSION, hasUnseen } from '../changelog.js';
+import { hasUnseen, visibleChangelog, visibleVersion } from '../changelog.js';
 import Icon from './Icon.jsx';
 import CloudShader from './CloudShader.jsx';
 import './HomePage.css';
@@ -35,8 +35,10 @@ export default function HomePage({ user, market, onNav, theme, onOpenChangelog }
     return () => { alive = false; };
   }, [market]);
 
-  const latest = CHANGELOG[0];
-  const unseen = hasUnseen(user.seenVersion);
+  const releases = visibleChangelog(user);
+  const latest = releases[0];
+  const version = visibleVersion(user);
+  const unseen = hasUnseen(user.seenVersion, user);
 
   const hour = new Date().getHours();
   const greet = hour < 6 ? '这么晚还在忙' : hour < 12 ? '早上好' : hour < 18 ? '下午好' : '晚上好';
@@ -105,6 +107,14 @@ export default function HomePage({ user, market, onNav, theme, onOpenChangelog }
           meta="模板导入 · 只有自己看得到"
           onClick={() => onNav('skus')}
         />
+        {user.productIntel && (
+          <EntryCard
+            tone="amber" icon="chart" title={`${market} 站产品情报`}
+            desc="维护分市场产品库,按品牌、型号和具体色组筛选,查看 ABCD 价格档位、价格阶梯和机会竞品。"
+            meta="产品库 · 竞品对比"
+            onClick={() => onNav('products')}
+          />
+        )}
         {user.role === 'owner' && (
           <EntryCard
             tone="violet" icon="users" title="账号管理"
@@ -118,7 +128,7 @@ export default function HomePage({ user, market, onNav, theme, onOpenChangelog }
       <section className={`home-log${unseen ? ' unseen' : ''}`}>
         <div className="home-log-head">
           <span className="home-log-label">更新日志</span>
-          <span className="tag gray mono">v{VERSION}</span>
+          <span className="tag gray mono">v{version}</span>
           {unseen && <span className="tag blue">有新更新</span>}
           <span className="hint">{latest.date}</span>
           <div className="spacer" />

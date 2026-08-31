@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from './api.js';
 import { useTheme } from './theme.js';
-import { VERSION, hasUnseen } from './changelog.js';
+import { hasUnseen, visibleVersion } from './changelog.js';
 import Changelog, { VersionBadge } from './components/Changelog.jsx';
 import LoginPage from './components/LoginPage.jsx';
 import AppShell from './components/AppShell.jsx';
@@ -13,6 +13,7 @@ import LibraryPage from './components/LibraryPage.jsx';
 import SkuPage from './components/SkuPage.jsx';
 import AdminPage from './components/AdminPage.jsx';
 import ProfilePage from './components/ProfilePage.jsx';
+import ProductPage from './components/ProductPage.jsx';
 
 export default function App() {
   const [theme, toggleTheme] = useTheme();
@@ -58,14 +59,15 @@ export default function App() {
   /** 关掉就算看过了 —— 记在账号上,换台电脑登录也不会再弹同一版 */
   function closeLog() {
     setLogOpen(false);
-    if (!user || !hasUnseen(user.seenVersion)) return;
-    setUser((u) => (u ? { ...u, seenVersion: VERSION } : u));
-    api.seenVersion(VERSION).then((r) => r.user && setUser(r.user)).catch(() => {});
+    if (!user || !hasUnseen(user.seenVersion, user)) return;
+    const version = visibleVersion(user);
+    setUser((u) => (u ? { ...u, seenVersion: version } : u));
+    api.seenVersion(version).then((r) => r.user && setUser(r.user)).catch(() => {});
   }
 
   // 有没看过的更新就自动弹,一次会话只自动弹一次
   useEffect(() => {
-    if (!user || autoShown.current || !hasUnseen(user.seenVersion)) return;
+    if (!user || autoShown.current || !hasUnseen(user.seenVersion, user)) return;
     autoShown.current = true;
     setLogSeen(user.seenVersion ?? '');
     setLogAuto(true);
@@ -91,6 +93,8 @@ export default function App() {
       <SkuPage key={market} market={market} />
     ) : page === 'library' ? (
       <LibraryPage key={market} market={market} />
+    ) : page === 'products' && user.productIntel ? (
+      <ProductPage key={market} market={market} />
     ) : page === 'admin' && user.role === 'owner' ? (
       <AdminPage user={user} markets={markets} />
     ) : page === 'profile' ? (
@@ -119,9 +123,13 @@ export default function App() {
 
       {/* 广告优化那一页底部有它自己的操作条,右下角就不占位了 */}
       {page !== 'optimizer' && (
-        <VersionBadge unseen={hasUnseen(user.seenVersion)} onClick={() => openLog(false)} />
+        <VersionBadge
+          version={visibleVersion(user)}
+          unseen={hasUnseen(user.seenVersion, user)}
+          onClick={() => openLog(false)}
+        />
       )}
-      {logOpen && <Changelog seenVersion={logSeen} auto={logAuto} onClose={closeLog} />}
+      {logOpen && <Changelog user={user} seenVersion={logSeen} auto={logAuto} onClose={closeLog} />}
     </>
   );
 }

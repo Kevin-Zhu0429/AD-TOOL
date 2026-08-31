@@ -36,6 +36,7 @@ export default function AdminPage({ user, markets }) {
   const [form, setForm] = useState({
     username: '', displayName: '', password: '', role: 'operator',
     markets: [markets[0] ?? 'ES'], goodsAdmin: false, manualAds: false, adOpt: false,
+    productIntel: false,
   });
   // 正在改站点的那一行:{id, markets}
   const [mkEdit, setMkEdit] = useState(null);
@@ -76,6 +77,7 @@ export default function AdminPage({ user, markets }) {
       setForm({
         username: '', displayName: '', password: '', role: 'operator',
         markets: [markets[0] ?? 'ES'], goodsAdmin: false, manualAds: false, adOpt: false,
+        productIntel: false,
       })
     );
   }
@@ -91,8 +93,8 @@ export default function AdminPage({ user, markets }) {
       <div className="admin-head">
         <h1>账号管理</h1>
         <p className="hint">
-          只有超级管理员能看到这一页。手动广告和广告优化都还在试用,勾了的人才看得到对应的页面,
-          其他人只有自动广告。
+          只有超级管理员能看到这一页。手动广告、广告优化、产品情报都按账号开通,
+          未勾选的人看不到对应页面和更新日志。
         </p>
       </div>
 
@@ -170,6 +172,16 @@ export default function AdminPage({ user, markets }) {
                   <p className="hint" style={{ marginTop: -4 }}>
                     不勾的人看不到「广告优化」这一页,也就用不了批量表分析和优化。
                   </p>
+                  <label className="row">
+                    <input
+                      type="checkbox" checked={form.productIntel}
+                      onChange={(e) => setForm({ ...form, productIntel: e.target.checked })}
+                    />
+                    <span style={{ fontSize: 12.5 }}>产品库与竞品分析使用权</span>
+                  </label>
+                  <p className="hint" style={{ marginTop: -4 }}>
+                    不勾的人看不到「产品情报」页面,也看不到这项功能对应的更新日志。
+                  </p>
                   <div className="field">
                     <span>负责站点(可多选,决定 A 类无名词改哪个站)</span>
                     <MarketChips
@@ -188,7 +200,7 @@ export default function AdminPage({ user, markets }) {
               <table className="tbl">
                 <thead>
                   <tr>
-                    <th>姓名</th><th>用户名</th><th>角色</th><th>商品部</th><th>手动广告</th><th>广告优化</th>
+                    <th>姓名</th><th>用户名</th><th>角色</th><th>商品部</th><th>产品情报</th><th>手动广告</th><th>广告优化</th>
                     <th>站点</th><th>状态</th><th></th>
                   </tr>
                 </thead>
@@ -221,6 +233,25 @@ export default function AdminPage({ user, markets }) {
                                   e.target.checked
                                     ? `${u.display_name} 现在能维护 B/C/D/E 词库`
                                     : `${u.display_name} 的商品部维护权已取消`
+                                )
+                              }
+                            />
+                          </label>
+                        )}
+                      </td>
+                      <td>
+                        {u.role === 'owner' ? (
+                          <span className="tag blue">天然有</span>
+                        ) : (
+                          <label className="row" title="能不能看到产品库、竞品分析及对应更新日志">
+                            <input
+                              type="checkbox" checked={!!u.productIntel}
+                              onChange={(e) =>
+                                act(
+                                  () => api.updateUser(u.id, { productIntel: e.target.checked }),
+                                  e.target.checked
+                                    ? `${u.display_name} 现在能用产品情报`
+                                    : `${u.display_name} 的产品情报权限已收回`
                                 )
                               }
                             />

@@ -9,6 +9,19 @@
  */
 export const CHANGELOG = [
   {
+    version: '2.1.0',
+    date: '2026-08-31',
+    title: '新增产品库与竞品竞争力分析',
+    feature: 'productIntel',
+    items: [
+      '产品数据按 ES / DE / FR 等市场分开存放,互不串数据',
+      '导入卖家精灵产品表后自动识别品牌、型号和黑 / 彩 / 两黑 / 两彩 / 黑彩色组',
+      '可以筛到某个具体型号的具体色组,也可以对比这个型号下的全部色组',
+      '价格分成 A / B / C / D 档:B 是市场均价带,A 高于均价,D 是市场最低价',
+      '超级管理员需要在账号管理里开通,未开通账号看不到入口和这条更新日志',
+    ],
+  },
+  {
     version: '2.0.0',
     date: '2026-08-28',
     title: '正式部署到公司服务器,7×24 在线',
@@ -112,7 +125,16 @@ export function isNewer(version, seen) {
   return cmpVersion(version, seen) > 0;
 }
 
-/** 这个人还有没有没看过的更新 */
-export function hasUnseen(seen) {
-  return isNewer(VERSION, seen);
+/** 按账号功能过滤更新日志；没开通的功能连对应更新内容也不显示 */
+export function visibleChangelog(user) {
+  return CHANGELOG.filter((release) => !release.feature || !!user?.[release.feature]);
+}
+
+export function visibleVersion(user) {
+  return visibleChangelog(user)[0]?.version ?? '0.0.0';
+}
+
+/** 这个人还有没有自己能看到、但还没看过的更新 */
+export function hasUnseen(seen, user) {
+  return visibleChangelog(user).some((release) => isNewer(release.version, seen));
 }

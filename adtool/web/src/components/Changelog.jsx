@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import Icon from './Icon.jsx';
-import { CHANGELOG, VERSION, isNewer } from '../changelog.js';
+import { isNewer, visibleChangelog, visibleVersion } from '../changelog.js';
 import './SkuPicker.css';
 import './Changelog.css';
 
@@ -8,7 +8,7 @@ import './Changelog.css';
  * 右下角的版本号。有没看过的更新时带个点,点一下打开更新日志。
  * 广告优化那一页底部有它自己的操作条,那里不显示(见 App.jsx)。
  */
-export function VersionBadge({ unseen, onClick }) {
+export function VersionBadge({ version, unseen, onClick }) {
   return (
     <button
       className={`verbadge${unseen ? ' unseen' : ''}`}
@@ -16,7 +16,7 @@ export function VersionBadge({ unseen, onClick }) {
       title={unseen ? '有新更新,点开看看' : '更新日志'}
     >
       {unseen && <span className="verdot" aria-hidden="true" />}
-      <span className="mono">v{VERSION}</span>
+      <span className="mono">v{version}</span>
     </button>
   );
 }
@@ -26,21 +26,23 @@ export function VersionBadge({ unseen, onClick }) {
  * seenVersion 是打开这一刻「看过的版本」—— 比它新的条目打上「新」标,
  * 关掉的时候由外面记成已看过,所以同一版只会自动弹一次。
  */
-export default function Changelog({ seenVersion, auto, onClose }) {
+export default function Changelog({ user, seenVersion, auto, onClose }) {
   useEffect(() => {
     const onKey = (e) => e.key === 'Escape' && onClose();
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  const fresh = CHANGELOG.filter((r) => isNewer(r.version, seenVersion)).length;
+  const releases = visibleChangelog(user);
+  const version = visibleVersion(user);
+  const fresh = releases.filter((r) => isNewer(r.version, seenVersion)).length;
 
   return (
     <div className="pickmask" onClick={onClose}>
       <div className="pickbox logbox" onClick={(e) => e.stopPropagation()}>
         <header className="pickhead">
           <b>更新日志</b>
-          <span className="tag blue mono">v{VERSION}</span>
+          <span className="tag blue mono">v{version}</span>
           <div className="spacer" />
           <button className="btn sm ghost icon" onClick={onClose} aria-label="关闭">
             <Icon name="x" />
@@ -54,7 +56,7 @@ export default function Changelog({ seenVersion, auto, onClose }) {
         </p>
 
         <div className="scroll loglist">
-          {CHANGELOG.map((rel) => {
+          {releases.map((rel) => {
             const isNew = isNewer(rel.version, seenVersion);
             return (
               <section key={rel.version} className={`logrel${isNew ? ' new' : ''}`}>
