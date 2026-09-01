@@ -1,14 +1,15 @@
 export const PRODUCT_COLUMNS = [
   ['ASIN', 'asin', 'text'], ['SKU', 'sku', 'text'], ['品牌', 'brand', 'text'],
   ['型号', 'model', 'text'], ['颜色', 'color', 'text'], ['色组', 'color_grp', 'text'],
-  ['页产量', 'yield', 'int'], ['商品标题', 'title', 'text'], ['价格(€)', 'price', 'num'],
-  ['Prime价(€)', 'prime_price', 'num'], ['Coupon', 'coupon', 'text'], ['评分', 'rating', 'num'],
+  ['页产量', 'yield', 'int'], ['商品标题', 'title', 'text'], ['价格', 'price', 'num'],
+  ['币种', 'currency', 'text'],
+  ['Prime价', 'prime_price', 'num'], ['Coupon', 'coupon', 'text'], ['评分', 'rating', 'num'],
   ['评分数', 'reviews', 'int'], ['月新增评分', 'reviews_new', 'int'],
   ['留评率', 'review_rate', 'num'], ['月销量', 'sales', 'int'],
-  ['月销售额(€)', 'revenue', 'num'], ['子体销量', 'child_sales', 'int'],
-  ['子体销售额(€)', 'child_revenue', 'num'], ['大类BSR', 'bsr_big', 'int'],
+  ['月销售额', 'revenue', 'num'], ['子体销量', 'child_sales', 'int'],
+  ['子体销售额', 'child_revenue', 'num'], ['大类BSR', 'bsr_big', 'int'],
   ['小类BSR', 'bsr_small', 'int'], ['小类目', 'cat_small', 'text'],
-  ['变体数', 'variants', 'int'], ['FBA(€)', 'fba_fee', 'num'], ['毛利率', 'margin', 'num'],
+  ['变体数', 'variants', 'int'], ['FBA', 'fba_fee', 'num'], ['毛利率', 'margin', 'num'],
   ['上架时间', 'listed', 'text'], ['上架天数', 'days', 'int'], ['配送方式', 'ship', 'text'],
   ['卖家数', 'sellers', 'int'], ['Buybox卖家', 'buybox', 'text'],
   ['卖家所属地', 'seller_country', 'text'], ['LQS', 'lqs', 'int'],
@@ -177,10 +178,14 @@ export function opportunities(products, mine, minSales = 100) {
 
 const HEADER_ALIASES = {
   商品标题: 'title', 标题: 'title', title: 'title', 商品主图: 'image', 主图: 'image', 图片链接: 'image',
-  商品详情页链接: 'url', 商品链接: 'url', 链接: 'url', '价格(€)': 'price', 价格: 'price', 售价: 'price', price: 'price',
-  'prime价格(€)': 'prime_price', prime价格: 'prime_price', '月销售额(€)': 'revenue', 月销售额: 'revenue',
+  商品详情页链接: 'url', 商品链接: 'url', 链接: 'url', '价格(€)': 'price', '价格($)': 'price', '价格(£)': 'price',
+  价格: 'price', 售价: 'price', price: 'price', 墨盒系列: 'model', 颜色套组: 'color_grp',
+  'prime价格(€)': 'prime_price', 'prime价格($)': 'prime_price', 'prime价格(£)': 'prime_price', prime价格: 'prime_price',
+  '月销售额(€)': 'revenue', '月销售额($)': 'revenue', '月销售额(£)': 'revenue', 月销售额: 'revenue',
   子体销量: 'child_sales', '子体销售额(€)': 'child_revenue', 子体销售额: 'child_revenue',
-  'fba(€)': 'fba_fee', fba: 'fba_fee', fba费用: 'fba_fee', 评分数: 'reviews', 评论数: 'reviews', 评价数: 'reviews',
+  '子体销售额($)': 'child_revenue', '子体销售额(£)': 'child_revenue',
+  'fba(€)': 'fba_fee', 'fba($)': 'fba_fee', 'fba(£)': 'fba_fee', fba: 'fba_fee', fba费用: 'fba_fee',
+  评分数: 'reviews', 评论数: 'reviews', 评价数: 'reviews',
   月新增评分数: 'reviews_new', 月新增评论数: 'reviews_new', 父asin: 'parent', 大类bsr: 'bsr_big', 小类bsr: 'bsr_small',
   'a+页面': 'aplus', 'q&a数': 'qa', "amazon'schoice": 'ac', ac关键词: 'ac_kw', bestseller标识: 'best_seller',
   商品重量单位换算: 'weight', 商品尺寸单位换算: 'size',
@@ -197,11 +202,83 @@ export function headerField(value) {
   return HEADER_MAP[key];
 }
 
+const MARKET_ALIASES = {
+  ES: 'ES', 西班牙: 'ES', 西班牙站: 'ES',
+  DE: 'DE', 德国: 'DE', 德国站: 'DE',
+  FR: 'FR', 法国: 'FR', 法国站: 'FR',
+  IT: 'IT', 意大利: 'IT', 意大利站: 'IT',
+  UK: 'UK', GB: 'UK', 英国: 'UK', 英国站: 'UK',
+  US: 'US', USA: 'US', 美国: 'US', 美国站: 'US',
+  CA: 'CA', 加拿大: 'CA', 加拿大站: 'CA',
+  AU: 'AU', 澳大利亚: 'AU', 澳大利亚站: 'AU', 澳洲: 'AU', 澳洲站: 'AU',
+};
+
+export function marketplaceFromCell(value) {
+  return MARKET_ALIASES[String(value ?? '').trim().toUpperCase()] ?? '';
+}
+
+export function isMarketplaceHeader(value) {
+  const key = String(value ?? '').trim().toLowerCase().replace(/\s/g, '');
+  return ['国家', '国家代码', '站点', '站点码', 'marketplace', 'market', 'country'].includes(key);
+}
+
+export function currencyFromHeader(value) {
+  const text = String(value ?? '');
+  if (text.includes('$')) return 'USD';
+  if (text.includes('£')) return 'GBP';
+  if (text.includes('€')) return 'EUR';
+  return '';
+}
+
+export function parseProductRows(rows, fallbackMarket = '') {
+  const headerIndex = rows.findIndex((row) => row.some((cell) => headerField(cell) === 'asin'));
+  if (headerIndex < 0) throw new Error('表格里找不到 ASIN 表头，请使用产品数据表');
+
+  const positions = {};
+  let marketplaceIndex = -1;
+  rows[headerIndex].forEach((cell, index) => {
+    const field = headerField(cell);
+    if (field && positions[field] === undefined) positions[field] = index;
+    if (marketplaceIndex < 0 && isMarketplaceHeader(cell)) marketplaceIndex = index;
+  });
+  const fallback = marketplaceFromCell(fallbackMarket);
+  if (marketplaceIndex < 0 && !fallback) throw new Error('表格没有国家列，也无法确定当前站点');
+
+  const priceCurrency = positions.price === undefined ? '' : currencyFromHeader(rows[headerIndex][positions.price]);
+  const productsByMarketplace = {};
+  const unknownMarkets = new Set();
+  let skipped = 0;
+  for (const row of rows.slice(headerIndex + 1)) {
+    const asin = positions.asin === undefined ? '' : String(row[positions.asin] ?? '').trim();
+    if (!asin) continue;
+    const marketplace = marketplaceIndex < 0 ? fallback : marketplaceFromCell(row[marketplaceIndex]);
+    if (!marketplace) {
+      unknownMarkets.add(String(row[marketplaceIndex] ?? '').trim() || '空白');
+      skipped += 1;
+      continue;
+    }
+    const raw = {};
+    for (const [, field] of PRODUCT_COLUMNS) {
+      raw[field] = positions[field] === undefined ? '' : row[positions[field]];
+    }
+    if (!raw.currency && priceCurrency) raw.currency = priceCurrency;
+    (productsByMarketplace[marketplace] ??= []).push(cleanProduct(raw));
+  }
+  if (unknownMarkets.size) {
+    throw new Error(`国家列存在无法识别的值：${[...unknownMarkets].slice(0, 8).join('、')}`);
+  }
+  const total = Object.values(productsByMarketplace).reduce((sum, products) => sum + products.length, 0);
+  if (!total) throw new Error('没有读到有效产品；每行都需要有 ASIN 和可识别的国家');
+  return { productsByMarketplace, total, skipped, headerIndex, hasMarketplaceColumn: marketplaceIndex >= 0 };
+}
+
 export function fmt(value, digits = 2) {
   if (typeof value !== 'number' || !Number.isFinite(value)) return '—';
   return Number.isInteger(value) ? String(value) : value.toFixed(digits);
 }
 
-export function money(value) {
-  return typeof value === 'number' ? `€${value.toFixed(2)}` : '—';
+export function money(value, currency = 'EUR') {
+  if (typeof value !== 'number') return '—';
+  const symbol = { USD: '$', EUR: '€', GBP: '£', CAD: 'CA$', AUD: 'A$' }[currency] ?? `${currency} `;
+  return `${symbol}${value.toFixed(2)}`;
 }

@@ -1,6 +1,7 @@
 import express from 'express';
 import { db, audit } from './db.js';
 import { canRead, requireLogin } from './auth.js';
+import { MARKETPLACES } from './libs.js';
 
 export const productRouter = express.Router();
 
@@ -56,30 +57,10 @@ function rowToProduct(row) {
   }
 }
 
-productRouter.use(requireProductIntel);
-
-productRouter.get('/', (req, res) => {
-  const marketplace = authorizeMarket(req, res);
-  if (!marketplace) return;
-  const products = db.prepare(
-    'SELECT * FROM products WHERE marketplace = ? ORDER BY id'
-  ).all(marketplace).map(rowToProduct);
-  const settings = db.prepare(
-    'SELECT own_brand, min_sales FROM product_settings WHERE marketplace = ?'
-  ).get(marketplace) ?? { own_brand: '', min_sales: 100 };
-  res.json({ products, settings });
-});
-
-productRouter.post('/import', (req, res) => {
-  const marketplace = authorizeMarket(req, res);
-  if (!marketplace) return;
-  if (!Array.isArray(req.body?.products) || req.body.products.length > 20_000) {
-    return res.status(400).json({ error: '产品数据格式不正确，单次最多 20000 条' });
-  }
-
+function importProductsForMarket(marketplace, rawProducts, userId) {
   const incoming = new Map();
   let skipped = 0;
-  for (const raw of req.body.products) {
+  for (const raw of rawProducts) {
     const product = cleanProduct(raw);
     if (!product) {
       skipped += 1;
@@ -106,30 +87,100 @@ productRouter.post('/import', (req, res) => {
 
   let added = 0;
   let updated = 0;
-  const save = db.transaction(() => {
-    for (const [asin, product] of incoming) {
-      const old = current.get(asin);
-      if (old) {
-        const manual = new Set(old._manual ?? []);
-        for (const field of ['brand', 'color_grp']) {
-          if (manual.has(field) && cleanText(old[field])) product[field] = old[field];
-        }
-        product._manual = [...manual];
-        updated += 1;
-      } else {
-        added += 1;
+  for (const [asin, product] of incoming) {
+    const old = current.get(asin);
+    if (old) {
+      const manual = new Set(old._manual ?? []);
+      for (const field of ['brand', 'color_grp']) {
+        if (manual.has(field) && cleanText(old[field])) product[field] = old[field];
       }
-      upsert.run(
-        marketplace, asin, product.brand, product.model, product.color_grp,
-        JSON.stringify(product), req.session.user.id
-      );
+      product._manual = [...manual];
+      updated += 1;
+    } else {
+      added += 1;
     }
-  });
-  save();
-  audit(req.session.user.id, marketplace, 'import', 'products', null, {
-    added, updated, skipped, received: req.body.products.length,
-  });
-  res.json({ added, updated, skipped, total: incoming.size });
+    upsert.run(
+      marketplace, asin, product.brand, product.model, product.color_grp,
+      JSON.stringify(product), userId
+    );
+  }
+  return { added, updated, skipped, total: incoming.size, received: rawProducts.length };
+}
+
+const saveMarketImports = db.transaction((entries, userId) => Object.fromEntries(
+  entries.map(([marketplace, products]) => [
+    marketplace,
+    importProductsForMarket(marketplace, products, userId),
+  ])
+));
+
+function importTotals(results) {
+  return Object.values(results).reduce((totals, result) => ({
+    added: totals.added + result.added,
+    updated: totals.updated + result.updated,
+    skipped: totals.skipped + result.skipped,
+    total: totals.total + result.total,
+    received: totals.received + result.received,
+  }), { added: 0, updated: 0, skipped: 0, total: 0, received: 0 });
+}
+
+productRouter.use(requireProductIntel);
+
+productRouter.get('/', (req, res) => {
+  const marketplace = authorizeMarket(req, res);
+  if (!marketplace) return;
+  const products = db.prepare(
+    'SELECT * FROM products WHERE marketplace = ? ORDER BY id'
+  ).all(marketplace).map(rowToProduct);
+  const settings = db.prepare(
+    'SELECT own_brand, min_sales FROM product_settings WHERE marketplace = ?'
+  ).get(marketplace) ?? { own_brand: '', min_sales: 100 };
+  res.json({ products, settings });
+});
+
+productRouter.post('/import', (req, res) => {
+  const marketplace = authorizeMarket(req, res);
+  if (!marketplace) return;
+  if (!Array.isArray(req.body?.products) || req.body.products.length > 20_000) {
+    return res.status(400).json({ error: '产品数据格式不正确，单次最多 20000 条' });
+  }
+  const results = saveMarketImports([[marketplace, req.body.products]], req.session.user.id);
+  const result = results[marketplace];
+  audit(req.session.user.id, marketplace, 'import', 'products', null, result);
+  res.json(result);
+});
+
+productRouter.post('/import-all', (req, res) => {
+  const groups = req.body?.productsByMarketplace;
+  if (!groups || typeof groups !== 'object' || Array.isArray(groups)) {
+    return res.status(400).json({ error: '分市场产品数据格式不正确' });
+  }
+
+  const combined = new Map();
+  let received = 0;
+  for (const [rawMarket, products] of Object.entries(groups)) {
+    const marketplace = marketFrom(rawMarket);
+    if (!MARKETPLACES.includes(marketplace)) {
+      return res.status(400).json({ error: `无法识别国家：${cleanText(rawMarket, 20) || '空白'}` });
+    }
+    if (!canRead(req.session.user, marketplace)) {
+      return res.status(403).json({ error: `无权导入 ${marketplace} 站产品数据` });
+    }
+    if (!Array.isArray(products)) {
+      return res.status(400).json({ error: `${marketplace} 站产品数据格式不正确` });
+    }
+    received += products.length;
+    combined.set(marketplace, [...(combined.get(marketplace) ?? []), ...products]);
+  }
+  if (!combined.size || received > 20_000) {
+    return res.status(400).json({ error: '产品数据格式不正确，单次最多 20000 条' });
+  }
+
+  const results = saveMarketImports([...combined], req.session.user.id);
+  for (const [marketplace, result] of Object.entries(results)) {
+    audit(req.session.user.id, marketplace, 'import', 'products', null, result);
+  }
+  res.json({ markets: results, totals: importTotals(results) });
 });
 
 productRouter.patch('/:asin', (req, res) => {

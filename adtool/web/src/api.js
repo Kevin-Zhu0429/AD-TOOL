@@ -60,6 +60,8 @@ export const api = {
   products: (marketplace) => request(`/products?marketplace=${encodeURIComponent(marketplace)}`),
   importProducts: (marketplace, products) =>
     request('/products/import', { method: 'POST', body: { marketplace, products } }),
+  importAllProducts: (productsByMarketplace) =>
+    request('/products/import-all', { method: 'POST', body: { productsByMarketplace } }),
   updateProduct: (marketplace, asin, changes) =>
     request(`/products/${encodeURIComponent(asin)}`, {
       method: 'PATCH', body: { marketplace, changes },

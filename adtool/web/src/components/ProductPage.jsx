@@ -4,8 +4,8 @@ import { api } from '../api.js';
 import Icon from './Icon.jsx';
 import {
   COLOR_GROUPS, EDIT_FIELDS, NUMERIC_FIELDS, PRODUCT_COLUMNS, PRODUCT_LABELS,
-  average, cleanProduct, fmt, headerField, median, modelKey, money,
-  opportunities, priceGrade, priceStats, productNumber,
+  average, fmt, headerField, median, modelKey, money,
+  opportunities, parseProductRows, priceGrade, priceStats, productNumber,
 } from '../productLogic.js';
 import './ProductPage.css';
 
@@ -23,33 +23,18 @@ const DETAIL_GROUPS = [
   ['规格', ['yield', 'weight', 'size', 'parent', 'sku']],
 ];
 
-function parseWorkbook(buffer) {
+function parseWorkbook(buffer, fallbackMarket) {
   const workbook = XLSX.read(buffer, { type: 'array', cellDates: false });
-  let rows = [];
-  for (const name of workbook.SheetNames) {
+  const preferred = workbook.SheetNames.filter((name) => /干净.*数据源|数据源.*干净/i.test(name));
+  const names = [...preferred, ...workbook.SheetNames.filter((name) => !preferred.includes(name))];
+  for (const name of names) {
     if (['brands', 'sellers', 'note'].includes(name.trim().toLowerCase())) continue;
     const candidate = XLSX.utils.sheet_to_json(workbook.Sheets[name], { header: 1, raw: true, defval: '' });
     if (candidate.some((row) => row.some((cell) => headerField(cell) === 'asin'))) {
-      rows = candidate;
-      break;
+      return { ...parseProductRows(candidate, fallbackMarket), sheetName: name };
     }
   }
-  if (!rows.length) throw new Error('表格里找不到 ASIN 表头，请使用卖家精灵导出的产品表');
-  const headerIndex = rows.findIndex((row) => row.some((cell) => headerField(cell) === 'asin'));
-  const positions = {};
-  rows[headerIndex].forEach((cell, index) => {
-    const field = headerField(cell);
-    if (field && positions[field] === undefined) positions[field] = index;
-  });
-  const products = [];
-  for (const row of rows.slice(headerIndex + 1)) {
-    const raw = {};
-    for (const [, field] of PRODUCT_COLUMNS) raw[field] = positions[field] === undefined ? '' : row[positions[field]];
-    if (!String(raw.asin ?? '').trim()) continue;
-    products.push(cleanProduct(raw));
-  }
-  if (!products.length) throw new Error('没有读到有效产品；每行都需要有 ASIN');
-  return products;
+  throw new Error('表格里找不到 ASIN 表头，请使用产品数据表');
 }
 
 function guessOwnBrand(products) {
@@ -60,7 +45,7 @@ function guessOwnBrand(products) {
 
 function productUrl(product, market) {
   if (product?.url) return product.url;
-  const domains = { UK: 'co.uk', US: 'com', CA: 'ca', ES: 'es', DE: 'de', FR: 'fr', IT: 'it' };
+  const domains = { UK: 'co.uk', US: 'com', CA: 'ca', AU: 'com.au', ES: 'es', DE: 'de', FR: 'fr', IT: 'it' };
   return product?.asin ? `https://www.amazon.${domains[market] ?? 'com'}/dp/${product.asin}` : '';
 }
 
@@ -73,13 +58,13 @@ function EmptyState({ onImport }) {
     <div className="product-empty">
       <span className="product-empty-icon"><Icon name="box" size={25} /></span>
       <h2>这个站点还没有产品数据</h2>
-      <p>导入卖家精灵导出的 xlsx / csv 后，系统会自动识别品牌、型号和色组。</p>
+      <p>可导入全市场月度表或单站点 xlsx / csv；有国家列时会自动分流到各站产品库。</p>
       <button className="btn primary" onClick={onImport}><Icon name="upload" />导入产品表</button>
     </div>
   );
 }
 
-function DetailPanel({ product, products, ownBrand, market, minSales, onSaved }) {
+function DetailPanel({ product, products, colorGroups, ownBrand, market, minSales, onSaved }) {
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({});
   const [saving, setSaving] = useState(false);
@@ -131,7 +116,7 @@ function DetailPanel({ product, products, ownBrand, market, minSales, onSaved })
 
       <div className="detail-competition">
         <div><GradeBadge grade={grade} large /><span><b>{grade.label}</b><small>{grade.note}</small></span></div>
-        <p>{product.model || '未识别型号'} · {product.color_grp} 共 {peers.length} 条，市场均价 {money(stats?.average)}，机会竞品 {opps.length} 个。</p>
+        <p>{product.model || '未识别型号'} · {product.color_grp} 共 {peers.length} 条，市场均价 {money(stats?.average, product.currency)}，机会竞品 {opps.length} 个。</p>
       </div>
 
       {editing ? (
@@ -141,7 +126,7 @@ function DetailPanel({ product, products, ownBrand, market, minSales, onSaved })
               <span>{PRODUCT_LABELS[field]}</span>
               {field === 'color_grp' ? (
                 <select className="inp" value={form[field]} onChange={(e) => setForm({ ...form, [field]: e.target.value })}>
-                  {COLOR_GROUPS.map((value) => <option key={value}>{value}</option>)}
+                  {colorGroups.map((value) => <option key={value}>{value}</option>)}
                 </select>
               ) : (
                 <input className="inp" value={form[field]} onChange={(e) => setForm({ ...form, [field]: e.target.value })} />
@@ -208,7 +193,7 @@ function CompareView({ products, settings, market, initialAsin }) {
       <div className="compare-controls card">
         <label className="field compare-mine"><span>我的产品</span>
           <select className="inp" value={mine.asin} onChange={(e) => setTargetAsin(e.target.value)}>
-            {mineChoices.map((item) => <option key={item.asin} value={item.asin}>{item.model || '?'} · {item.color_grp} · {money(item.price)} · {item.asin}</option>)}
+            {mineChoices.map((item) => <option key={item.asin} value={item.asin}>{item.model || '?'} · {item.color_grp} · {money(item.price, item.currency)} · {item.asin}</option>)}
           </select>
         </label>
         <label className="field"><span>对比范围</span>
@@ -224,9 +209,9 @@ function CompareView({ products, settings, market, initialAsin }) {
 
       <div className="compare-summary">
         <div className="compare-main-grade card"><GradeBadge grade={mineGrade} large /><div><span>我的价格档位</span><b>{mineGrade.label}</b><small>{mineGrade.note}</small></div></div>
-        <div className="metric card"><span>我的价格</span><b>{money(mine.price)}</b><small>{mine.brand} · {mine.model} · {mine.color_grp}</small></div>
-        <div className="metric card"><span>B 档基准</span><b>{money(stats?.average)}</b><small>当前范围市场平均价</small></div>
-        <div className="metric card"><span>D 档基准</span><b>{money(stats?.min)}</b><small>当前范围市场最低价</small></div>
+        <div className="metric card"><span>我的价格</span><b>{money(mine.price, mine.currency)}</b><small>{mine.brand} · {mine.model} · {mine.color_grp}</small></div>
+        <div className="metric card"><span>B 档基准</span><b>{money(stats?.average, mine.currency)}</b><small>当前范围市场平均价</small></div>
+        <div className="metric card"><span>D 档基准</span><b>{money(stats?.min, mine.currency)}</b><small>当前范围市场最低价</small></div>
         <div className="metric card"><span>机会竞品</span><b>{opps.length}</b><small>评分更低、价格更高、销量达标</small></div>
       </div>
 
@@ -253,7 +238,7 @@ function CompareView({ products, settings, market, initialAsin }) {
                 <span className="ladder-product">{isMine && <b>★</b>}<span><strong>{item.brand || '无品牌'}</strong><small>{item.model} · {item.color_grp} · {item.asin}</small></span></span>
                 <span>{typeof item.rating === 'number' ? `${fmt(item.rating, 1)} ★` : '—'}</span>
                 <span>{fmt(item.reviews)}</span><span>{fmt(item.child_sales)}</span>
-                <span className="bar-cell"><i style={{ width: `${width}%` }} /><em>{money(item.price)}</em><GradeBadge grade={grade} /></span>
+                <span className="bar-cell"><i style={{ width: `${width}%` }} /><em>{money(item.price, item.currency)}</em><GradeBadge grade={grade} /></span>
               </a>
             );
           })}
@@ -264,7 +249,7 @@ function CompareView({ products, settings, market, initialAsin }) {
         <div className="section-heading"><div><h2>机会竞品</h2><p>评分比我低 + 价格比我高 + 子体销量 &gt; {settings.min_sales}</p></div><span className="tag amber">{opps.length} 个目标</span></div>
         <div className="scroll">
           <table className="tbl"><thead><tr><th>ASIN</th><th>品牌</th><th>型号</th><th>色组</th><th>价格</th><th>比我贵</th><th>评分</th><th>评分数</th><th>子体销量</th><th>标题</th></tr></thead>
-            <tbody>{opps.map((item) => <tr key={item.asin}><td><a href={productUrl(item, market)} target="_blank" rel="noreferrer" className="asin-link">{item.asin}</a></td><td>{item.brand || '—'}</td><td>{item.model}</td><td>{item.color_grp}</td><td>{money(item.price)}</td><td className="positive">+{money(item.price - mine.price)}</td><td>{fmt(item.rating, 1)}</td><td>{fmt(item.reviews)}</td><td>{fmt(item.child_sales)}</td><td className="title-cell">{item.title}</td></tr>)}</tbody>
+            <tbody>{opps.map((item) => <tr key={item.asin}><td><a href={productUrl(item, market)} target="_blank" rel="noreferrer" className="asin-link">{item.asin}</a></td><td>{item.brand || '—'}</td><td>{item.model}</td><td>{item.color_grp}</td><td>{money(item.price, item.currency)}</td><td className="positive">+{money(item.price - mine.price, mine.currency)}</td><td>{fmt(item.rating, 1)}</td><td>{fmt(item.reviews)}</td><td>{fmt(item.child_sales)}</td><td className="title-cell">{item.title}</td></tr>)}</tbody>
           </table>
           {!opps.length && <div className="empty">当前范围没有符合条件的机会竞品</div>}
         </div>
@@ -305,6 +290,10 @@ export default function ProductPage({ market }) {
 
   const brands = useMemo(() => [...new Set(products.map((item) => item.brand).filter(Boolean))].sort(), [products]);
   const models = useMemo(() => [...new Set(products.map((item) => item.model).filter(Boolean))].sort(), [products]);
+  const colorGroups = useMemo(() => [...new Set([
+    ...COLOR_GROUPS,
+    ...products.map((item) => item.color_grp).filter(Boolean),
+  ])], [products]);
   const filtered = useMemo(() => {
     const own = settings.own_brand.toLowerCase();
     let rows = products.filter((item) => {
@@ -335,17 +324,20 @@ export default function ProductPage({ market }) {
     if (!file) return;
     setMessage({ kind: 'info', text: `正在读取 ${file.name}…` });
     try {
-      const parsed = parseWorkbook(await file.arrayBuffer());
-      const result = await api.importProducts(market, parsed);
-      if (!settings.own_brand) {
-        const guessed = guessOwnBrand(parsed);
+      const parsed = parseWorkbook(await file.arrayBuffer(), market);
+      const importedMarkets = Object.keys(parsed.productsByMarketplace);
+      const result = await api.importAllProducts(parsed.productsByMarketplace);
+      if (!settings.own_brand && importedMarkets.length === 1) {
+        const guessed = guessOwnBrand(parsed.productsByMarketplace[market] ?? []);
         if (guessed) {
           const saved = await api.productSettings(market, guessed, settings.min_sales);
           setSettings(saved.settings);
         }
       }
       await load();
-      setMessage({ kind: 'ok', text: `导入完成：新增 ${result.added}，更新 ${result.updated}，跳过 ${result.skipped}` });
+      const countries = importedMarkets.map((code) => `${code} ${parsed.productsByMarketplace[code].length} 条`).join('、');
+      const prefix = parsed.hasMarketplaceColumn ? `已按 A 列分流 ${importedMarkets.length} 个国家（${countries}）` : `已导入 ${countries} 站`;
+      setMessage({ kind: 'ok', text: `${prefix}：新增 ${result.totals.added}，更新 ${result.totals.updated}，跳过 ${result.totals.skipped}` });
     } catch (error) { setMessage({ kind: 'err', text: error.message }); }
   }
 
@@ -418,7 +410,7 @@ export default function ProductPage({ market }) {
               <label className="field search-field"><span>搜索</span><div className="input-icon"><Icon name="search" /><input className="inp" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="ASIN / 标题 / 品牌 / 型号" /></div></label>
               <label className="field"><span>品牌</span><select className="inp" value={brand} onChange={(e) => setBrand(e.target.value)}><option value="">全部品牌</option>{brands.map((value) => <option key={value}>{value}</option>)}</select></label>
               <label className="field"><span>型号</span><select className="inp" value={model} onChange={(e) => setModel(e.target.value)}><option value="">全部型号</option>{models.map((value) => <option key={value}>{value}</option>)}</select></label>
-              <label className="field"><span>色组</span><select className="inp" value={group} onChange={(e) => setGroup(e.target.value)}><option value="">全部色组</option>{COLOR_GROUPS.map((value) => <option key={value}>{value}</option>)}</select></label>
+              <label className="field"><span>色组</span><select className="inp" value={group} onChange={(e) => setGroup(e.target.value)}><option value="">全部色组</option>{colorGroups.map((value) => <option key={value}>{value}</option>)}</select></label>
               <label className="field"><span>自家品牌</span><input className="inp" value={settings.own_brand} onChange={(e) => setSettings({ ...settings, own_brand: e.target.value })} onBlur={() => saveSettings(settings)} placeholder="例如 CYES" /></label>
               <label className="field min-sales"><span>机会竞品子体销量 &gt;</span><input className="inp" type="number" min="0" value={settings.min_sales} onChange={(e) => setSettings({ ...settings, min_sales: Math.max(0, Number(e.target.value)) })} onBlur={() => saveSettings(settings)} /></label>
             </div>
@@ -426,7 +418,7 @@ export default function ProductPage({ market }) {
               <div className="segmented"><button className={ownerView === 'all' ? 'on' : ''} onClick={() => setOwnerView('all')}>全部</button><button className={ownerView === 'own' ? 'on' : ''} onClick={() => setOwnerView('own')}>只看自家</button><button className={ownerView === 'rival' ? 'on' : ''} onClick={() => setOwnerView('rival')}>只看竞品</button></div>
               <label className="inline-check"><input type="checkbox" checked={brandedOnly} onChange={(e) => setBrandedOnly(e.target.checked)} />仅有品牌名</label>
               <span className="toolbar-divider" />
-              <select className="inp bulk-select" value={bulkGroup} onChange={(e) => setBulkGroup(e.target.value)}>{COLOR_GROUPS.map((value) => <option key={value}>{value}</option>)}</select>
+              <select className="inp bulk-select" value={bulkGroup} onChange={(e) => setBulkGroup(e.target.value)}>{colorGroups.map((value) => <option key={value}>{value}</option>)}</select>
               <button className="btn" disabled={!selected.size} onClick={applyGroup}>批量改色组</button>
               <button className="btn" onClick={exportRows}><Icon name="download" />导出结果</button>
               <button className="btn danger" disabled={!selected.size} onClick={removeSelected}><Icon name="trash" />删除</button>
@@ -435,7 +427,7 @@ export default function ProductPage({ market }) {
 
           <section className="library-summary">
             <div><span>筛选结果</span><b>{filtered.length}</b><small>产品库共 {products.length} 条</small></div>
-            <div><span>均价</span><b>{money(filteredStats?.average)}</b><small>中位 {money(median(filtered.map((item) => item.price)))}</small></div>
+            <div><span>均价</span><b>{money(filteredStats?.average, filtered.find((item) => item.currency)?.currency)}</b><small>中位 {money(median(filtered.map((item) => item.price)), filtered.find((item) => item.currency)?.currency)}</small></div>
             <div><span>平均评分</span><b>{fmt(average(filtered.map((item) => item.rating)), 2)}</b><small>评价数中位 {fmt(median(filtered.map((item) => item.reviews)))}</small></div>
             <div><span>自家 / 竞品</span><b>{ownCount} / {filtered.length - ownCount}</b><small>{settings.own_brand || '请先填写自家品牌'}</small></div>
           </section>
@@ -446,10 +438,10 @@ export default function ProductPage({ market }) {
               <div className="scroll product-table-scroll"><table className="tbl product-table"><thead><tr><th className="check-col"></th>{GRID_FIELDS.map((field) => <th key={field} onClick={() => changeSort(field)} className="sortable">{PRODUCT_LABELS[field]}{sort[0] === field && (sort[1] ? ' ↓' : ' ↑')}</th>)}</tr></thead>
                 <tbody>{filtered.map((item) => {
                   const isOwn = settings.own_brand && item.brand.toLowerCase() === settings.own_brand.toLowerCase();
-                  return <tr key={item.asin} className={`${isOwn ? 'own-row ' : ''}${selectedProduct?.asin === item.asin ? 'active-row' : ''}`} onClick={() => setSelected(new Set([item.asin]))} onDoubleClick={() => window.open(productUrl(item, market), '_blank')}><td className="check-col"><input type="checkbox" checked={selected.has(item.asin)} onClick={(e) => e.stopPropagation()} onChange={() => setSelected((current) => { const next = new Set(current); if (next.has(item.asin)) next.delete(item.asin); else next.add(item.asin); return next; })} /></td>{GRID_FIELDS.map((field) => <td key={field} className={field === 'title' ? 'title-cell' : ''}>{field === 'price' ? money(item[field]) : field === 'asin' ? <button className="asin-button" onClick={(e) => { e.stopPropagation(); openCompare(item.asin); }}>{item.asin}</button> : typeof item[field] === 'number' ? fmt(item[field]) : item[field] || '—'}</td>)}</tr>;
+                  return <tr key={item.asin} className={`${isOwn ? 'own-row ' : ''}${selectedProduct?.asin === item.asin ? 'active-row' : ''}`} onClick={() => setSelected(new Set([item.asin]))} onDoubleClick={() => window.open(productUrl(item, market), '_blank')}><td className="check-col"><input type="checkbox" checked={selected.has(item.asin)} onClick={(e) => e.stopPropagation()} onChange={() => setSelected((current) => { const next = new Set(current); if (next.has(item.asin)) next.delete(item.asin); else next.add(item.asin); return next; })} /></td>{GRID_FIELDS.map((field) => <td key={field} className={field === 'title' ? 'title-cell' : ''}>{field === 'price' ? money(item[field], item.currency) : field === 'asin' ? <button className="asin-button" onClick={(e) => { e.stopPropagation(); openCompare(item.asin); }}>{item.asin}</button> : typeof item[field] === 'number' ? fmt(item[field]) : item[field] || '—'}</td>)}</tr>;
                 })}</tbody></table>{!filtered.length && <div className="empty">没有符合当前筛选条件的产品</div>}</div>
             </section>
-            <DetailPanel product={selectedProduct} products={products} ownBrand={settings.own_brand} market={market} minSales={settings.min_sales} onSaved={updateProduct} />
+            <DetailPanel product={selectedProduct} products={products} colorGroups={colorGroups} ownBrand={settings.own_brand} market={market} minSales={settings.min_sales} onSaved={updateProduct} />
           </div>
         </>
       )}
