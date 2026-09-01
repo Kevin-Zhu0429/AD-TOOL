@@ -28,6 +28,7 @@ migrate();
  * 3) users 加「看过的更新日志版本」列:老账号是空的,登录后会看到全部更新
  * 4) users 加「产品库与竞品分析使用权」列:默认全关,由超级管理员逐个开
  * 5) 旧的 neg_terms 搬进 lib_items:无关词→A,品牌→B,型号和 ASIN→C
+ * 6) 产品库按“站点 + 数据月份 + ASIN”隔离；无法追溯月份的旧数据放进“历史数据”
  */
 function migrate() {
   const cols = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
@@ -52,44 +53,83 @@ function migrate() {
     console.log('[db] users 加上 product_intel 列');
   }
 
-  if (db.pragma('user_version', { simple: true }) >= 1) return;
+  const version = db.pragma('user_version', { simple: true });
+  if (version < 1) {
+    const old = db
+      .prepare('SELECT marketplace, cat, term, note, created_by, created_at FROM neg_terms')
+      .all();
 
-  const old = db
-    .prepare('SELECT marketplace, cat, term, note, created_by, created_at FROM neg_terms')
-    .all();
+    if (old.length) {
+      // 旧库是按站点存的,B/C 现在按区域存,同区多个站点的词合并成一份
+      const ins = db.prepare(
+        `INSERT OR IGNORE INTO lib_items (lib, scope, term, asin, note, dedupe, created_by, created_at)
+         VALUES (@lib, @scope, @term, @asin, @note, @dedupe, @created_by, @created_at)`
+      );
+      let moved = 0;
+      db.transaction(() => {
+        for (const r of old) {
+          const region = regionOf(r.marketplace)?.id ?? null;
+          const map = {
+            irrel: { lib: 'A', scope: r.marketplace, term: r.term, asin: null },
+            brand: { lib: 'B', scope: region, term: r.term, asin: null },
+            model: { lib: 'C', scope: region, term: r.term, asin: null },
+            asin: { lib: 'C', scope: region, term: null, asin: r.term },
+          }[r.cat];
+          if (!map || !map.scope) continue;
+          moved += ins.run({
+            ...map,
+            dedupe: dedupeKey(libOf(map.lib), map),
+            note: r.note,
+            created_by: r.created_by,
+            created_at: r.created_at,
+          }).changes;
+        }
+      })();
+      console.log(`[db] 旧词库搬进 lib_items:${moved} 条`);
+    }
 
-  if (old.length) {
-    // 旧库是按站点存的,B/C 现在按区域存,同区多个站点的词合并成一份
-    const ins = db.prepare(
-      `INSERT OR IGNORE INTO lib_items (lib, scope, term, asin, note, dedupe, created_by, created_at)
-       VALUES (@lib, @scope, @term, @asin, @note, @dedupe, @created_by, @created_at)`
-    );
-    let moved = 0;
-    db.transaction(() => {
-      for (const r of old) {
-        const region = regionOf(r.marketplace)?.id ?? null;
-        const map = {
-          irrel: { lib: 'A', scope: r.marketplace, term: r.term, asin: null },
-          brand: { lib: 'B', scope: region, term: r.term, asin: null },
-          model: { lib: 'C', scope: region, term: r.term, asin: null },
-          asin: { lib: 'C', scope: region, term: null, asin: r.term },
-        }[r.cat];
-        if (!map || !map.scope) continue;
-        moved += ins.run({
-          ...map,
-          dedupe: dedupeKey(libOf(map.lib), map),
-          note: r.note,
-          created_by: r.created_by,
-          created_at: r.created_at,
-        }).changes;
-      }
-    })();
-    console.log(`[db] 旧词库搬进 lib_items:${moved} 条`);
+    // 老的分类设置用的是 model/brand/irrel/asin,新界面按 A–E 重新生成,直接丢掉
+    db.exec("DELETE FROM neg_cat_config WHERE cat NOT IN ('A','B','C','D','E')");
+    db.pragma('user_version = 1');
   }
 
-  // 老的分类设置用的是 model/brand/irrel/asin,新界面按 A–E 重新生成,直接丢掉
-  db.exec("DELETE FROM neg_cat_config WHERE cat NOT IN ('A','B','C','D','E')");
-  db.pragma('user_version = 1');
+  if (version < 2) {
+    const productCols = db.prepare('PRAGMA table_info(products)').all().map((c) => c.name);
+    if (!productCols.includes('data_month')) {
+      db.exec(`
+        BEGIN;
+        ALTER TABLE products RENAME TO products_before_months;
+        DROP INDEX IF EXISTS idx_products_market_model;
+        CREATE TABLE products (
+          id          INTEGER PRIMARY KEY AUTOINCREMENT,
+          marketplace TEXT    NOT NULL,
+          data_month  TEXT    NOT NULL DEFAULT 'legacy',
+          source_file TEXT    NOT NULL DEFAULT '',
+          asin        TEXT    NOT NULL,
+          brand       TEXT,
+          model       TEXT,
+          color_group TEXT,
+          data_json   TEXT    NOT NULL,
+          created_by  INTEGER REFERENCES users(id),
+          created_at  TEXT    NOT NULL DEFAULT (datetime('now', 'localtime')),
+          updated_at  TEXT    NOT NULL DEFAULT (datetime('now', 'localtime')),
+          UNIQUE (marketplace, data_month, asin)
+        );
+        INSERT INTO products
+          (id, marketplace, data_month, source_file, asin, brand, model, color_group,
+           data_json, created_by, created_at, updated_at)
+        SELECT id, marketplace, 'legacy', '', asin, brand, model, color_group,
+               data_json, created_by, created_at, updated_at
+        FROM products_before_months;
+        DROP TABLE products_before_months;
+        CREATE INDEX idx_products_market_model
+          ON products (marketplace, model, color_group);
+        COMMIT;
+      `);
+      console.log('[db] 产品库已按月份隔离，旧记录归入“历史数据”');
+    }
+    db.pragma('user_version = 2');
+  }
 }
 
 /** 写一条操作留痕 */

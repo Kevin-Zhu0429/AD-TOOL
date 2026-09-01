@@ -7,6 +7,9 @@
 .products-tabs button.on { background: var(--accent-soft); color: var(--accent-text); font-weight: 600; }
 .products-tabs button:disabled { opacity: .4; cursor: not-allowed; }
 .products-tabs button span { padding: 0 5px; border-radius: 9px; background: var(--panel-3); font-size: 10px; }
+.month-picker { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+.month-picker > span { color: var(--text-faint); font-size: 11px; }
+.month-picker .inp { width: 160px; padding: 6px 9px; }
 .product-note { margin-bottom: 14px; justify-content: space-between; }
 .product-note button { background: none; border: 0; color: inherit; font-size: 18px; line-height: 1; }
 .product-loading, .product-empty { min-height: 430px; display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--text-faint); }
@@ -48,8 +51,8 @@
 .asin-button:hover { text-decoration: underline; }
 .product-detail { position: sticky; top: 14px; max-height: calc(100vh - 90px); overflow: auto; border: 1px solid var(--border-soft); border-radius: var(--radius-lg); background: var(--panel); box-shadow: var(--shadow-sm); }
 .detail-placeholder { position: sticky; top: 14px; min-height: 240px; display: grid; place-items: center; border: 1px dashed var(--border); border-radius: var(--radius-lg); color: var(--text-faint); }
-.detail-cover { height: 190px; display: grid; place-items: center; background: #fff; border-bottom: 1px solid var(--border-soft); overflow: hidden; }
-.detail-cover img { width: 100%; height: 100%; object-fit: contain; }
+.detail-cover { width: 100%; aspect-ratio: 1 / 1; min-height: 280px; display: grid; place-items: center; padding: 14px; background: #fff; border-bottom: 1px solid var(--border-soft); overflow: hidden; }
+.detail-cover img { display: block; width: 100%; height: 100%; object-fit: contain; }
 .detail-cover span { color: #a4acb8; }
 .detail-heading { padding: 14px 15px 10px; }
 .detail-asin { font-size: 11.5px; color: var(--accent-text); }
@@ -125,6 +128,7 @@
 @media (max-width: 760px) {
   .products-page { padding: 18px 12px 34px; }
   .products-head { flex-wrap: wrap; }
+  .month-picker { margin-left: auto; }
   .products-tabs { order: 3; width: 100%; margin: 0; }
   .products-tabs button { flex: 1; justify-content: center; }
   .filter-grid, .compare-controls { grid-template-columns: 1fr 1fr; }

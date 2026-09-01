@@ -217,6 +217,28 @@ export function marketplaceFromCell(value) {
   return MARKET_ALIASES[String(value ?? '').trim().toUpperCase()] ?? '';
 }
 
+/**
+ * 从上传文件名提取数据月份。优先识别完整年月；只有“8月”时按上传当年归档。
+ * 返回统一的 YYYY-MM，避免同一月份因为文件名写法不同被拆成多份。
+ */
+export function dataMonthFromFilename(filename, now = new Date()) {
+  const name = String(filename ?? '').split(/[\\/]/).at(-1) ?? '';
+  const yearMonth = name.match(
+    /(?:^|[^0-9])((?:19|20)\d{2})\s*(?:年\s*|[-_.]\s*)?(0?[1-9]|1[0-2])(?:\s*月)?(?=$|[^0-9])/,
+  );
+  if (yearMonth) return `${yearMonth[1]}-${String(Number(yearMonth[2])).padStart(2, '0')}`;
+
+  const monthOnly = name.match(/(?:^|[^0-9])(0?[1-9]|1[0-2])\s*月(?:份)?(?=$|[^0-9])/);
+  if (!monthOnly) return '';
+  return `${now.getFullYear()}-${String(Number(monthOnly[1])).padStart(2, '0')}`;
+}
+
+export function formatDataMonth(value) {
+  if (value === 'legacy') return '历史数据';
+  const match = String(value ?? '').match(/^((?:19|20)\d{2})-(0[1-9]|1[0-2])$/);
+  return match ? `${match[1]}年${Number(match[2])}月` : '未选择月份';
+}
+
 export function isMarketplaceHeader(value) {
   const key = String(value ?? '').trim().toLowerCase().replace(/\s/g, '');
   return ['国家', '国家代码', '站点', '站点码', 'marketplace', 'market', 'country'].includes(key);

@@ -135,6 +135,8 @@ CREATE INDEX IF NOT EXISTS idx_sku_user ON sku_items (user_id, country);
 CREATE TABLE IF NOT EXISTS products (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   marketplace TEXT    NOT NULL,
+  data_month  TEXT    NOT NULL DEFAULT 'legacy',
+  source_file TEXT    NOT NULL DEFAULT '',
   asin        TEXT    NOT NULL,
   brand       TEXT,
   model       TEXT,
@@ -143,7 +145,7 @@ CREATE TABLE IF NOT EXISTS products (
   created_by  INTEGER REFERENCES users(id),
   created_at  TEXT    NOT NULL DEFAULT (datetime('now', 'localtime')),
   updated_at  TEXT    NOT NULL DEFAULT (datetime('now', 'localtime')),
-  UNIQUE (marketplace, asin)
+  UNIQUE (marketplace, data_month, asin)
 );
 
 CREATE INDEX IF NOT EXISTS idx_products_market_model

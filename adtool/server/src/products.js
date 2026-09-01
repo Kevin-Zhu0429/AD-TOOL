@@ -31,6 +31,20 @@ function cleanText(value, max = 5000) {
   return String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
 }
 
+function cleanDataMonth(value, allowLegacy = false) {
+  const month = cleanText(value, 20);
+  if (/^(?:19|20)\d{2}-(?:0[1-9]|1[0-2])$/.test(month)) return month;
+  if (allowLegacy && month === 'legacy') return month;
+  return '';
+}
+
+function latestDataMonth(marketplace) {
+  return db.prepare(
+    `SELECT data_month FROM products WHERE marketplace = ?
+     ORDER BY data_month = 'legacy', data_month DESC LIMIT 1`
+  ).pluck().get(marketplace) ?? '';
+}
+
 function cleanProduct(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
   const product = { ...input };
@@ -57,7 +71,7 @@ function rowToProduct(row) {
   }
 }
 
-function importProductsForMarket(marketplace, rawProducts, userId) {
+function importProductsForMarket(marketplace, rawProducts, dataMonth, sourceFile, userId) {
   const incoming = new Map();
   let skipped = 0;
   for (const raw of rawProducts) {
@@ -70,14 +84,15 @@ function importProductsForMarket(marketplace, rawProducts, userId) {
   }
 
   const current = new Map(
-    db.prepare('SELECT * FROM products WHERE marketplace = ?').all(marketplace)
+    db.prepare('SELECT * FROM products WHERE marketplace = ? AND data_month = ?').all(marketplace, dataMonth)
       .map((row) => [row.asin, rowToProduct(row)])
   );
   const upsert = db.prepare(
     `INSERT INTO products
-       (marketplace, asin, brand, model, color_group, data_json, created_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(marketplace, asin) DO UPDATE SET
+       (marketplace, data_month, source_file, asin, brand, model, color_group, data_json, created_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(marketplace, data_month, asin) DO UPDATE SET
+       source_file = excluded.source_file,
        brand = excluded.brand,
        model = excluded.model,
        color_group = excluded.color_group,
@@ -100,17 +115,17 @@ function importProductsForMarket(marketplace, rawProducts, userId) {
       added += 1;
     }
     upsert.run(
-      marketplace, asin, product.brand, product.model, product.color_grp,
+      marketplace, dataMonth, sourceFile, asin, product.brand, product.model, product.color_grp,
       JSON.stringify(product), userId
     );
   }
   return { added, updated, skipped, total: incoming.size, received: rawProducts.length };
 }
 
-const saveMarketImports = db.transaction((entries, userId) => Object.fromEntries(
+const saveMarketImports = db.transaction((entries, dataMonth, sourceFile, userId) => Object.fromEntries(
   entries.map(([marketplace, products]) => [
     marketplace,
-    importProductsForMarket(marketplace, products, userId),
+    importProductsForMarket(marketplace, products, dataMonth, sourceFile, userId),
   ])
 ));
 
@@ -129,13 +144,25 @@ productRouter.use(requireProductIntel);
 productRouter.get('/', (req, res) => {
   const marketplace = authorizeMarket(req, res);
   if (!marketplace) return;
+  const requestedMonth = cleanDataMonth(req.query.dataMonth, true);
+  if (req.query.dataMonth && !requestedMonth) {
+    return res.status(400).json({ error: '数据月份格式不正确' });
+  }
+  const months = db.prepare(
+    `SELECT data_month AS month, COUNT(*) AS count, MAX(source_file) AS source_file
+     FROM products WHERE marketplace = ? GROUP BY data_month
+     ORDER BY data_month = 'legacy', data_month DESC`
+  ).all(marketplace);
+  const dataMonth = requestedMonth && months.some((item) => item.month === requestedMonth)
+    ? requestedMonth
+    : months[0]?.month || '';
   const products = db.prepare(
-    'SELECT * FROM products WHERE marketplace = ? ORDER BY id'
-  ).all(marketplace).map(rowToProduct);
+    'SELECT * FROM products WHERE marketplace = ? AND data_month = ? ORDER BY id'
+  ).all(marketplace, dataMonth).map(rowToProduct);
   const settings = db.prepare(
     'SELECT own_brand, min_sales FROM product_settings WHERE marketplace = ?'
   ).get(marketplace) ?? { own_brand: '', min_sales: 100 };
-  res.json({ products, settings });
+  res.json({ products, settings, months, dataMonth });
 });
 
 productRouter.post('/import', (req, res) => {
@@ -144,10 +171,17 @@ productRouter.post('/import', (req, res) => {
   if (!Array.isArray(req.body?.products) || req.body.products.length > 20_000) {
     return res.status(400).json({ error: '产品数据格式不正确，单次最多 20000 条' });
   }
-  const results = saveMarketImports([[marketplace, req.body.products]], req.session.user.id);
+  const dataMonth = cleanDataMonth(req.body?.dataMonth);
+  if (!dataMonth) return res.status(400).json({ error: '请提供文件名中的数据月份' });
+  const sourceFile = cleanText(req.body?.sourceFile, 255);
+  const results = saveMarketImports(
+    [[marketplace, req.body.products]], dataMonth, sourceFile, req.session.user.id
+  );
   const result = results[marketplace];
-  audit(req.session.user.id, marketplace, 'import', 'products', null, result);
-  res.json(result);
+  audit(req.session.user.id, marketplace, 'import', 'products', null, {
+    ...result, dataMonth, sourceFile,
+  });
+  res.json({ ...result, dataMonth });
 });
 
 productRouter.post('/import-all', (req, res) => {
@@ -176,20 +210,30 @@ productRouter.post('/import-all', (req, res) => {
     return res.status(400).json({ error: '产品数据格式不正确，单次最多 20000 条' });
   }
 
-  const results = saveMarketImports([...combined], req.session.user.id);
+  const dataMonth = cleanDataMonth(req.body?.dataMonth);
+  if (!dataMonth) return res.status(400).json({ error: '无法从文件名识别数据月份' });
+  const sourceFile = cleanText(req.body?.sourceFile, 255);
+  const results = saveMarketImports([...combined], dataMonth, sourceFile, req.session.user.id);
   for (const [marketplace, result] of Object.entries(results)) {
-    audit(req.session.user.id, marketplace, 'import', 'products', null, result);
+    audit(req.session.user.id, marketplace, 'import', 'products', null, {
+      ...result, dataMonth, sourceFile,
+    });
   }
-  res.json({ markets: results, totals: importTotals(results) });
+  res.json({ markets: results, totals: importTotals(results), dataMonth });
 });
 
 productRouter.patch('/:asin', (req, res) => {
   const marketplace = authorizeMarket(req, res);
   if (!marketplace) return;
   const asin = cleanText(req.params.asin, 24).toUpperCase();
+  const requestedMonth = cleanDataMonth(req.body?.dataMonth, true);
+  if (req.body?.dataMonth && !requestedMonth) {
+    return res.status(400).json({ error: '数据月份格式不正确' });
+  }
+  const dataMonth = requestedMonth || latestDataMonth(marketplace);
   const row = db.prepare(
-    'SELECT * FROM products WHERE marketplace = ? AND asin = ?'
-  ).get(marketplace, asin);
+    'SELECT * FROM products WHERE marketplace = ? AND data_month = ? AND asin = ?'
+  ).get(marketplace, dataMonth, asin);
   if (!row) return res.status(404).json({ error: '产品不存在' });
 
   const current = rowToProduct(row);
@@ -214,9 +258,14 @@ productRouter.patch('/:asin', (req, res) => {
   db.prepare(
     `UPDATE products SET brand = ?, model = ?, color_group = ?, data_json = ?,
        updated_at = datetime('now', 'localtime')
-     WHERE marketplace = ? AND asin = ?`
-  ).run(product.brand, product.model, product.color_grp, JSON.stringify(product), marketplace, asin);
-  audit(req.session.user.id, marketplace, 'update', 'product', row.id, { asin, fields: touched });
+     WHERE marketplace = ? AND data_month = ? AND asin = ?`
+  ).run(
+    product.brand, product.model, product.color_grp, JSON.stringify(product),
+    marketplace, dataMonth, asin
+  );
+  audit(req.session.user.id, marketplace, 'update', 'product', row.id, {
+    asin, dataMonth, fields: touched,
+  });
   res.json({ product });
 });
 
@@ -229,12 +278,21 @@ productRouter.post('/delete', (req, res) => {
   if (!asins.length || asins.length > 5000) {
     return res.status(400).json({ error: '请选择要删除的产品' });
   }
-  const remove = db.prepare('DELETE FROM products WHERE marketplace = ? AND asin = ?');
+  const requestedMonth = cleanDataMonth(req.body?.dataMonth, true);
+  if (req.body?.dataMonth && !requestedMonth) {
+    return res.status(400).json({ error: '数据月份格式不正确' });
+  }
+  const dataMonth = requestedMonth || latestDataMonth(marketplace);
+  const remove = db.prepare(
+    'DELETE FROM products WHERE marketplace = ? AND data_month = ? AND asin = ?'
+  );
   const tx = db.transaction(() => asins.reduce(
-    (count, asin) => count + remove.run(marketplace, asin).changes, 0
+    (count, asin) => count + remove.run(marketplace, dataMonth, asin).changes, 0
   ));
   const deleted = tx();
-  audit(req.session.user.id, marketplace, 'delete', 'products', null, { asins, deleted });
+  audit(req.session.user.id, marketplace, 'delete', 'products', null, {
+    asins, dataMonth, deleted,
+  });
   res.json({ deleted });
 });
 

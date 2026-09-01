@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as XLSX from 'xlsx';
 import { api } from '../api.js';
+import { copyText } from '../clipboard.js';
 import Icon from './Icon.jsx';
 import {
   COLOR_GROUPS, EDIT_FIELDS, NUMERIC_FIELDS, PRODUCT_COLUMNS, PRODUCT_LABELS,
-  average, fmt, headerField, median, modelKey, money,
+  average, dataMonthFromFilename, fmt, formatDataMonth, headerField, median, modelKey, money,
   opportunities, parseProductRows, priceGrade, priceStats, productNumber,
 } from '../productLogic.js';
 import './ProductPage.css';
@@ -53,11 +54,11 @@ function GradeBadge({ grade, large = false }) {
   return <span className={`price-grade grade-${grade.key}${large ? ' large' : ''}`}>{grade.key}</span>;
 }
 
-function EmptyState({ onImport }) {
+function EmptyState({ onImport, dataMonth }) {
   return (
     <div className="product-empty">
       <span className="product-empty-icon"><Icon name="box" size={25} /></span>
-      <h2>这个站点还没有产品数据</h2>
+      <h2>{dataMonth ? `${formatDataMonth(dataMonth)}还没有产品数据` : '这个站点还没有产品数据'}</h2>
       <p>可导入全市场月度表或单站点 xlsx / csv；有国家列时会自动分流到各站产品库。</p>
       <button className="btn primary" onClick={onImport}><Icon name="upload" />导入产品表</button>
     </div>
@@ -68,9 +69,11 @@ function DetailPanel({ product, products, colorGroups, ownBrand, market, minSale
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({});
   const [saving, setSaving] = useState(false);
+  const [copyStatus, setCopyStatus] = useState('');
 
   useEffect(() => {
     setEditing(false);
+    setCopyStatus('');
     setForm(Object.fromEntries(EDIT_FIELDS.map((field) => [field, product?.[field] ?? ''])));
   }, [product]);
 
@@ -94,10 +97,15 @@ function DetailPanel({ product, products, colorGroups, ownBrand, market, minSale
     } finally { setSaving(false); }
   }
 
+  async function copyAsin() {
+    const ok = await copyText(product.asin);
+    setCopyStatus(ok ? '已复制' : '复制失败');
+  }
+
   return (
     <aside className="product-detail">
       <div className="detail-cover">
-        {product.image ? <img src={product.image} alt="商品主图" /> : <span><Icon name="box" size={28} /></span>}
+        {product.image ? <img src={product.image} alt="商品主图" referrerPolicy="no-referrer" /> : <span><Icon name="box" size={28} /></span>}
       </div>
       <div className="detail-heading">
         <div className="row wrap">
@@ -110,7 +118,7 @@ function DetailPanel({ product, products, colorGroups, ownBrand, market, minSale
       </div>
       <div className="detail-actions">
         <a className="btn" href={productUrl(product, market)} target="_blank" rel="noreferrer"><Icon name="external" />商品页</a>
-        <button className="btn" onClick={() => navigator.clipboard?.writeText(product.asin)}><Icon name="copy" />复制 ASIN</button>
+        <button className="btn" onClick={copyAsin}><Icon name="copy" />{copyStatus || '复制 ASIN'}</button>
         <button className="btn" onClick={() => setEditing((value) => !value)}><Icon name="edit" />{editing ? '取消编辑' : '编辑'}</button>
       </div>
 
@@ -260,6 +268,8 @@ function CompareView({ products, settings, market, initialAsin }) {
 
 export default function ProductPage({ market }) {
   const [products, setProducts] = useState([]);
+  const [dataMonth, setDataMonth] = useState('');
+  const [availableMonths, setAvailableMonths] = useState([]);
   const [settings, setSettings] = useState({ own_brand: '', min_sales: 100 });
   const [tab, setTab] = useState('library');
   const [loading, setLoading] = useState(true);
@@ -276,17 +286,19 @@ export default function ProductPage({ market }) {
   const [bulkGroup, setBulkGroup] = useState('黑彩');
   const inputRef = useRef(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (targetMonth = '') => {
     setLoading(true);
     try {
-      const data = await api.products(market);
+      const data = await api.products(market, targetMonth);
       setProducts(data.products);
       setSettings(data.settings);
+      setAvailableMonths(data.months ?? []);
+      setDataMonth(data.dataMonth ?? targetMonth);
       setSelected(new Set());
     } catch (error) { setMessage({ kind: 'err', text: error.message }); }
     finally { setLoading(false); }
   }, [market]);
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { setDataMonth(''); load(''); }, [load]);
 
   const brands = useMemo(() => [...new Set(products.map((item) => item.brand).filter(Boolean))].sort(), [products]);
   const models = useMemo(() => [...new Set(products.map((item) => item.model).filter(Boolean))].sort(), [products]);
@@ -324,9 +336,13 @@ export default function ProductPage({ market }) {
     if (!file) return;
     setMessage({ kind: 'info', text: `正在读取 ${file.name}…` });
     try {
+      const importedMonth = dataMonthFromFilename(file.name);
+      if (!importedMonth) {
+        throw new Error('文件名里找不到月份，请加入如“2026-08”“202608”或“2026年8月”后再上传');
+      }
       const parsed = parseWorkbook(await file.arrayBuffer(), market);
       const importedMarkets = Object.keys(parsed.productsByMarketplace);
-      const result = await api.importAllProducts(parsed.productsByMarketplace);
+      const result = await api.importAllProducts(parsed.productsByMarketplace, importedMonth, file.name);
       if (!settings.own_brand && importedMarkets.length === 1) {
         const guessed = guessOwnBrand(parsed.productsByMarketplace[market] ?? []);
         if (guessed) {
@@ -334,10 +350,10 @@ export default function ProductPage({ market }) {
           setSettings(saved.settings);
         }
       }
-      await load();
+      await load(importedMonth);
       const countries = importedMarkets.map((code) => `${code} ${parsed.productsByMarketplace[code].length} 条`).join('、');
       const prefix = parsed.hasMarketplaceColumn ? `已按 A 列分流 ${importedMarkets.length} 个国家（${countries}）` : `已导入 ${countries} 站`;
-      setMessage({ kind: 'ok', text: `${prefix}：新增 ${result.totals.added}，更新 ${result.totals.updated}，跳过 ${result.totals.skipped}` });
+      setMessage({ kind: 'ok', text: `${formatDataMonth(importedMonth)} · ${prefix}：新增 ${result.totals.added}，更新 ${result.totals.updated}，跳过 ${result.totals.skipped}` });
     } catch (error) { setMessage({ kind: 'err', text: error.message }); }
   }
 
@@ -350,7 +366,7 @@ export default function ProductPage({ market }) {
   }
 
   async function updateProduct(asin, changes) {
-    const data = await api.updateProduct(market, asin, changes);
+    const data = await api.updateProduct(market, dataMonth, asin, changes);
     setProducts((items) => items.map((item) => item.asin === asin ? data.product : item));
     setMessage({ kind: 'ok', text: `${asin} 已保存；手工修改的品牌和色组再次导入时会保留` });
   }
@@ -358,15 +374,15 @@ export default function ProductPage({ market }) {
   async function applyGroup() {
     if (!selected.size) return;
     const count = selected.size;
-    await Promise.all([...selected].map((asin) => api.updateProduct(market, asin, { color_grp: bulkGroup })));
-    await load();
+    await Promise.all([...selected].map((asin) => api.updateProduct(market, dataMonth, asin, { color_grp: bulkGroup })));
+    await load(dataMonth);
     setMessage({ kind: 'ok', text: `已将 ${count} 条产品改为「${bulkGroup}」` });
   }
 
   async function removeSelected() {
     if (!selected.size || !confirm(`确定删除选中的 ${selected.size} 条产品吗？`)) return;
-    const result = await api.deleteProducts(market, [...selected]);
-    await load();
+    const result = await api.deleteProducts(market, dataMonth, [...selected]);
+    await load(dataMonth);
     setMessage({ kind: 'ok', text: `已删除 ${result.deleted} 条产品` });
   }
 
@@ -375,7 +391,7 @@ export default function ProductPage({ market }) {
     const sheet = XLSX.utils.json_to_sheet(rows);
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, sheet, '产品库');
-    XLSX.writeFile(workbook, `${market}站产品库.xlsx`);
+    XLSX.writeFile(workbook, `${market}站产品库_${dataMonth || '未分月'}.xlsx`);
   }
 
   function changeSort(field) {
@@ -391,17 +407,31 @@ export default function ProductPage({ market }) {
   return (
     <div className="products-page animate-in">
       <div className="products-head">
-        <div><h1>产品情报</h1><p className="hint">{market} 站产品库 · 数据与其他市场完全隔离</p></div>
+        <div><h1>产品情报</h1><p className="hint">{market} 站 · {formatDataMonth(dataMonth)} · 按站点和月份隔离</p></div>
         <div className="products-tabs">
           <button className={tab === 'library' ? 'on' : ''} onClick={() => setTab('library')}><Icon name="box" />产品库 <span>{products.length}</span></button>
           <button className={tab === 'compare' ? 'on' : ''} onClick={() => setTab('compare')} disabled={!products.length}><Icon name="chart" />竞品对比</button>
         </div>
+        <label className="month-picker">
+          <span>数据月份</span>
+          <select
+            className="inp"
+            value={dataMonth}
+            disabled={!availableMonths.length}
+            onChange={(event) => { setTab('library'); load(event.target.value); }}
+          >
+            {!availableMonths.length && <option value="">暂无月份</option>}
+            {availableMonths.map((item) => (
+              <option key={item.month} value={item.month}>{formatDataMonth(item.month)} · {item.count} 条</option>
+            ))}
+          </select>
+        </label>
         <button className="btn primary" onClick={() => inputRef.current?.click()}><Icon name="upload" />导入产品表</button>
         <input ref={inputRef} type="file" accept=".xlsx,.xlsm,.csv" hidden onChange={importFile} />
       </div>
 
       {message && <div className={`note ${message.kind} product-note`}>{message.text}<button onClick={() => setMessage(null)}>×</button></div>}
-      {loading ? <div className="product-loading">正在加载 {market} 站产品库…</div> : !products.length ? <EmptyState onImport={() => inputRef.current?.click()} /> : tab === 'compare' ? (
+      {loading ? <div className="product-loading">正在加载 {market} 站产品库…</div> : !products.length ? <EmptyState dataMonth={dataMonth} onImport={() => inputRef.current?.click()} /> : tab === 'compare' ? (
         <CompareView products={products} settings={settings} market={market} initialAsin={compareAsin} />
       ) : (
         <>

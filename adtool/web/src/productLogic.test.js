@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { headerField, marketplaceFromCell, parseProductRows } from './productLogic.js';
+import {
+  dataMonthFromFilename, formatDataMonth, headerField, marketplaceFromCell, parseProductRows,
+} from './productLogic.js';
 
 test('全市场数据表按国家分流，并直接读取墨盒系列、颜色套组、品牌和美元价格', () => {
   const rows = [
@@ -45,4 +47,15 @@ test('国家列出现未知值时整批拒绝，避免导错市场', () => {
     ['国家', 'ASIN'],
     ['未知站', 'B012345678'],
   ], 'DE'), /无法识别/);
+});
+
+test('从常见产品表文件名中识别并规范化月份', () => {
+  assert.equal(dataMonthFromFilename('全市场产品数据_2026-08.xlsx'), '2026-08');
+  assert.equal(dataMonthFromFilename('卖家精灵_202608_干净数据源.xlsx'), '2026-08');
+  assert.equal(dataMonthFromFilename('2026年8月份产品表.xlsx'), '2026-08');
+  assert.equal(dataMonthFromFilename('8月产品表.xlsx', new Date(2027, 0, 1)), '2027-08');
+  assert.equal(dataMonthFromFilename('产品表.xlsx'), '');
+  assert.equal(dataMonthFromFilename('202613产品表.xlsx'), '');
+  assert.equal(formatDataMonth('2026-08'), '2026年8月');
+  assert.equal(formatDataMonth('legacy'), '历史数据');
 });

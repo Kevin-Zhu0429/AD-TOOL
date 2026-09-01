@@ -57,17 +57,25 @@ export const api = {
   deleteSkus: (ids) => request('/sku/delete', { method: 'POST', body: { ids } }),
 
   // ---------- 分市场产品库与竞品分析 ----------
-  products: (marketplace) => request(`/products?marketplace=${encodeURIComponent(marketplace)}`),
-  importProducts: (marketplace, products) =>
-    request('/products/import', { method: 'POST', body: { marketplace, products } }),
-  importAllProducts: (productsByMarketplace) =>
-    request('/products/import-all', { method: 'POST', body: { productsByMarketplace } }),
-  updateProduct: (marketplace, asin, changes) =>
-    request(`/products/${encodeURIComponent(asin)}`, {
-      method: 'PATCH', body: { marketplace, changes },
+  products: (marketplace, dataMonth = '') => {
+    const q = new URLSearchParams({ marketplace });
+    if (dataMonth) q.set('dataMonth', dataMonth);
+    return request(`/products?${q}`);
+  },
+  importProducts: (marketplace, products, dataMonth, sourceFile = '') =>
+    request('/products/import', {
+      method: 'POST', body: { marketplace, products, dataMonth, sourceFile },
     }),
-  deleteProducts: (marketplace, asins) =>
-    request('/products/delete', { method: 'POST', body: { marketplace, asins } }),
+  importAllProducts: (productsByMarketplace, dataMonth, sourceFile = '') =>
+    request('/products/import-all', {
+      method: 'POST', body: { productsByMarketplace, dataMonth, sourceFile },
+    }),
+  updateProduct: (marketplace, dataMonth, asin, changes) =>
+    request(`/products/${encodeURIComponent(asin)}`, {
+      method: 'PATCH', body: { marketplace, dataMonth, changes },
+    }),
+  deleteProducts: (marketplace, dataMonth, asins) =>
+    request('/products/delete', { method: 'POST', body: { marketplace, dataMonth, asins } }),
   productSettings: (marketplace, ownBrand, minSales) =>
     request('/products/settings', {
       method: 'POST', body: { marketplace, ownBrand, minSales },
