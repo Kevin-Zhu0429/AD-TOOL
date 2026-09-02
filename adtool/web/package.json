@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "oxlint",
-    "test": "node --test src/productLogic.test.js",
+    "test": "node --test src/*.test.js",
     "preview": "vite preview"
   },
   "dependencies": {

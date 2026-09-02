@@ -296,6 +296,21 @@ productRouter.post('/delete', (req, res) => {
   res.json({ deleted });
 });
 
+productRouter.post('/delete-month', (req, res) => {
+  const marketplace = authorizeMarket(req, res);
+  if (!marketplace) return;
+  const dataMonth = cleanDataMonth(req.body?.dataMonth, true);
+  if (!dataMonth) return res.status(400).json({ error: '数据月份格式不正确' });
+
+  const deleted = db.prepare(
+    'DELETE FROM products WHERE marketplace = ? AND data_month = ?'
+  ).run(marketplace, dataMonth).changes;
+  audit(req.session.user.id, marketplace, 'delete', 'product_month', null, {
+    dataMonth, deleted,
+  });
+  res.json({ deleted, dataMonth });
+});
+
 productRouter.post('/settings', (req, res) => {
   const marketplace = authorizeMarket(req, res);
   if (!marketplace) return;

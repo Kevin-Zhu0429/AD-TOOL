@@ -284,6 +284,7 @@ export default function ProductPage({ market }) {
   const [selected, setSelected] = useState(new Set());
   const [compareAsin, setCompareAsin] = useState('');
   const [bulkGroup, setBulkGroup] = useState('黑彩');
+  const [deletingMonth, setDeletingMonth] = useState(false);
   const inputRef = useRef(null);
 
   const load = useCallback(async (targetMonth = '') => {
@@ -302,10 +303,13 @@ export default function ProductPage({ market }) {
 
   const brands = useMemo(() => [...new Set(products.map((item) => item.brand).filter(Boolean))].sort(), [products]);
   const models = useMemo(() => [...new Set(products.map((item) => item.model).filter(Boolean))].sort(), [products]);
+  const existingColorGroups = useMemo(() => [...new Set(
+    products.map((item) => item.color_grp).filter(Boolean)
+  )].sort(), [products]);
   const colorGroups = useMemo(() => [...new Set([
     ...COLOR_GROUPS,
-    ...products.map((item) => item.color_grp).filter(Boolean),
-  ])], [products]);
+    ...existingColorGroups,
+  ])], [existingColorGroups]);
   const filtered = useMemo(() => {
     const own = settings.own_brand.toLowerCase();
     let rows = products.filter((item) => {
@@ -386,6 +390,23 @@ export default function ProductPage({ market }) {
     setMessage({ kind: 'ok', text: `已删除 ${result.deleted} 条产品` });
   }
 
+  async function removeMonth() {
+    if (!dataMonth || deletingMonth) return;
+    const label = formatDataMonth(dataMonth);
+    if (!confirm(`确定删除 ${market} 站 ${label} 的全部 ${products.length} 条数据吗？此操作无法撤销。`)) return;
+    setDeletingMonth(true);
+    try {
+      const result = await api.deleteProductMonth(market, dataMonth);
+      await load('');
+      setTab('library');
+      setMessage({ kind: 'ok', text: `已删除 ${market} 站 ${label} 的全部 ${result.deleted} 条数据` });
+    } catch (error) {
+      setMessage({ kind: 'err', text: error.message });
+    } finally {
+      setDeletingMonth(false);
+    }
+  }
+
   function exportRows() {
     const rows = filtered.map((item) => Object.fromEntries(PRODUCT_COLUMNS.map(([label, field]) => [label, item[field] ?? ''])));
     const sheet = XLSX.utils.json_to_sheet(rows);
@@ -426,6 +447,9 @@ export default function ProductPage({ market }) {
             ))}
           </select>
         </label>
+        <button className="btn danger month-delete" disabled={!dataMonth || deletingMonth} onClick={removeMonth}>
+          <Icon name="trash" />{deletingMonth ? '删除中…' : '删除本月'}
+        </button>
         <button className="btn primary" onClick={() => inputRef.current?.click()}><Icon name="upload" />导入产品表</button>
         <input ref={inputRef} type="file" accept=".xlsx,.xlsm,.csv" hidden onChange={importFile} />
       </div>
@@ -440,7 +464,7 @@ export default function ProductPage({ market }) {
               <label className="field search-field"><span>搜索</span><div className="input-icon"><Icon name="search" /><input className="inp" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="ASIN / 标题 / 品牌 / 型号" /></div></label>
               <label className="field"><span>品牌</span><select className="inp" value={brand} onChange={(e) => setBrand(e.target.value)}><option value="">全部品牌</option>{brands.map((value) => <option key={value}>{value}</option>)}</select></label>
               <label className="field"><span>型号</span><select className="inp" value={model} onChange={(e) => setModel(e.target.value)}><option value="">全部型号</option>{models.map((value) => <option key={value}>{value}</option>)}</select></label>
-              <label className="field"><span>色组</span><select className="inp" value={group} onChange={(e) => setGroup(e.target.value)}><option value="">全部色组</option>{colorGroups.map((value) => <option key={value}>{value}</option>)}</select></label>
+              <label className="field"><span>色组</span><select className="inp" value={group} onChange={(e) => setGroup(e.target.value)}><option value="">全部色组</option>{existingColorGroups.map((value) => <option key={value}>{value}</option>)}</select></label>
               <label className="field"><span>自家品牌</span><input className="inp" value={settings.own_brand} onChange={(e) => setSettings({ ...settings, own_brand: e.target.value })} onBlur={() => saveSettings(settings)} placeholder="例如 CYES" /></label>
               <label className="field min-sales"><span>机会竞品子体销量 &gt;</span><input className="inp" type="number" min="0" value={settings.min_sales} onChange={(e) => setSettings({ ...settings, min_sales: Math.max(0, Number(e.target.value)) })} onBlur={() => saveSettings(settings)} /></label>
             </div>
