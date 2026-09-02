@@ -10,6 +10,7 @@
 .month-picker { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
 .month-picker > span { color: var(--text-faint); font-size: 11px; }
 .month-picker .inp { width: 160px; padding: 6px 9px; }
+.month-delete { white-space: nowrap; }
 .product-note { margin-bottom: 14px; justify-content: space-between; }
 .product-note button { background: none; border: 0; color: inherit; font-size: 18px; line-height: 1; }
 .product-loading, .product-empty { min-height: 430px; display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--text-faint); }

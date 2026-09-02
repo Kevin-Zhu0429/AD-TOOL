@@ -76,6 +76,8 @@ export const api = {
     }),
   deleteProducts: (marketplace, dataMonth, asins) =>
     request('/products/delete', { method: 'POST', body: { marketplace, dataMonth, asins } }),
+  deleteProductMonth: (marketplace, dataMonth) =>
+    request('/products/delete-month', { method: 'POST', body: { marketplace, dataMonth } }),
   productSettings: (marketplace, ownBrand, minSales) =>
     request('/products/settings', {
       method: 'POST', body: { marketplace, ownBrand, minSales },

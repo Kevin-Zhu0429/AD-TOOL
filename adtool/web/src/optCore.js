@@ -803,9 +803,13 @@ export function nonBulkSheets(wb) {
   return (wb.SheetNames || []).filter((n) => !isBulkSheet(wb.Sheets[n]));
 }
 
-/** 把传不上去的工作表从工作簿里摘掉,返回摘掉的表名 */
-export function stripNonBulkSheets(wb, keep) {
-  const drop = nonBulkSheets(wb).filter((n) => n !== keep);
+/** 导出只保留广告组合和商品推广活动，返回摘掉的表名 */
+export function retainExportSheets(wb, campaignSheet) {
+  const portfolioSheet = (wb.SheetNames || []).find((name) =>
+    ['广告组合', 'Portfolios'].includes(String(name).trim())
+  );
+  const keep = new Set([campaignSheet, portfolioSheet].filter(Boolean));
+  const drop = (wb.SheetNames || []).filter((name) => !keep.has(name));
   if (!drop.length) return drop;
   wb.SheetNames = wb.SheetNames.filter((n) => drop.indexOf(n) < 0);
   drop.forEach((n) => { delete wb.Sheets[n]; });

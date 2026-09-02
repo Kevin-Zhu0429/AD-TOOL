@@ -1176,7 +1176,9 @@ export function mountOptimizer(root, host) {
     var list=C.changeList(S.model,S.changes);
     var byEntity={};
     list.forEach(function(x){ byEntity[x.entity]=(byEntity[x.entity]||0)+1 });
-    var drop=S.model.dropSheets||[];
+    var drop=(S.model.sheetNames||[]).filter(function(n){
+      return n!==S.model.sheetName && n!=='广告组合' && n!=='Portfolios';
+    });
     $('#expBody').innerHTML=
       '<p style="margin:0 0 10px">将导出 <b>'+S.changes.rowCount()+'</b> 行、<b>'+S.changes.count()+'</b> 处改动。</p>'+
       '<table class="tbl"><tbody>'+Object.keys(byEntity).map(function(k){
@@ -1212,8 +1214,8 @@ export function mountOptimizer(root, host) {
         aoa=[S.model.header].concat(rows);
       }
       wb.Sheets[S.model.sheetName]=XLSX.utils.aoa_to_sheet(aoa);
-      // 搜索词报告之类的表后台不收,留着会让整份文件被退回
-      var dropped=C.stripNonBulkSheets(wb,S.model.sheetName);
+      // 导出的批量表只需要广告组合与商品推广活动两个工作表
+      var dropped=C.retainExportSheets(wb,S.model.sheetName);
       var out=XLSX.write(wb,{type:'array',bookType:'xlsx'});
       download(new Blob([out],{type:'application/octet-stream'}),exportName('xlsx'));
       $('#maskExp').classList.remove('on');
