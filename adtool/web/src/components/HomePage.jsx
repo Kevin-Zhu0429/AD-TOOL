@@ -115,6 +115,12 @@ export default function HomePage({ user, market, onNav, theme, onOpenChangelog }
             onClick={() => onNav('products')}
           />
         )}
+        <EntryCard
+          tone="green" icon="box" title="小工具"
+          desc="收纳日常办公中随开随用的轻量工具。首个工具可以把多个 Excel 文件中的表格快速汇总到一张工作表,全程只在本机浏览器中处理。"
+          meta="所有账号可用 · Excel 表格合并"
+          onClick={() => onNav('tools')}
+        />
         {user.role === 'owner' && (
           <EntryCard
             tone="violet" icon="users" title="账号管理"
