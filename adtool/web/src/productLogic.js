@@ -22,7 +22,7 @@ export const PRODUCT_COLUMNS = [
 ];
 
 export const PRODUCT_FIELDS = PRODUCT_COLUMNS.map(([, field]) => field);
-export const PRODUCT_LABELS = Object.fromEntries(PRODUCT_COLUMNS.map(([label, field]) => [field, label]));
+export const PRODUCT_LABELS = { ...Object.fromEntries(PRODUCT_COLUMNS.map(([label, field]) => [field, label])), final_price: '最终价格' };
 export const NUMERIC_FIELDS = new Set(
   PRODUCT_COLUMNS.filter(([, , kind]) => kind === 'num' || kind === 'int').map(([, field]) => field)
 );
@@ -153,7 +153,7 @@ export function median(values) {
 }
 
 export function priceStats(products) {
-  const values = products.map((item) => item.price).filter((value) => typeof value === 'number').sort((a, b) => a - b);
+  const values = products.map(effectivePrice).filter((value) => typeof value === 'number').sort((a, b) => a - b);
   if (!values.length) return null;
   return { min: values[0], max: values.at(-1), average: average(values), median: median(values), count: values.length };
 }
@@ -168,9 +168,10 @@ export function priceGrade(value, stats) {
 }
 
 export function opportunities(products, mine, minSales = 100) {
-  if (typeof mine?.price !== 'number' || typeof mine?.rating !== 'number') return [];
+  const minePrice = effectivePrice(mine);
+  if (typeof minePrice !== 'number' || typeof mine?.rating !== 'number') return [];
   return products.filter((item) => item.asin !== mine.asin
-    && typeof item.price === 'number' && item.price > mine.price
+    && typeof effectivePrice(item) === 'number' && effectivePrice(item) > minePrice
     && typeof item.rating === 'number' && item.rating < mine.rating
     && typeof item.child_sales === 'number' && item.child_sales > minSales)
     .sort((a, b) => (b.child_sales ?? 0) - (a.child_sales ?? 0));
@@ -179,6 +180,7 @@ export function opportunities(products, mine, minSales = 100) {
 const HEADER_ALIASES = {
   商品标题: 'title', 标题: 'title', title: 'title', 商品主图: 'image', 主图: 'image', 图片链接: 'image',
   商品详情页链接: 'url', 商品链接: 'url', 链接: 'url', '价格(€)': 'price', '价格($)': 'price', '价格(£)': 'price',
+  '价格(a$)': 'price', '价格(ca$)': 'price', '价格(¥)': 'price',
   价格: 'price', 售价: 'price', price: 'price', 墨盒系列: 'model', 颜色套组: 'color_grp',
   'prime价格(€)': 'prime_price', 'prime价格($)': 'prime_price', 'prime价格(£)': 'prime_price', prime价格: 'prime_price',
   '月销售额(€)': 'revenue', '月销售额($)': 'revenue', '月销售额(£)': 'revenue', 月销售额: 'revenue',
@@ -199,6 +201,7 @@ export const HEADER_MAP = (() => {
 
 export function headerField(value) {
   const key = String(value ?? '').trim().toLowerCase().replace(/\s/g, '').replace(/[（）]/g, (x) => x === '（' ? '(' : ')');
+  if (/^(?:价格|售价|price)\([^)]+\)$/.test(key)) return 'price';
   return HEADER_MAP[key];
 }
 
@@ -245,11 +248,20 @@ export function isMarketplaceHeader(value) {
 }
 
 export function currencyFromHeader(value) {
-  const text = String(value ?? '');
+  const text = String(value ?? '').toUpperCase().replace(/\s/g, '');
+  if (text.includes('A$') || text.includes('AUD')) return 'AUD';
+  if (text.includes('CA$') || text.includes('CAD') || text.includes('C$')) return 'CAD';
+  if (text.includes('NZ$') || text.includes('NZD')) return 'NZD';
+  if (text.includes('US$') || text.includes('USD')) return 'USD';
   if (text.includes('$')) return 'USD';
   if (text.includes('£')) return 'GBP';
   if (text.includes('€')) return 'EUR';
+  if (text.includes('¥') || text.includes('JPY')) return 'JPY';
   return '';
+}
+
+export function marketplaceCurrency(marketplace) {
+  return { AU: 'AUD', CA: 'CAD', UK: 'GBP', US: 'USD', ES: 'EUR', DE: 'EUR', FR: 'EUR', IT: 'EUR' }[marketplace] ?? '';
 }
 
 export function parseProductRows(rows, fallbackMarket = '') {
@@ -283,7 +295,7 @@ export function parseProductRows(rows, fallbackMarket = '') {
     for (const [, field] of PRODUCT_COLUMNS) {
       raw[field] = positions[field] === undefined ? '' : row[positions[field]];
     }
-    if (!raw.currency && priceCurrency) raw.currency = priceCurrency;
+    if (!raw.currency) raw.currency = priceCurrency || marketplaceCurrency(marketplace);
     (productsByMarketplace[marketplace] ??= []).push(cleanProduct(raw));
   }
   if (unknownMarkets.size) {
@@ -301,6 +313,28 @@ export function fmt(value, digits = 2) {
 
 export function money(value, currency = 'EUR') {
   if (typeof value !== 'number') return '—';
-  const symbol = { USD: '$', EUR: '€', GBP: '£', CAD: 'CA$', AUD: 'A$' }[currency] ?? `${currency} `;
+  const symbol = { USD: '$', EUR: '€', GBP: '£', CAD: 'CA$', AUD: 'A$', NZD: 'NZ$', JPY: '¥' }[currency] ?? `${currency} `;
   return `${symbol}${value.toFixed(2)}`;
+}
+
+/** Parse a coupon as either a percentage or a fixed monetary discount. */
+export function couponDiscount(coupon, price) {
+  if (typeof price !== 'number' || coupon === null || coupon === undefined) return 0;
+  const text = String(coupon).trim();
+  if (!text || /^(?:no|none|false|否|无|没有|—|-)$/i.test(text)) return 0;
+  const value = productNumber(text);
+  if (typeof value !== 'number' || value <= 0) return 0;
+  const discount = text.includes('%') ? price * value / 100 : value;
+  return Math.min(price, discount);
+}
+
+export function effectivePrice(product) {
+  if (typeof product?.price !== 'number') return null;
+  return Math.max(0, product.price - couponDiscount(product.coupon, product.price));
+}
+
+export function couponLabel(product) {
+  const discount = couponDiscount(product?.coupon, product?.price);
+  if (!discount) return '无';
+  return `${String(product.coupon).trim()}（-${money(discount, product.currency)}）`;
 }

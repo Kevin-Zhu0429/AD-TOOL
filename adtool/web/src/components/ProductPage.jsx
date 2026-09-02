@@ -5,13 +5,13 @@ import { copyText } from '../clipboard.js';
 import Icon from './Icon.jsx';
 import {
   COLOR_GROUPS, EDIT_FIELDS, NUMERIC_FIELDS, PRODUCT_COLUMNS, PRODUCT_LABELS,
-  average, dataMonthFromFilename, fmt, formatDataMonth, headerField, median, modelKey, money,
+  average, couponLabel, dataMonthFromFilename, effectivePrice, fmt, formatDataMonth, headerField, median, modelKey, money,
   opportunities, parseProductRows, priceGrade, priceStats, productNumber,
 } from '../productLogic.js';
 import './ProductPage.css';
 
 const GRID_FIELDS = [
-  'asin', 'brand', 'model', 'color_grp', 'title', 'price', 'rating', 'reviews',
+  'asin', 'brand', 'model', 'color_grp', 'title', 'price', 'coupon', 'final_price', 'rating', 'reviews',
   'reviews_new', 'bsr_small', 'sales', 'child_sales', 'days', 'sellers', 'ship', 'aplus',
 ];
 
@@ -30,7 +30,9 @@ function parseWorkbook(buffer, fallbackMarket) {
   const names = [...preferred, ...workbook.SheetNames.filter((name) => !preferred.includes(name))];
   for (const name of names) {
     if (['brands', 'sellers', 'note'].includes(name.trim().toLowerCase())) continue;
-    const candidate = XLSX.utils.sheet_to_json(workbook.Sheets[name], { header: 1, raw: true, defval: '' });
+    // Keep Excel's formatted text so percentage Coupons (for example 10%) retain
+    // the percent sign instead of becoming the ambiguous raw number 0.1.
+    const candidate = XLSX.utils.sheet_to_json(workbook.Sheets[name], { header: 1, raw: false, defval: '' });
     if (candidate.some((row) => row.some((cell) => headerField(cell) === 'asin'))) {
       return { ...parseProductRows(candidate, fallbackMarket), sheetName: name };
     }
@@ -80,7 +82,7 @@ function DetailPanel({ product, products, colorGroups, ownBrand, market, minSale
   if (!product) return <div className="detail-placeholder">选择一条产品查看完整信息</div>;
   const peers = products.filter((item) => modelKey(item.model) === modelKey(product.model) && item.color_grp === product.color_grp);
   const stats = priceStats(peers);
-  const grade = priceGrade(product.price, stats);
+  const grade = priceGrade(effectivePrice(product), stats);
   const opps = opportunities(peers, product, minSales);
   const isOwn = ownBrand && product.brand.toLowerCase() === ownBrand.toLowerCase();
 
@@ -150,7 +152,7 @@ function DetailPanel({ product, products, colorGroups, ownBrand, market, minSale
               <h3>{name}</h3>
               <dl>
                 {fields.filter((field) => product[field] !== '' && product[field] !== null && product[field] !== undefined).map((field) => (
-                  <div key={field}><dt>{PRODUCT_LABELS[field]}</dt><dd>{String(product[field])}</dd></div>
+                  <div key={field}><dt>{PRODUCT_LABELS[field]}</dt><dd>{field === 'price' || field === 'prime_price' || field === 'fba_fee' ? money(product[field], product.currency) : field === 'coupon' ? couponLabel(product) : String(product[field])}</dd></div>
                 ))}
               </dl>
             </section>
@@ -186,12 +188,12 @@ function CompareView({ products, settings, market, initialAsin }) {
     if (scope === 'model-all') result = products.filter((item) => modelKey(item.model) === key);
     if (scope === 'color-all') result = products.filter((item) => item.color_grp === mine.color_grp);
     if (brandedOnly) result = result.filter((item) => item.brand || item.asin === mine.asin);
-    return result.slice().sort((a, b) => (a.price ?? Infinity) - (b.price ?? Infinity));
+    return result.slice().sort((a, b) => (effectivePrice(a) ?? Infinity) - (effectivePrice(b) ?? Infinity));
   }, [products, mine, scope, brandedOnly]);
   const stats = priceStats(rows);
-  const mineGrade = priceGrade(mine?.price, stats);
+  const mineGrade = priceGrade(effectivePrice(mine), stats);
   const opps = opportunities(rows, mine, settings.min_sales);
-  const maxPrice = Math.max(...rows.map((item) => typeof item.price === 'number' ? item.price : 0), 1);
+  const maxPrice = Math.max(...rows.map((item) => effectivePrice(item) ?? 0), 1);
   const minBar = (stats?.min ?? 0) * 0.8;
   const span = Math.max(maxPrice - minBar, 1);
 
@@ -217,7 +219,7 @@ function CompareView({ products, settings, market, initialAsin }) {
 
       <div className="compare-summary">
         <div className="compare-main-grade card"><GradeBadge grade={mineGrade} large /><div><span>我的价格档位</span><b>{mineGrade.label}</b><small>{mineGrade.note}</small></div></div>
-        <div className="metric card"><span>我的价格</span><b>{money(mine.price, mine.currency)}</b><small>{mine.brand} · {mine.model} · {mine.color_grp}</small></div>
+        <div className="metric card"><span>我的最终价格</span><b>{money(effectivePrice(mine), mine.currency)}</b><small>{mine.coupon ? `原价 ${money(mine.price, mine.currency)} · Coupon ${couponLabel(mine)}` : `${mine.brand} · ${mine.model} · ${mine.color_grp}`}</small></div>
         <div className="metric card"><span>B 档基准</span><b>{money(stats?.average, mine.currency)}</b><small>当前范围市场平均价</small></div>
         <div className="metric card"><span>D 档基准</span><b>{money(stats?.min, mine.currency)}</b><small>当前范围市场最低价</small></div>
         <div className="metric card"><span>机会竞品</span><b>{opps.length}</b><small>评分更低、价格更高、销量达标</small></div>
@@ -237,8 +239,9 @@ function CompareView({ products, settings, market, initialAsin }) {
         <div className="ladder-head"><span>产品</span><span>评分</span><span>评价数</span><span>子体销量</span><span>价格 / 档位</span></div>
         <div className="ladder-rows">
           {rows.map((item) => {
-            const grade = priceGrade(item.price, stats);
-            const width = typeof item.price === 'number' ? Math.max(3, ((item.price - minBar) / span) * 100) : 0;
+            const finalPrice = effectivePrice(item);
+            const grade = priceGrade(finalPrice, stats);
+            const width = typeof finalPrice === 'number' ? Math.max(3, ((finalPrice - minBar) / span) * 100) : 0;
             const isMine = item.asin === mine.asin;
             const isOpp = opps.some((opp) => opp.asin === item.asin);
             return (
@@ -246,7 +249,7 @@ function CompareView({ products, settings, market, initialAsin }) {
                 <span className="ladder-product">{isMine && <b>★</b>}<span><strong>{item.brand || '无品牌'}</strong><small>{item.model} · {item.color_grp} · {item.asin}</small></span></span>
                 <span>{typeof item.rating === 'number' ? `${fmt(item.rating, 1)} ★` : '—'}</span>
                 <span>{fmt(item.reviews)}</span><span>{fmt(item.child_sales)}</span>
-                <span className="bar-cell"><i style={{ width: `${width}%` }} /><em>{money(item.price, item.currency)}</em><GradeBadge grade={grade} /></span>
+                <span className="bar-cell"><i style={{ width: `${width}%` }} /><em>{money(finalPrice, item.currency)}{item.coupon ? <small>Coupon {couponLabel(item)}</small> : null}</em><GradeBadge grade={grade} /></span>
               </a>
             );
           })}
@@ -256,8 +259,8 @@ function CompareView({ products, settings, market, initialAsin }) {
       <section className="opportunity-section card">
         <div className="section-heading"><div><h2>机会竞品</h2><p>评分比我低 + 价格比我高 + 子体销量 &gt; {settings.min_sales}</p></div><span className="tag amber">{opps.length} 个目标</span></div>
         <div className="scroll">
-          <table className="tbl"><thead><tr><th>ASIN</th><th>品牌</th><th>型号</th><th>色组</th><th>价格</th><th>比我贵</th><th>评分</th><th>评分数</th><th>子体销量</th><th>标题</th></tr></thead>
-            <tbody>{opps.map((item) => <tr key={item.asin}><td><a href={productUrl(item, market)} target="_blank" rel="noreferrer" className="asin-link">{item.asin}</a></td><td>{item.brand || '—'}</td><td>{item.model}</td><td>{item.color_grp}</td><td>{money(item.price, item.currency)}</td><td className="positive">+{money(item.price - mine.price, mine.currency)}</td><td>{fmt(item.rating, 1)}</td><td>{fmt(item.reviews)}</td><td>{fmt(item.child_sales)}</td><td className="title-cell">{item.title}</td></tr>)}</tbody>
+          <table className="tbl"><thead><tr><th>ASIN</th><th>品牌</th><th>型号</th><th>色组</th><th>原价</th><th>Coupon</th><th>最终价格</th><th>比我贵</th><th>评分</th><th>评分数</th><th>子体销量</th><th>标题</th></tr></thead>
+            <tbody>{opps.map((item) => <tr key={item.asin}><td><a href={productUrl(item, market)} target="_blank" rel="noreferrer" className="asin-link">{item.asin}</a></td><td>{item.brand || '—'}</td><td>{item.model}</td><td>{item.color_grp}</td><td>{money(item.price, item.currency)}</td><td>{couponLabel(item)}</td><td>{money(effectivePrice(item), item.currency)}</td><td className="positive">+{money(effectivePrice(item) - effectivePrice(mine), mine.currency)}</td><td>{fmt(item.rating, 1)}</td><td>{fmt(item.reviews)}</td><td>{fmt(item.child_sales)}</td><td className="title-cell">{item.title}</td></tr>)}</tbody>
           </table>
           {!opps.length && <div className="empty">当前范围没有符合条件的机会竞品</div>}
         </div>
@@ -324,7 +327,8 @@ export default function ProductPage({ market }) {
       return true;
     });
     if (sort[0]) rows = rows.slice().sort((a, b) => {
-      const av = a[sort[0]] ?? ''; const bv = b[sort[0]] ?? '';
+      const av = sort[0] === 'final_price' ? effectivePrice(a) : a[sort[0]] ?? '';
+      const bv = sort[0] === 'final_price' ? effectivePrice(b) : b[sort[0]] ?? '';
       const result = typeof av === 'number' && typeof bv === 'number' ? av - bv : String(av).localeCompare(String(bv));
       return sort[1] ? -result : result;
     });
@@ -481,7 +485,7 @@ export default function ProductPage({ market }) {
 
           <section className="library-summary">
             <div><span>筛选结果</span><b>{filtered.length}</b><small>产品库共 {products.length} 条</small></div>
-            <div><span>均价</span><b>{money(filteredStats?.average, filtered.find((item) => item.currency)?.currency)}</b><small>中位 {money(median(filtered.map((item) => item.price)), filtered.find((item) => item.currency)?.currency)}</small></div>
+            <div><span>券后均价</span><b>{money(filteredStats?.average, filtered.find((item) => item.currency)?.currency)}</b><small>中位 {money(median(filtered.map(effectivePrice)), filtered.find((item) => item.currency)?.currency)}</small></div>
             <div><span>平均评分</span><b>{fmt(average(filtered.map((item) => item.rating)), 2)}</b><small>评价数中位 {fmt(median(filtered.map((item) => item.reviews)))}</small></div>
             <div><span>自家 / 竞品</span><b>{ownCount} / {filtered.length - ownCount}</b><small>{settings.own_brand || '请先填写自家品牌'}</small></div>
           </section>
@@ -492,7 +496,7 @@ export default function ProductPage({ market }) {
               <div className="scroll product-table-scroll"><table className="tbl product-table"><thead><tr><th className="check-col"></th>{GRID_FIELDS.map((field) => <th key={field} onClick={() => changeSort(field)} className="sortable">{PRODUCT_LABELS[field]}{sort[0] === field && (sort[1] ? ' ↓' : ' ↑')}</th>)}</tr></thead>
                 <tbody>{filtered.map((item) => {
                   const isOwn = settings.own_brand && item.brand.toLowerCase() === settings.own_brand.toLowerCase();
-                  return <tr key={item.asin} className={`${isOwn ? 'own-row ' : ''}${selectedProduct?.asin === item.asin ? 'active-row' : ''}`} onClick={() => setSelected(new Set([item.asin]))} onDoubleClick={() => window.open(productUrl(item, market), '_blank')}><td className="check-col"><input type="checkbox" checked={selected.has(item.asin)} onClick={(e) => e.stopPropagation()} onChange={() => setSelected((current) => { const next = new Set(current); if (next.has(item.asin)) next.delete(item.asin); else next.add(item.asin); return next; })} /></td>{GRID_FIELDS.map((field) => <td key={field} className={field === 'title' ? 'title-cell' : ''}>{field === 'price' ? money(item[field], item.currency) : field === 'asin' ? <button className="asin-button" onClick={(e) => { e.stopPropagation(); openCompare(item.asin); }}>{item.asin}</button> : typeof item[field] === 'number' ? fmt(item[field]) : item[field] || '—'}</td>)}</tr>;
+                  return <tr key={item.asin} className={`${isOwn ? 'own-row ' : ''}${selectedProduct?.asin === item.asin ? 'active-row' : ''}`} onClick={() => setSelected(new Set([item.asin]))} onDoubleClick={() => window.open(productUrl(item, market), '_blank')}><td className="check-col"><input type="checkbox" checked={selected.has(item.asin)} onClick={(e) => e.stopPropagation()} onChange={() => setSelected((current) => { const next = new Set(current); if (next.has(item.asin)) next.delete(item.asin); else next.add(item.asin); return next; })} /></td>{GRID_FIELDS.map((field) => <td key={field} className={field === 'title' ? 'title-cell' : ''}>{field === 'price' ? money(item[field], item.currency) : field === 'coupon' ? couponLabel(item) : field === 'final_price' ? money(effectivePrice(item), item.currency) : field === 'asin' ? <button className="asin-button" onClick={(e) => { e.stopPropagation(); openCompare(item.asin); }}>{item.asin}</button> : typeof item[field] === 'number' ? fmt(item[field]) : item[field] || '—'}</td>)}</tr>;
                 })}</tbody></table>{!filtered.length && <div className="empty">没有符合当前筛选条件的产品</div>}</div>
             </section>
             <DetailPanel product={selectedProduct} products={products} colorGroups={colorGroups} ownBrand={settings.own_brand} market={market} minSales={settings.min_sales} onSaved={updateProduct} />

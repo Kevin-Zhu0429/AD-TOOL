@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  dataMonthFromFilename, formatDataMonth, headerField, marketplaceFromCell, parseProductRows,
+  couponDiscount, dataMonthFromFilename, effectivePrice, formatDataMonth, headerField,
+  marketplaceFromCell, money, parseProductRows, priceStats,
 } from './productLogic.js';
 
 test('全市场数据表按国家分流，并直接读取墨盒系列、颜色套组、品牌和美元价格', () => {
@@ -40,6 +41,29 @@ test('国家别名和新增表头可识别', () => {
   assert.equal(headerField('墨盒系列'), 'model');
   assert.equal(headerField('颜色套组'), 'color_grp');
   assert.equal(headerField('价格($)'), 'price');
+  assert.equal(headerField('价格(A$)'), 'price');
+});
+
+test('AU 价格表头和 Coupon 会保留币种并计算最终价格', () => {
+  const parsed = parseProductRows([
+    ['ASIN', '价格(A$)', 'Coupon'],
+    ['B012345678', 'A$29.99', '10%'],
+    ['B012345679', 20, 'A$3'],
+  ], 'AU').productsByMarketplace.AU;
+
+  assert.equal(parsed[0].currency, 'AUD');
+  assert.equal(parsed[0].price, 29.99);
+  assert.equal(parsed[0].coupon, '10%');
+  assert.equal(effectivePrice(parsed[0]), 26.991);
+  assert.equal(effectivePrice(parsed[1]), 17);
+  assert.equal(money(effectivePrice(parsed[1]), parsed[1].currency), 'A$17.00');
+  assert.equal(priceStats(parsed).min, 17);
+});
+
+test('Coupon 同时支持百分比、固定额度和无优惠文本', () => {
+  assert.equal(couponDiscount('15% Coupon', 40), 6);
+  assert.equal(couponDiscount('$5 off', 40), 5);
+  assert.equal(couponDiscount('无', 40), 0);
 });
 
 test('国家列出现未知值时整批拒绝，避免导错市场', () => {
