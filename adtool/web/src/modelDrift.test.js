@@ -35,6 +35,27 @@ test('uses token boundaries and does not confuse 305 with 3050', () => {
   assert.deepEqual(result.wrong, ['DeskJet 3050']);
 });
 
+test('treats HP 305 and 305XL as ink models instead of inventing a TS305 printer match', () => {
+  const hpLib = {
+    libs: [{ id: 'D', special: 'series' }],
+    items: { D: [
+      { brand: 'HP', term: '305', printer: 'DeskJet 2700' },
+      { brand: 'Canon', term: '545, 546', printer: 'TS305' },
+    ] },
+  };
+  const hpIndex = buildDModelIndex(hpLib);
+  const canonContext = campaignModelContext(
+    { ads: [{ sku: 'CANON-545' }] }, [{ sku: 'CANON-545', model: '545' }], hpIndex,
+  );
+  for (const term of ['tinta impresora hp 305', 'cartucho tinta hp 305', 'tinta 305 xl']) {
+    const result = detectModelDrift(term, canonContext, hpIndex);
+    assert.equal(result.drift, true);
+    assert.equal(result.review, false);
+    assert.deepEqual(result.wrong, ['305']);
+    assert.equal(result.findings[0].reason, '本活动中未投放 305 系列');
+  }
+});
+
 test('does not guess when a SKU is absent from the SKU library', () => {
   const unknown = campaignModelContext({ ads: [{ sku: 'missing' }] }, [], index);
   assert.equal(detectModelDrift('545 ink', unknown, index).drift, false);

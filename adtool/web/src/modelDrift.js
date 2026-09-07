@@ -11,11 +11,12 @@ function escapeRe(value) {
 }
 
 /** Match a model as a complete token. Thus 305 never matches 3050. */
-function aliasRe(alias) {
+function aliasRe(alias, allowXl = false) {
   const compact = clean(alias).toLowerCase().replace(/[^0-9a-z]+/g, '');
   if (!compact || !/[0-9]/.test(compact)) return null;
   const body = compact.split('').map(escapeRe).join('[^0-9a-z]*');
-  return new RegExp(`(^|[^0-9a-z])${body}(?![0-9a-z])`, 'i');
+  const xl = allowXl && !compact.endsWith('xl') ? '(?:[^0-9a-z]*xl)?' : '';
+  return new RegExp(`(^|[^0-9a-z])${body}${xl}(?![0-9a-z])`, 'i');
 }
 
 /** Build the reusable D-library index. Each alias remembers every row it belongs to. */
@@ -29,7 +30,7 @@ export function buildDModelIndex(libData) {
       ...split(row.printer).map((label) => ({ label, kind: 'printer' })),
     ];
     values.forEach(({ label, kind }) => {
-      const re = aliasRe(label);
+      const re = aliasRe(label, kind === 'model');
       if (!re) return;
       const key = clean(label).toLowerCase();
       const entry = aliases.get(`${kind}|${key}`) ?? { label: clean(label), kind, re, rows: new Set() };
@@ -80,30 +81,61 @@ export function detectModelDrift(searchTerm, context, dIndex) {
   const reviews = [];
   for (const [number, candidates] of dIndex.printerNumbers ?? []) {
     const numberRe = aliasRe(number);
-    if (!numberRe?.test(text) || matched.some((entry) => entry.kind === 'printer' && entry.re.test(text))) continue;
+    if (!numberRe?.test(text)) continue;
+    const compactOf = (entry) => entry.label.toLowerCase().replace(/[^0-9a-z]+/g, '').replace(/xl$/, '');
+    const exactPrinter = matched.some((entry) => entry.kind === 'printer' && compactOf(entry).endsWith(number));
+    if (exactPrinter) continue;
+
+    const relevantModels = matched.filter((entry) => entry.kind === 'model' && compactOf(entry) === number);
+    const removeRelevantModels = () => relevantModels.forEach((entry) => {
+      const i = matched.indexOf(entry); if (i >= 0) matched.splice(i, 1);
+    });
     let possible = candidates;
     const prefixed = candidates.filter((entry) =>
       new RegExp(`(^|[^0-9a-z])${escapeRe(entry.prefix)}[^0-9a-z]*${escapeRe(number)}(?![0-9a-z])`, 'i').test(text)
     );
-    if (prefixed.length) possible = prefixed;
-    if (possible.length !== 1 || possible[0].rows.size > 1) {
-      const beforeNumber = text.slice(0, text.search(numberRe));
-      const brandedRows = new Set();
-      possible.forEach((entry) => entry.rows.forEach((rowIndex) => {
-        const brand = clean(dIndex.rows[rowIndex]?.brand).toLowerCase();
-        if (brand && new RegExp(`(^|[^a-z])${escapeRe(brand)}([^a-z]|$)`, 'i').test(beforeNumber)) brandedRows.add(rowIndex);
-      }));
-      if (brandedRows.size === 1) {
-        const rowIndex = [...brandedRows][0];
-        const picked = possible.find((entry) => entry.rows.has(rowIndex));
-        matched.push({ ...picked, rows: new Set([rowIndex]) });
+    const beforeNumber = text.slice(0, text.search(numberRe));
+    if (prefixed.length) {
+      removeRelevantModels();
+      possible = prefixed;
+    } else {
+      const mentionedBrands = new Set();
+      dIndex.rows.forEach((row) => {
+        const brand = clean(row.brand).toLowerCase();
+        if (brand && new RegExp(`(^|[^a-z])${escapeRe(brand)}([^a-z]|$)`, 'i').test(beforeNumber)) mentionedBrands.add(brand);
+      });
+      if (!mentionedBrands.size) {
+        if (relevantModels.length && /(^|[^a-z])(ink|cartridge|cartucho|tinta|toner)([^a-z]|$)|\d[^0-9a-z]*xl(?![0-9a-z])/i.test(text)) continue;
+        removeRelevantModels();
+        reviews.push({
+          token: number, kind: 'review', series: '',
+          reason: `数字 ${number} 既可能是墨盒型号，也可能对应 ${[...new Set(candidates.map((x) => x.label))].join('、')} 机型；搜索词没有明确的机型系列或品牌，需要自行判断`,
+        });
         continue;
       }
+      const modelFitsBrand = relevantModels.some((entry) => [...entry.rows].some((rowIndex) =>
+        mentionedBrands.has(clean(dIndex.rows[rowIndex]?.brand).toLowerCase())
+      ));
+      possible = candidates.filter((entry) => [...entry.rows].some((rowIndex) =>
+        mentionedBrands.has(clean(dIndex.rows[rowIndex]?.brand).toLowerCase())
+      ));
+      // “HP 305” belongs to the HP ink row, not Canon's TS305 printer row.
+      if (modelFitsBrand && !possible.length) continue;
+      if (modelFitsBrand && possible.length) {
+        removeRelevantModels();
+        reviews.push({
+          token: number, kind: 'review', series: '',
+          reason: `品牌和数字 ${number} 同时命中墨盒型号及打印机机型，需要自行判断`,
+        });
+        continue;
+      }
+      if (!possible.length) continue;
+      removeRelevantModels();
+    }
+    if (possible.length !== 1 || possible[0].rows.size > 1) {
       reviews.push({
-        token: number,
-        kind: 'review',
-        series: '',
-        reason: `机型数字 ${number} 可对应 ${[...new Set(possible.map((x) => x.label))].join('、')}；缺少明确的机型系列或 HP/Canon 品牌，需要自行判断`,
+        token: number, kind: 'review', series: '',
+        reason: `机型数字 ${number} 可对应 ${[...new Set(possible.map((x) => x.label))].join('、')}；当前信息仍无法确定，需要自行判断`,
       });
       continue;
     }
