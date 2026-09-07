@@ -8,7 +8,7 @@ import './OptimizerPage.css';
  * 广告优化工作台。
  * 里面那一整套是从单文件版移植来的原生 JS,这里只负责挂载 / 卸载:
  * 用 Shadow DOM 装起来,它的样式和站内样式互不干扰,主题变量照样继承进去。
- * 站点否定词库在这一层拉,拉好送进工作台 —— 批量否定要用它出词。
+ * 站点否定词库和账号 SKU 库在这一层拉,批量否定与跑偏机型检测共用。
  */
 export default function OptimizerPage({ theme, market }) {
   const hostRef = useRef(null);
@@ -36,8 +36,8 @@ export default function OptimizerPage({ theme, market }) {
   useEffect(() => {
     let alive = true;
     appRef.current?.setLibrary(market, null, '');
-    api.library(market)
-      .then((d) => alive && appRef.current?.setLibrary(market, d, ''))
+    Promise.all([api.library(market), api.skus({ marketplace: market })])
+      .then(([library, skus]) => alive && appRef.current?.setLibrary(market, library, '', skus.items ?? []))
       .catch((e) => alive && appRef.current?.setLibrary(market, null, e.message));
     return () => { alive = false; };
   }, [market]);
