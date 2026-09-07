@@ -22,6 +22,8 @@ export default function App() {
   const [markets, setMarkets] = useState([]);
   const [checking, setChecking] = useState(true);
   const [page, setPage] = useState('home');
+  // 广告优化工作台首次打开后保持挂载，避免切到其他页面时原生工作台被卸载、改动丢失。
+  const [optimizerOpened, setOptimizerOpened] = useState(false);
   const [market, setMarket] = useState('ES');
   // 更新日志:有没看过的版本就登录后自动弹一次,关掉记成看过
   const [logOpen, setLogOpen] = useState(false);
@@ -49,6 +51,11 @@ export default function App() {
     setMarket(u.markets[0]);
     setPage('home');
     autoShown.current = false;   // 换个人登录,该弹的还要再弹
+  }
+
+  function navigate(nextPage) {
+    if (nextPage === 'optimizer') setOptimizerOpened(true);
+    setPage(nextPage);
   }
 
   function openLog(auto = false) {
@@ -88,8 +95,7 @@ export default function App() {
     ) : page === 'manual' && user.manualAds ? (
       <ManualPage key={market} market={market} />
     ) : page === 'optimizer' && user.adOpt ? (
-      // 工作台里载的批量表跟站点无关,切站点不重挂载(改动会丢),只换一份词库
-      <OptimizerPage theme={theme} market={market} />
+      null
     ) : page === 'skus' ? (
       <SkuPage key={market} market={market} />
     ) : page === 'library' ? (
@@ -101,10 +107,10 @@ export default function App() {
     ) : page === 'admin' && user.role === 'owner' ? (
       <AdminPage user={user} markets={markets} />
     ) : page === 'profile' ? (
-      <ProfilePage user={user} onUserChange={setUser} onDone={() => setPage('home')} />
+      <ProfilePage user={user} onUserChange={setUser} onDone={() => navigate('home')} />
     ) : (
       <HomePage
-        user={user} market={market} onNav={setPage} theme={theme}
+        user={user} market={market} onNav={navigate} theme={theme}
         onOpenChangelog={() => openLog(false)}
       />
     );
@@ -114,14 +120,28 @@ export default function App() {
       <AppShell
         user={user}
         page={page}
-        onNav={setPage}
+        onNav={navigate}
         market={market}
         onMarket={setMarket}
-        onLoggedOut={() => { setUser(null); setPage('home'); autoShown.current = false; }}
+        onLoggedOut={() => {
+          setUser(null);
+          setPage('home');
+          setOptimizerOpened(false);
+          autoShown.current = false;
+        }}
         theme={theme}
         onToggleTheme={toggleTheme}
       >
-        {body}
+        {/*
+          工作台里载入的批量表和所有编辑状态都保存在其原生应用实例中。
+          首次进入后只隐藏、不卸载，回到其他页面再切回来仍是原来的实例。
+        */}
+        {optimizerOpened && user.adOpt && (
+          <div style={{ display: page === 'optimizer' ? 'block' : 'none' }}>
+            <OptimizerPage theme={theme} market={market} />
+          </div>
+        )}
+        {(!user.adOpt || page !== 'optimizer') && body}
       </AppShell>
 
       {/* 广告优化那一页底部有它自己的操作条,右下角就不占位了 */}
