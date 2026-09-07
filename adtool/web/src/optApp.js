@@ -6,6 +6,7 @@
 import * as XLSX from 'xlsx';
 import * as C from './optCore.js';
 import * as NL from './negLib.js';
+import * as MD from './modelDrift.js';
 
 const MARKUP = `
 <div class="app">
@@ -196,7 +197,7 @@ export function mountOptimizer(root, host) {
     terms:[], periodTouched:false,
     checked:{}, stAll:false, stTgt:'', expT:{}, stRptName:'', bnSel:{}, bnQ:'', bnPf:'',
     // 否定词库(站点级,页面挂载后由 setLibrary 送进来)和批量否定里的选词状态
-    lib:null, libErr:'', market:'',
+    lib:null, libErr:'', market:'', skuItems:[], driftIndex:null, driftContexts:{},
     bnLib:{on:{},follow:true,q:'',off:{},models:[],only:'both',mq:'',ver:0,_sig:'',_all:[]},
     view:'work', an:{tab:'sku',byAsin:false,q:'',pf:'',minClicks:0,mark:'',tf:'',kf:'',exp:{},stSel:{},
       skuSub:{},skuExcl:{},sku:'',skuOnlyEx:false,_skuStList:[],adSel:{},_skuAds:[],
@@ -599,6 +600,12 @@ export function mountOptimizer(root, host) {
   function alreadyNegated(campaignId,text){
     return !!negatedIdx()[campaignId+'|'+String(text).toLowerCase()];
   }
+  function driftOf(s){
+    if(!S.driftIndex)return {drift:false,wrong:[]};
+    var cp=S.model.byCamp[s.campaignId];
+    var ctx=S.driftContexts[s.campaignId]||(S.driftContexts[s.campaignId]=MD.campaignModelContext(cp,S.skuItems,S.driftIndex));
+    return MD.detectModelDrift(s.term,ctx,S.driftIndex);
+  }
   function stTab(cp){
     if(!S.model.searchTerms.length)
       return '<div class="empty">这份批量表里没有搜索词报告。<br>下载批量文件时勾选「搜索词报告」，或者点右上角「载入搜索词报告」把后台单独导出的报告合并进来。</div>';
@@ -614,16 +621,19 @@ export function mountOptimizer(root, host) {
           .map(function(t){return '<option value="'+esc(t.id)+'"'+(S.stTgt===t.id?' selected':'')+'>'+esc(String(t.text).slice(0,40))+'（'+(idx[t.id]||[]).length+'）</option>'}).join('')+
         '</select>';
     }
+    var driftCount=list.filter(function(s){return driftOf(s).drift}).length;
     var bar='<div class="toolrow"><label><input type="checkbox" id="stAll"'+(all?' checked':'')+'> 显示全部活动的搜索词</label>'+tgtOpts+
       '<span class="muted">共 '+list.length+' 条 · 花费 '+fm(list.reduce(function(a,s){return a+s.m.spend},0))+'</span>'+
+      (driftCount?'<span class="flagchip bad">疑似跑偏机型 '+driftCount+' 条</span>':'')+
       '<div style="flex:1"></div><span class="muted">点「否定」直接写进变更清单</span></div>';
     if(!list.length)return bar+'<div class="empty">这条活动本期没有搜索词数据</div>';
     return bar+'<table class="tbl"><thead><tr><th>顾客搜索词</th><th>来源投放</th><th>匹配</th>'+(all?'<th>活动</th>':'<th>广告组</th>')+
       '<th class="r">曝光</th><th class="r">点击</th><th class="r">点击率</th><th class="r">花费</th><th class="r">订单</th>'+
       '<th class="r">转化率</th><th class="r">销售额</th><th class="r">ACOS</th><th>否定</th></tr></thead><tbody>'+
       list.map(function(s,i){
-        var f=C.flagsFor('st',s.m,{},S.cfg), lv=C.worstLevel(f);
-        return '<tr class="lv-'+lv+'"><td class="nmcell" style="max-width:250px;word-break:break-all">'+esc(s.term)+'</td>'+
+        var f=C.flagsFor('st',s.m,{},S.cfg), lv=C.worstLevel(f), drift=driftOf(s);
+        return '<tr class="lv-'+(drift.drift?'bad':lv)+'"><td class="nmcell" style="max-width:250px;word-break:break-all">'+esc(s.term)+
+          (drift.drift?'<br><span class="flagchip bad" title="该活动 SKU 对应型号与搜索词中的 D 类机型不一致">跑偏：'+esc(drift.wrong.join('、'))+'</span>':'')+'</td>'+
           '<td class="muted" title="'+esc(s.keywordText)+'" style="font-size:12px;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(s.keywordText)+'</td>'+
           '<td><span class="tag">'+esc(s.matchType||'-')+'</span></td>'+
           '<td class="muted" title="'+esc(all?s.campaignName:s.adGroupName)+'" style="font-size:12px;max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(all?s.campaignName:s.adGroupName)+'</td>'+
@@ -1090,13 +1100,15 @@ export function mountOptimizer(root, host) {
   };
 
   /** 站点词库由外面(React 页面)载好再送进来,换站点会再送一次 */
-  function setLibrary(market,raw,err){
+  function setLibrary(market,raw,err,skuItems){
     S.market=market||'';
     S.lib=raw?NL.normLibData(raw):null;
     S.libErr=err||'';
+    S.skuItems=skuItems||[]; S.driftIndex=S.lib?MD.buildDModelIndex(S.lib):null; S.driftContexts={};
     S.bnLib.on={}; S.bnLib.off={}; S.bnLib.models=[]; S.bnLib.q=''; S.bnLib.mq='';
     S.bnLib.ver++; S.bnLib._sig=''; S.bnLib._all=[];
     if($('#maskBneg').classList.contains('on'))renderBnLib();
+    if(S.model)renderAll();
   }
 
   /* ---------- 底栏 / 变更清单 ---------- */
