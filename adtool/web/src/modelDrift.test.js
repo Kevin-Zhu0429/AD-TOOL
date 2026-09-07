@@ -7,7 +7,7 @@ const lib = {
   items: { D: [
     { term: '301, 301XL', printer: 'DeskJet 2710, 2720' },
     { term: '305', printer: 'DeskJet 3050' },
-    { term: '545', printer: 'PIXMA TS3350' },
+    { term: '510', printer: 'MP260' },
   ] },
 };
 const index = buildDModelIndex(lib);
@@ -18,8 +18,10 @@ const context = campaignModelContext(
 );
 
 test('finds a wrong cartridge or printer model for the advertised SKU', () => {
-  assert.deepEqual(detectModelDrift('compatible ink 545', context, index).wrong, ['545']);
-  assert.deepEqual(detectModelDrift('ink for PIXMA TS3350', context, index).wrong, ['PIXMA TS3350']);
+  const cartridge = detectModelDrift('compatible ink 510', context, index);
+  const printer = detectModelDrift('ink for MP260', context, index);
+  assert.equal(cartridge.findings[0].reason, '本活动中未投放 510 系列');
+  assert.equal(printer.findings[0].reason, 'MP260 机型为 510 系列的机型，本活动中未投放 510 系列');
 });
 
 test('does not flag expected models or terms without a D model', () => {

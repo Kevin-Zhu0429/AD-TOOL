@@ -24,14 +24,17 @@ export function buildDModelIndex(libData) {
   const rows = spec ? libData?.items?.[spec.id] ?? [] : [];
   const aliases = new Map();
   rows.forEach((row, rowIndex) => {
-    const values = [...split(row.term), ...split(row.printer)];
-    values.forEach((label) => {
+    const values = [
+      ...split(row.term).map((label) => ({ label, kind: 'model' })),
+      ...split(row.printer).map((label) => ({ label, kind: 'printer' })),
+    ];
+    values.forEach(({ label, kind }) => {
       const re = aliasRe(label);
       if (!re) return;
       const key = clean(label).toLowerCase();
-      const entry = aliases.get(key) ?? { label: clean(label), re, rows: new Set() };
+      const entry = aliases.get(`${kind}|${key}`) ?? { label: clean(label), kind, re, rows: new Set() };
       entry.rows.add(rowIndex);
-      aliases.set(key, entry);
+      aliases.set(`${kind}|${key}`, entry);
     });
   });
   return { rows, aliases: [...aliases.values()] };
@@ -62,10 +65,22 @@ export function campaignModelContext(campaign, skuItems, dIndex) {
  * Ordinary search terms (and campaigns whose SKU/model cannot be resolved) are never flagged.
  */
 export function detectModelDrift(searchTerm, context, dIndex) {
-  if (!context?.expectedRows?.size) return { drift: false, wrong: [], matched: [] };
+  if (!context?.expectedRows?.size) return { drift: false, wrong: [], matched: [], findings: [] };
   const text = clean(searchTerm).toLowerCase();
   const matched = dIndex.aliases.filter((entry) => entry.re.test(text));
   const wrong = matched.filter((entry) => ![...entry.rows].some((row) => context.expectedRows.has(row)));
-  return { drift: wrong.length > 0, wrong: wrong.map((x) => x.label), matched: matched.map((x) => x.label) };
+  const findings = wrong.map((entry) => {
+    const row = dIndex.rows[[...entry.rows][0]] ?? {};
+    const series = clean(row.term);
+    const reason = entry.kind === 'printer'
+      ? `${entry.label} 机型为 ${series} 系列的机型，本活动中未投放 ${series} 系列`
+      : `本活动中未投放 ${entry.label} 系列`;
+    return { token: entry.label, kind: entry.kind, series, reason };
+  });
+  return {
+    drift: findings.length > 0,
+    wrong: findings.map((x) => x.token),
+    matched: matched.map((x) => x.label),
+    findings,
+  };
 }
-
