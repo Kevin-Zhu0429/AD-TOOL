@@ -601,7 +601,7 @@ export function mountOptimizer(root, host) {
     return !!negatedIdx()[campaignId+'|'+String(text).toLowerCase()];
   }
   function driftOf(s){
-    if(!S.driftIndex)return {drift:false,wrong:[]};
+    if(!S.driftIndex)return {drift:false,review:false,wrong:[],findings:[]};
     var cp=S.model.byCamp[s.campaignId];
     var ctx=S.driftContexts[s.campaignId]||(S.driftContexts[s.campaignId]=MD.campaignModelContext(cp,S.skuItems,S.driftIndex));
     return MD.detectModelDrift(s.term,ctx,S.driftIndex);
@@ -622,7 +622,7 @@ export function mountOptimizer(root, host) {
           .map(function(t){return '<option value="'+esc(t.id)+'"'+(S.stTgt===t.id?' selected':'')+'>'+esc(String(t.text).slice(0,40))+'（'+(idx[t.id]||[]).length+'）</option>'}).join('')+
         '</select>';
     }
-    var driftCount=list.filter(function(s){return driftOf(s).drift}).length;
+    var driftCount=list.filter(function(s){var d=driftOf(s);return d.drift||d.review}).length;
     var bar='<div class="toolrow"><label><input type="checkbox" id="stAll"'+(all?' checked':'')+'> 显示全部活动的搜索词</label>'+tgtOpts+
       '<span class="muted">共 '+list.length+' 条 · 花费 '+fm(list.reduce(function(a,s){return a+s.m.spend},0))+'</span>'+
       (driftCount?'<span class="flagchip bad">疑似跑偏机型 '+driftCount+' 条</span>':'')+
@@ -633,8 +633,8 @@ export function mountOptimizer(root, host) {
       '<th class="r">转化率</th><th class="r">销售额</th><th class="r">ACOS</th><th>否定</th></tr></thead><tbody>'+
       list.map(function(s,i){
         var f=C.flagsFor('st',s.m,{},S.cfg), lv=C.worstLevel(f), drift=driftOf(s);
-        return '<tr class="lv-'+(drift.drift?'bad':lv)+'"><td class="nmcell" style="max-width:250px;word-break:break-all">'+esc(s.term)+
-          (drift.drift?'<br><span class="flagchip bad">疑似跑偏</span><span class="muted" title="该活动 SKU 对应型号与搜索词中的 D 类机型不一致">'+esc(driftReason(drift))+'</span>':'')+'</td>'+
+        return '<tr class="lv-'+(drift.drift?'bad':drift.review?'warn':lv)+'"><td class="nmcell" style="max-width:250px;word-break:break-all">'+esc(s.term)+
+          (drift.drift||drift.review?'<br><span class="flagchip '+(drift.review&&!drift.drift?'warn':'bad')+'">'+(drift.review&&!drift.drift?'需人工判断':'疑似跑偏')+'</span><span class="muted" title="该活动 SKU 对应型号与搜索词中的 D 类机型不一致">'+esc(driftReason(drift))+'</span>':'')+'</td>'+
           '<td class="muted" title="'+esc(s.keywordText)+'" style="font-size:12px;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(s.keywordText)+'</td>'+
           '<td><span class="tag">'+esc(s.matchType||'-')+'</span></td>'+
           '<td class="muted" title="'+esc(all?s.campaignName:s.adGroupName)+'" style="font-size:12px;max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(all?s.campaignName:s.adGroupName)+'</td>'+
@@ -1604,7 +1604,7 @@ export function mountOptimizer(root, host) {
       var cp=S.model.byCamp[s.campaignId];
       if(!cp||!anCampOk(cp))return;
       if(q&&(String(cp.name)+' '+String(s.term)).toLowerCase().indexOf(q)<0)return;
-      var drift=driftOf(s);if(!drift.drift)return;
+      var drift=driftOf(s);if(!drift.drift&&!drift.review)return;
       var ctx=S.driftContexts[s.campaignId];
       out.push({cp:cp,s:s,drift:drift,models:ctx?ctx.models:[]});
     });
@@ -1619,15 +1619,15 @@ export function mountOptimizer(root, host) {
     var camps={};list.forEach(function(x){camps[x.cp.id]=1});
     var bar='<div class="anbar">'+anPfOptions()+
       '<input type="text" id="anQ" placeholder="搜活动名 / 搜索词" value="'+esc(S.an.q)+'">'+
-      '<div style="flex:1"></div><span class="flagchip bad">Beta</span><b>'+Object.keys(camps).length+'</b> 条活动 · <b>'+list.length+'</b> 个疑似跑偏词</div>'+
+      '<div style="flex:1"></div><span class="flagchip bad">Beta</span><b>'+Object.keys(camps).length+'</b> 条活动 · <b>'+list.length+'</b> 个疑似或待判断词</div>'+
       '<div class="anhint">检测顺序：投放 SKU → SKU 库型号 → D 类机型表 → 搜索词。只有搜索词明确出现 D 类中的其他系列或机型才会列出；没有机型、SKU 未入库或型号无法确认时不会猜测。</div>';
     if(!list.length)return bar+'<div class="empty">当前范围内没有检测到疑似跑偏机型词。</div>';
     return bar+'<table class="tbl antbl"><thead><tr><th>广告活动</th><th>本活动投放系列</th><th>顾客搜索词</th><th>跑偏原因</th>'+mHeads()+'<th>否定</th></tr></thead><tbody>'+
       list.map(function(x,i){var s=x.s;
-        return '<tr class="lv-bad"><td style="max-width:260px;word-break:break-all"><a class="anlink" data-angoto="'+esc(x.cp.id)+'">'+esc(x.cp.name)+'</a></td>'+
+        return '<tr class="lv-'+(x.drift.review&&!x.drift.drift?'warn':'bad')+'"><td style="max-width:260px;word-break:break-all"><a class="anlink" data-angoto="'+esc(x.cp.id)+'">'+esc(x.cp.name)+'</a></td>'+
           '<td>'+(x.models.length?x.models.map(function(m){return '<span class="tag">'+esc(m)+'</span>'}).join(' '):'<span class="muted">未识别</span>')+'</td>'+
           '<td class="nmcell" style="max-width:260px;word-break:break-all">'+esc(s.term)+'</td>'+
-          '<td style="max-width:380px;word-break:break-all"><span class="flagchip bad">疑似跑偏</span>'+esc(driftReason(x.drift))+'</td>'+mCells(s.m)+
+          '<td style="max-width:380px;word-break:break-all"><span class="flagchip '+(x.drift.review&&!x.drift.drift?'warn':'bad')+'">'+(x.drift.review&&!x.drift.drift?'需人工判断':'疑似跑偏')+'</span>'+esc(driftReason(x.drift))+'</td>'+mCells(s.m)+
           '<td>'+(alreadyNegated(s.campaignId,s.term)?'<span class="flagchip good">已加入否定</span>':
             '<button class="btn sm" data-driftneg="'+i+'" data-match="phrase">词组</button> '+
             '<button class="btn sm" data-driftneg="'+i+'" data-match="exact">精准</button>')+'</td></tr>';

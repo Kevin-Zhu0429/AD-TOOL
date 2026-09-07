@@ -39,3 +39,24 @@ test('does not guess when a SKU is absent from the SKU library', () => {
   const unknown = campaignModelContext({ ads: [{ sku: 'missing' }] }, [], index);
   assert.equal(detectModelDrift('545 ink', unknown, index).drift, false);
 });
+
+test('uses printer prefix, then brand, and asks for review when a number is ambiguous', () => {
+  const ambiguousLib = {
+    libs: [{ id: 'D', special: 'series' }],
+    items: { D: [
+      { brand: 'Canon', term: '510', printer: 'MP260' },
+      { brand: 'HP', term: '301', printer: 'DeskJet 260' },
+    ] },
+  };
+  const ambiguousIndex = buildDModelIndex(ambiguousLib);
+  const hpContext = campaignModelContext(
+    { ads: [{ sku: 'HP-301' }] }, [{ sku: 'HP-301', model: '301XL' }], ambiguousIndex,
+  );
+
+  assert.equal(detectModelDrift('ink for mp 260', hpContext, ambiguousIndex).findings[0].series, '510');
+  assert.equal(detectModelDrift('canon printer 260', hpContext, ambiguousIndex).findings[0].series, '510');
+  assert.equal(detectModelDrift('hp printer 260', hpContext, ambiguousIndex).drift, false);
+  const unclear = detectModelDrift('printer ink 260', hpContext, ambiguousIndex);
+  assert.equal(unclear.review, true);
+  assert.match(unclear.findings[0].reason, /需要自行判断/);
+});

@@ -37,7 +37,16 @@ export function buildDModelIndex(libData) {
       aliases.set(`${kind}|${key}`, entry);
     });
   });
-  return { rows, aliases: [...aliases.values()] };
+  const printerNumbers = new Map();
+  [...aliases.values()].filter((entry) => entry.kind === 'printer').forEach((entry) => {
+    const part = entry.label.toLowerCase().replace(/[^0-9a-z]+/g, '').match(/([a-z]+)(\d[0-9a-z]*)$/);
+    if (!part) return;
+    const candidate = { ...entry, prefix: part[1], number: part[2] };
+    const list = printerNumbers.get(part[2]) ?? [];
+    list.push(candidate);
+    printerNumbers.set(part[2], list);
+  });
+  return { rows, aliases: [...aliases.values()], printerNumbers };
 }
 
 /** Resolve every advertised SKU in a campaign to its model in the account SKU library. */
@@ -65,11 +74,43 @@ export function campaignModelContext(campaign, skuItems, dIndex) {
  * Ordinary search terms (and campaigns whose SKU/model cannot be resolved) are never flagged.
  */
 export function detectModelDrift(searchTerm, context, dIndex) {
-  if (!context?.expectedRows?.size) return { drift: false, wrong: [], matched: [], findings: [] };
+  if (!context?.expectedRows?.size) return { drift: false, review: false, wrong: [], matched: [], findings: [] };
   const text = clean(searchTerm).toLowerCase();
   const matched = dIndex.aliases.filter((entry) => entry.re.test(text));
+  const reviews = [];
+  for (const [number, candidates] of dIndex.printerNumbers ?? []) {
+    const numberRe = aliasRe(number);
+    if (!numberRe?.test(text) || matched.some((entry) => entry.kind === 'printer' && entry.re.test(text))) continue;
+    let possible = candidates;
+    const prefixed = candidates.filter((entry) =>
+      new RegExp(`(^|[^0-9a-z])${escapeRe(entry.prefix)}[^0-9a-z]*${escapeRe(number)}(?![0-9a-z])`, 'i').test(text)
+    );
+    if (prefixed.length) possible = prefixed;
+    if (possible.length !== 1 || possible[0].rows.size > 1) {
+      const beforeNumber = text.slice(0, text.search(numberRe));
+      const brandedRows = new Set();
+      possible.forEach((entry) => entry.rows.forEach((rowIndex) => {
+        const brand = clean(dIndex.rows[rowIndex]?.brand).toLowerCase();
+        if (brand && new RegExp(`(^|[^a-z])${escapeRe(brand)}([^a-z]|$)`, 'i').test(beforeNumber)) brandedRows.add(rowIndex);
+      }));
+      if (brandedRows.size === 1) {
+        const rowIndex = [...brandedRows][0];
+        const picked = possible.find((entry) => entry.rows.has(rowIndex));
+        matched.push({ ...picked, rows: new Set([rowIndex]) });
+        continue;
+      }
+      reviews.push({
+        token: number,
+        kind: 'review',
+        series: '',
+        reason: `机型数字 ${number} 可对应 ${[...new Set(possible.map((x) => x.label))].join('、')}；缺少明确的机型系列或 HP/Canon 品牌，需要自行判断`,
+      });
+      continue;
+    }
+    matched.push(possible[0]);
+  }
   const wrong = matched.filter((entry) => ![...entry.rows].some((row) => context.expectedRows.has(row)));
-  const findings = wrong.map((entry) => {
+  const driftFindings = wrong.map((entry) => {
     const row = dIndex.rows[[...entry.rows][0]] ?? {};
     const series = clean(row.term);
     const reason = entry.kind === 'printer'
@@ -77,9 +118,11 @@ export function detectModelDrift(searchTerm, context, dIndex) {
       : `本活动中未投放 ${entry.label} 系列`;
     return { token: entry.label, kind: entry.kind, series, reason };
   });
+  const findings = [...driftFindings, ...reviews];
   return {
-    drift: findings.length > 0,
-    wrong: findings.map((x) => x.token),
+    drift: driftFindings.length > 0,
+    review: reviews.length > 0,
+    wrong: driftFindings.map((x) => x.token),
     matched: matched.map((x) => x.label),
     findings,
   };
