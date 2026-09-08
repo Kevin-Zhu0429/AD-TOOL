@@ -98,13 +98,12 @@ export function detectModelDrift(searchTerm, context, dIndex) {
     const numberRe = aliasRe(number);
     if (!numberRe?.test(text)) continue;
     const compactOf = (entry) => entry.label.toLowerCase().replace(/[^0-9a-z]+/g, '').replace(/xl$/, '');
-    const exactPrinter = matched.some((entry) => entry.kind === 'printer' && compactOf(entry).endsWith(number));
-    if (exactPrinter) continue;
-
     const relevantModels = matched.filter((entry) => entry.kind === 'model' && compactOf(entry) === number);
     const removeRelevantModels = () => relevantModels.forEach((entry) => {
       const i = matched.indexOf(entry); if (i >= 0) matched.splice(i, 1);
     });
+    const exactPrinter = matched.some((entry) => entry.kind === 'printer' && compactOf(entry).endsWith(number));
+    if (exactPrinter) { removeRelevantModels(); continue; }
     let possible = candidates;
     const prefixed = candidates.filter((entry) =>
       new RegExp(`(^|[^0-9a-z])${escapeRe(entry.prefix)}[^0-9a-z]*${escapeRe(number)}(?![0-9a-z])`, 'i').test(text)
@@ -114,6 +113,8 @@ export function detectModelDrift(searchTerm, context, dIndex) {
       removeRelevantModels();
       possible = prefixed;
     } else {
+      // 305 默认就是墨盒型号；只有明确写出 TS305 / TS 305 才按打印机处理。
+      if (number === '305' && relevantModels.length) continue;
       const mentionedBrands = new Set();
       dIndex.rows.forEach((row) => {
         const brand = clean(row.brand).toLowerCase();

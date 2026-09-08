@@ -47,13 +47,19 @@ test('treats HP 305 and 305XL as ink models instead of inventing a TS305 printer
   const canonContext = campaignModelContext(
     { ads: [{ sku: 'CANON-545' }] }, [{ sku: 'CANON-545', model: '545' }], hpIndex,
   );
-  for (const term of ['tinta impresora hp 305', 'cartucho tinta hp 305', 'tinta 305 xl']) {
+  for (const term of ['tinta impresora hp 305', 'cartucho tinta hp 305', 'tinta 305 xl', 'tinteiro 305']) {
     const result = detectModelDrift(term, canonContext, hpIndex);
     assert.equal(result.drift, true);
     assert.equal(result.review, false);
     assert.deepEqual(result.wrong, ['305']);
     assert.equal(result.findings[0].reason, '本活动中未投放 305 系列');
   }
+  const hpContext = campaignModelContext(
+    { ads: [{ sku: 'HP-305' }] }, [{ sku: 'HP-305', model: '305' }], hpIndex,
+  );
+  const printer = detectModelDrift('tinta para ts 305', hpContext, hpIndex);
+  assert.deepEqual(printer.matched, ['TS305']);
+  assert.deepEqual(printer.wrong, ['TS305']);
 });
 
 test('does not guess when a SKU is absent from the SKU library', () => {
