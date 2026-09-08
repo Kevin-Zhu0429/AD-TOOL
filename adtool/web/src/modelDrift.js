@@ -1,6 +1,11 @@
 import { modelKey } from './skuMatch.js';
 
-const clean = (value) => String(value ?? '').trim().replace(/\s+/g, ' ');
+const clean = (value) => String(value ?? '').normalize('NFKC').trim().replace(/\s+/g, ' ');
+const compact = (value) => clean(value).toLowerCase().replace(/[^0-9a-z]+/g, '');
+const unique = (values) => [...new Set(values)];
+const INK_WORD = /\b(?:ink|inks|cartridges?|cartouches?|encre|encres|cartuchos?|tinta|tintas|tinte|tintenpatronen?|druckerpatronen?|patronen?|cartucce|cartuccia|inchiostro|tinteiros?|toner)\b/i;
+const PRINTER_WORD = /\b(?:printer|imprimante|impresora|drucker|stampante)\s*(?:(?:hp|canon|epson|brother)\s*)?$/i;
+const PAIR_CONNECTOR = /^\s*(?:[/,&+]|et|and|und|y|e|ou|or|oder|o)\s*$/i;
 
 function split(value) {
   return clean(value).split(/[,，、;；/|]+/).map((part) => part.trim()).filter(Boolean);
@@ -10,174 +15,285 @@ function escapeRe(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-/** Match a model as a complete token. Thus 305 never matches 3050. */
+/** Complete token boundaries: 305 must never match 3050 or a product-code suffix. */
 function aliasRe(alias, allowXl = false) {
-  const compact = clean(alias).toLowerCase().replace(/[^0-9a-z]+/g, '');
-  if (!compact || !/[0-9]/.test(compact)) return null;
-  const body = compact.split('').map(escapeRe).join('[^0-9a-z]*');
-  const xl = allowXl && !compact.endsWith('xl') ? '(?:[^0-9a-z]*xl)?' : '';
-  return new RegExp(`(^|[^0-9a-z])${body}${xl}(?![0-9a-z])`, 'i');
+  const token = compact(alias);
+  if (!token || !/[0-9]/.test(token)) return null;
+  const body = token.split('').map(escapeRe).join('[^0-9a-z]*');
+  const xl = allowXl && !token.endsWith('xl') ? '(?:[^0-9a-z]*xl)?' : '';
+  return new RegExp(`(^|[^0-9a-z])(${body}${xl})(?![0-9a-z])`, 'i');
 }
 
-/** Build the reusable D-library index. Each alias remembers every row it belongs to. */
+/** Keep brand and complete printer identity; repeated D rows are not separate printers. */
 export function buildDModelIndex(libData) {
   const spec = (libData?.libs ?? []).find((lib) => lib.id === 'D' || lib.special === 'series');
   const rows = spec ? libData?.items?.[spec.id] ?? [] : [];
   const aliases = new Map();
   const printerNumbers = new Map();
-
+  const brands = unique(['hp', 'canon', 'epson', 'brother', ...rows.map((row) => clean(row.brand).toLowerCase())]).filter(Boolean);
   const addAlias = (label, kind, rowIndex) => {
     const re = aliasRe(label, kind === 'model');
     if (!re) return null;
-    const key = `${kind}|${clean(label).toLowerCase()}`;
-    const entry = aliases.get(key) ?? { label: clean(label), kind, re, rows: new Set() };
+    const brand = clean(rows[rowIndex].brand).toLowerCase();
+    const key = `${kind}|${brand}|${compact(label)}`;
+    const entry = aliases.get(key) ?? { label: clean(label), kind, brand, re, rows: new Set() };
     entry.rows.add(rowIndex);
     aliases.set(key, entry);
     return entry;
   };
-  const addPrinterNumber = (number, candidate) => {
-    const list = printerNumbers.get(number) ?? [];
-    if (!list.some((item) => item.label.toLowerCase() === candidate.label.toLowerCase() && item.rows.has([...candidate.rows][0]))) {
-      list.push(candidate);
-    }
-    printerNumbers.set(number, list);
-  };
-
   rows.forEach((row, rowIndex) => {
     split(row.term).forEach((label) => addAlias(label, 'model', rowIndex));
     split(row.printer).forEach((printer) => {
-      const compact = printer.toLowerCase().replace(/[^0-9a-z]+/g, '');
-      const full = compact.match(/^([a-z]+)(\d[0-9a-z]*)$/);
-      if (full) {
-        const entry = addAlias(printer, 'printer', rowIndex);
-        if (entry) addPrinterNumber(full[2], { ...entry, prefix: full[1], number: full[2], rows: new Set([rowIndex]) });
-        return;
-      }
-      const number = compact.match(/^\d[0-9a-z]*$/)?.[0];
+      const token = compact(printer);
+      const full = token.match(/^([a-z]+)(\d[0-9a-z]*)$/);
+      const number = full?.[2] ?? token.match(/^\d[0-9a-z]*$/)?.[0];
       if (!number) return;
-      // D 表经常把系列和数字分列存成 “MG | 3550”。组合后才是完整打印机机型。
-      const series = clean(row.series).toLowerCase().match(/([a-z][0-9a-z]*)\s*$/)?.[1] ?? '';
-      const label = series ? `${series.toUpperCase()}${clean(printer)}` : clean(printer);
-      const entry = series ? addAlias(label, 'printer', rowIndex) : { label, kind: 'printer', rows: new Set([rowIndex]) };
-      addPrinterNumber(number, { ...entry, prefix: series, number, rows: new Set([rowIndex]) });
+      const prefix = full?.[1] ?? clean(row.series).toLowerCase().match(/([a-z][0-9a-z]*)\s*$/)?.[1] ?? '';
+      const label = full ? printer : prefix ? `${prefix.toUpperCase()}${clean(printer)}` : clean(printer);
+      const entry = prefix ? addAlias(label, 'printer', rowIndex) : {
+        label, kind: 'printer', brand: clean(row.brand).toLowerCase(), rows: new Set([rowIndex]),
+      };
+      const list = printerNumbers.get(number) ?? [];
+      const existing = list.find((item) => item.brand === entry.brand && compact(item.label) === compact(label));
+      if (existing) existing.rows.add(rowIndex);
+      else list.push({ ...entry, prefix, number, rows: new Set([rowIndex]) });
+      printerNumbers.set(number, list);
     });
   });
-  return { rows, aliases: [...aliases.values()], printerNumbers };
+  const numberPatterns = [...printerNumbers].map(([number, entries]) => ({ re: aliasRe(number), entries }));
+  return { rows, aliases: [...aliases.values()], printerNumbers, numberPatterns, brands, searchCache: new Map() };
 }
 
-/** Resolve every advertised SKU in a campaign to its model in the account SKU library. */
+/** SKU brand is the seller's brand, so it cannot be used as the OEM printer brand. */
 export function campaignModelContext(campaign, skuItems, dIndex) {
   const bySku = new Map((skuItems ?? []).map((item) => [clean(item.sku).toLowerCase(), item]));
   const models = new Set();
   const expectedRows = new Set();
-  const unknownSkus = [];
+  const unknownSkus = new Set();
+  const unmappedModels = new Set();
+  let missingSku = false;
   (campaign?.ads ?? []).forEach((ad) => {
     const sku = clean(ad.sku);
-    if (!sku) return;
+    if (!sku) { missingSku = true; return; }
     const item = bySku.get(sku.toLowerCase());
     const key = modelKey(item?.model);
-    if (!key) { unknownSkus.push(sku); return; }
+    if (!key) { unknownSkus.add(sku); return; }
     models.add(clean(item.model));
-    dIndex.rows.forEach((row, i) => {
-      if (split(row.term).some((term) => modelKey(term) === key)) expectedRows.add(i);
-    });
+    const modelText = clean(item.model).toLowerCase();
+    const explicitBrand = dIndex.brands.find((brand) => new RegExp(`^${escapeRe(brand)}(?:[^a-z]|$)`).test(modelText));
+    const rowIds = dIndex.rows.flatMap((row, i) =>
+      (!explicitBrand || !clean(row.brand) || clean(row.brand).toLowerCase() === explicitBrand) &&
+      split(row.term).some((term) => modelKey(term) === key) ? [i] : []);
+    // A bare SKU model shared by different OEM brands does not establish either mapping.
+    const brands = unique(rowIds.map((i) => clean(dIndex.rows[i].brand).toLowerCase()).filter(Boolean));
+    if (!rowIds.length || brands.length > 1) unmappedModels.add(clean(item.model));
+    else rowIds.forEach((i) => expectedRows.add(i));
   });
-  return { models: [...models], expectedRows, unknownSkus };
+  return {
+    models: [...models], expectedRows, unknownSkus: [...unknownSkus], unmappedModels: [...unmappedModels],
+    incomplete: missingSku || !campaign?.ads?.length || unknownSkus.size > 0 || unmappedModels.size > 0,
+  };
 }
 
-/**
- * Return only recognized D-library model tokens that do not belong to an advertised model.
- * Ordinary search terms (and campaigns whose SKU/model cannot be resolved) are never flagged.
- */
-export function detectModelDrift(searchTerm, context, dIndex) {
-  if (!context?.expectedRows?.size) return { drift: false, review: false, wrong: [], matched: [], findings: [] };
-  const text = clean(searchTerm).toLowerCase();
-  const matched = dIndex.aliases.filter((entry) => entry.re.test(text));
-  const reviews = [];
-  for (const [number, candidates] of dIndex.printerNumbers ?? []) {
-    const numberRe = aliasRe(number);
-    if (!numberRe?.test(text)) continue;
-    const compactOf = (entry) => entry.label.toLowerCase().replace(/[^0-9a-z]+/g, '').replace(/xl$/, '');
-    const relevantModels = matched.filter((entry) => entry.kind === 'model' && compactOf(entry) === number);
-    const removeRelevantModels = () => relevantModels.forEach((entry) => {
-      const i = matched.indexOf(entry); if (i >= 0) matched.splice(i, 1);
-    });
-    const exactPrinter = matched.some((entry) => entry.kind === 'printer' && compactOf(entry).endsWith(number));
-    if (exactPrinter) { removeRelevantModels(); continue; }
-    let possible = candidates;
-    const prefixed = candidates.filter((entry) =>
-      new RegExp(`(^|[^0-9a-z])${escapeRe(entry.prefix)}[^0-9a-z]*${escapeRe(number)}(?![0-9a-z])`, 'i').test(text)
-    );
-    const beforeNumber = text.slice(0, text.search(numberRe));
-    if (prefixed.length) {
-      removeRelevantModels();
-      possible = prefixed;
-    } else {
-      // 305 默认就是墨盒型号；只有明确写出 TS305 / TS 305 才按打印机处理。
-      if (number === '305' && relevantModels.length) continue;
-      const mentionedBrands = new Set();
-      dIndex.rows.forEach((row) => {
-        const brand = clean(row.brand).toLowerCase();
-        if (brand && new RegExp(`(^|[^a-z])${escapeRe(brand)}([^a-z]|$)`, 'i').test(beforeNumber)) mentionedBrands.add(brand);
-      });
-      if (!mentionedBrands.size) {
-        if (relevantModels.length && /(^|[^a-z])(ink|cartridge|cartucho|tinta|toner)([^a-z]|$)|\d[^0-9a-z]*xl(?![0-9a-z])/i.test(text)) continue;
-        if (!relevantModels.length && candidates.length === 1 && candidates[0].rows.size === 1) {
-          matched.push(candidates[0]);
-          continue;
-        }
-        removeRelevantModels();
-        reviews.push({
-          token: number, kind: 'review', series: '',
-          reason: relevantModels.length
-            ? `数字 ${number} 既可能是墨盒型号，也可能对应 ${[...new Set(candidates.map((x) => x.label))].join('、')} 机型；搜索词没有明确的机型系列或品牌，需要自行判断`
-            : `机型数字 ${number} 可对应 ${[...new Set(candidates.map((x) => x.label))].join('、')}；搜索词没有明确的机型系列或品牌，需要自行判断`,
-        });
-        continue;
-      }
-      const modelFitsBrand = relevantModels.some((entry) => [...entry.rows].some((rowIndex) =>
-        mentionedBrands.has(clean(dIndex.rows[rowIndex]?.brand).toLowerCase())
-      ));
-      possible = candidates.filter((entry) => [...entry.rows].some((rowIndex) =>
-        mentionedBrands.has(clean(dIndex.rows[rowIndex]?.brand).toLowerCase())
-      ));
-      // “HP 305” belongs to the HP ink row, not Canon's TS305 printer row.
-      if (modelFitsBrand && !possible.length) continue;
-      if (modelFitsBrand && possible.length) {
-        removeRelevantModels();
-        reviews.push({
-          token: number, kind: 'review', series: '',
-          reason: `品牌和数字 ${number} 同时命中墨盒型号及打印机机型，需要自行判断`,
-        });
-        continue;
-      }
-      if (!possible.length) continue;
-      removeRelevantModels();
+function normalizeSearch(value, dIndex) {
+  let text = clean(value).toLowerCase().replace(/[’‘`]/g, "'");
+  // Split only known OEM brands. Never split TS305, F350, ASINs or arbitrary product codes.
+  for (const brand of dIndex.brands) {
+    text = text.replace(new RegExp(`(^|[^0-9a-z])(${escapeRe(brand)})(?=\\d)`, 'g'), '$1$2 ');
+  }
+  return text;
+}
+
+function occurrences(text, re) {
+  if (!re.test(text)) return [];
+  return [...text.matchAll(new RegExp(re.source, 'gi'))].map((match) => ({
+    start: match.index + match[1].length, end: match.index + match[0].length,
+  }));
+}
+
+/** A full printer wins only over the number inside that mention, not elsewhere in the query. */
+function collectMentions(text, dIndex) {
+  const groups = new Map();
+  const add = (span, entry, explicit = false) => {
+    const key = `${span.start}:${span.end}`;
+    const group = groups.get(key) ?? { ...span, models: [], printers: [], explicit: false };
+    const list = entry.kind === 'model' ? group.models : group.printers;
+    if (!list.includes(entry)) list.push(entry);
+    group.explicit ||= explicit;
+    groups.set(key, group);
+  };
+  for (const entry of dIndex.aliases) {
+    for (const span of occurrences(text, entry.re)) add(span, entry, entry.kind === 'printer');
+  }
+  for (const { re, entries } of dIndex.numberPatterns) {
+    for (const span of occurrences(text, re)) entries.forEach((entry) => add(span, entry));
+  }
+  const selected = [];
+  for (const group of [...groups.values()].sort((a, b) => (b.end - b.start) - (a.end - a.start) || Number(b.explicit) - Number(a.explicit))) {
+    if (!selected.some((other) => group.start < other.end && group.end > other.start)) selected.push(group);
+  }
+  return selected.sort((a, b) => a.start - b.start);
+}
+
+function localBrand(text, mention, next, dIndex) {
+  const before = text.slice(Math.max(0, mention.start - 80), mention.start).split(/[;.!?]/).at(-1);
+  const after = text.slice(mention.end, next?.start ?? text.length).split(/[;.!?]/)[0].slice(0, 30);
+  const mentions = [];
+  for (const brand of dIndex.brands) {
+    const re = new RegExp(`(^|[^0-9a-z])(${escapeRe(brand)})(?![0-9a-z])`, 'gi');
+    for (const match of before.matchAll(re)) mentions.push({ brand, at: match.index });
+  }
+  if (mentions.length) return mentions.sort((a, b) => b.at - a.at)[0].brand;
+  return dIndex.brands.find((brand) => new RegExp(`^\\s*(?:xl\\s+)?${escapeRe(brand)}(?![0-9a-z])`, 'i').test(after)) ?? '';
+}
+
+function sharesCartridgeRow(a, b) {
+  return a.models.some((x) => b.models.some((y) => modelKey(x.label) !== modelKey(y.label) && [...x.rows].some((row) => y.rows.has(row))));
+}
+
+/** Search interpretation deliberately has no campaign argument. */
+export function resolveSearchModels(searchTerm, dIndex) {
+  const text = normalizeSearch(searchTerm, dIndex);
+  if (!/\d/.test(text)) return [];
+  if (dIndex.searchCache.has(text)) return dIndex.searchCache.get(text);
+  const mentions = collectMentions(text, dIndex);
+  const resolved = mentions.map((mention, i) => {
+    const previous = mentions[i - 1];
+    const next = mentions[i + 1];
+    const token = text.slice(mention.start, mention.end);
+    const brand = localBrand(text, mention, next, dIndex);
+    const fits = (entry) => !brand || !entry.brand || entry.brand === brand;
+    const models = mention.models.filter(fits);
+    const printers = mention.printers.filter(fits);
+    const before = text.slice(previous?.end ?? Math.max(0, mention.start - 70), mention.start).split(/[;,.!?]/).at(-1);
+    const after = text.slice(mention.end, next?.start ?? Math.min(text.length, mention.end + 40)).split(/[;,.!?]/)[0];
+    const nearby = before + ' ' + after;
+    const paired = (previous && PAIR_CONNECTOR.test(text.slice(previous.end, mention.start)) && sharesCartridgeRow(previous, mention)) ||
+      (next && PAIR_CONNECTOR.test(text.slice(mention.end, next.start)) && sharesCartridgeRow(mention, next));
+    const inkEvidence = /\d[^0-9a-z]*xl$/.test(token) || paired || (INK_WORD.test(nearby) && !PRINTER_WORD.test(before));
+    const conflict = (entries) => ({ token, type: 'brand_conflict', brand, entries });
+    if (mention.explicit) {
+      const explicit = mention.printers.filter((entry) => entry.re?.test(token));
+      const compatible = explicit.filter(fits);
+      return compatible.length ? { token, type: 'printer', entries: compatible } : conflict(explicit);
     }
-    if (possible.length !== 1 || possible[0].rows.size > 1) {
-      reviews.push({
-        token: number, kind: 'review', series: '',
-        reason: `机型数字 ${number} 可对应 ${[...new Set(possible.map((x) => x.label))].join('、')}；当前信息仍无法确定，需要自行判断`,
-      });
+    if (mention.models.length && inkEvidence) {
+      return models.length ? { token, type: 'model', entries: models } : conflict(mention.models);
+    }
+    if (models.length && (!printers.length || (!brand && modelKey(token) === '305'))) {
+      return { token, type: 'model', entries: models };
+    }
+    if (printers.length && (!models.length || PRINTER_WORD.test(before))) {
+      return { token, type: 'printer', entries: printers };
+    }
+    if (models.length && printers.length) return { token, type: 'ambiguous', entries: [...models, ...printers] };
+    return conflict([...mention.models, ...mention.printers]);
+  });
+  // Interpretation alone is reusable across campaigns; never cache their coverage here.
+  if (dIndex.searchCache.size >= 2000) dIndex.searchCache.delete(dIndex.searchCache.keys().next().value);
+  dIndex.searchCache.set(text, resolved);
+  return resolved;
+}
+
+function cartridgeGroups(entry, dIndex) {
+  const groups = new Map();
+  for (const i of entry.rows) {
+    const term = clean(dIndex.rows[i]?.term);
+    const key = unique(split(term).map(modelKey)).sort().join('|');
+    const group = groups.get(key) ?? { term, rows: new Set() };
+    group.rows.add(i);
+    groups.set(key, group);
+  }
+  return [...groups.values()];
+}
+
+const covered = (rows, context) => [...rows].some((i) => context?.expectedRows?.has(i));
+
+function candidateDetails(entries, context, dIndex) {
+  return entries.map((entry) => {
+    const groups = cartridgeGroups(entry, dIndex);
+    const details = groups.map((group) => `${group.term} 墨盒，${covered(group.rows, context) ? '本活动已投放对应系列' : context?.incomplete || !context?.expectedRows?.size ? '已识别投放中未找到对应系列' : '本活动未投放对应系列'}`).join(' / ');
+    return `${entry.label}${entry.kind === 'model' ? ' 墨盒' : ''}（${details}）`;
+  }).join('；');
+}
+
+/** Shared status vocabulary for the search-term table and the analysis panel. */
+export function driftPresentation(result) {
+  const labels = {
+    drift: '疑似跑偏', partial: '部分匹配', review: '需人工判断', brand_conflict: '需核对品牌',
+    mapping_conflict: '需核对词库', insufficient: '资料不足', matched: '匹配', unrecognized: '未识别型号',
+  };
+  return { label: labels[result.status] ?? (result.drift ? labels.drift : labels.review), tone: result.drift ? 'bad' : result.status === 'matched' ? 'good' : 'warn' };
+}
+
+export function detectModelDrift(searchTerm, context, dIndex) {
+  const resolved = resolveSearchModels(searchTerm, dIndex);
+  const findings = [];
+  const matched = [];
+  const good = [];
+  const wrong = [];
+  const brandConflicts = new Map();
+  const incomplete = context?.incomplete || !context?.expectedRows?.size;
+  for (const mention of resolved) {
+    const { token, entries, type } = mention;
+    if (type === 'brand_conflict') {
+      const brands = unique(entries.map((entry) => entry.brand).filter(Boolean)).sort().join('、').toUpperCase();
+      const key = `${mention.brand}|${brands}`;
+      const conflict = brandConflicts.get(key) ?? { brand: mention.brand.toUpperCase(), brands, labels: [] };
+      conflict.labels.push(...entries.map((entry) => entry.label));
+      brandConflicts.set(key, conflict);
       continue;
     }
-    matched.push(possible[0]);
+    const mappingConflict = entries.some((entry) => entry.kind === 'printer' && cartridgeGroups(entry, dIndex).length > 1);
+    if (mappingConflict) {
+      findings.push({ token, kind: 'mapping_conflict', series: '', reason: `词库存在同一机型的多组墨盒对应关系：${candidateDetails(entries, context, dIndex)}；尚未确认这些记录是否都兼容，请核对词库` });
+      continue;
+    }
+    const supported = entries.filter((entry) => covered(entry.rows, context));
+    if ((type === 'ambiguous' && supported.length !== entries.length) || (entries.length > 1 && supported.length > 0 && supported.length < entries.length)) {
+      findings.push({ token, kind: 'review', series: '', reason: `搜索词 ${token} 可对应 ${candidateDetails(entries, context, dIndex)}；未明确${type === 'ambiguous' ? '墨盒或打印机型号' : type === 'model' ? '墨盒品牌' : '打印机系列'}，需要自行判断` });
+      continue;
+    }
+    matched.push(...entries.map((entry) => entry.label));
+    if (supported.length === entries.length) {
+      good.push(...entries.map((entry) => entry.label));
+      continue;
+    }
+    wrong.push(...entries.map((entry) => entry.label));
+    if (entries.length > 1) {
+      findings.push({ token, kind: type, series: '', reason: `搜索词 ${token} 可对应 ${candidateDetails(entries, context, dIndex)}；这些候选均未匹配到本活动已识别的投放系列` });
+      continue;
+    }
+    const entry = entries[0];
+    const series = cartridgeGroups(entry, dIndex)[0]?.term ?? '';
+    const absence = incomplete ? '本活动已识别投放中未找到' : '本活动中未投放';
+    findings.push({ token: entry.label, kind: entry.kind, series,
+      reason: entry.kind === 'printer'
+        ? `${entry.label} 机型为 ${series} 系列的机型，${absence} ${series} 系列`
+        : `${absence} ${entry.label} 系列`,
+    });
   }
-  const wrong = matched.filter((entry) => ![...entry.rows].some((row) => context.expectedRows.has(row)));
-  const driftFindings = wrong.map((entry) => {
-    const row = dIndex.rows[[...entry.rows][0]] ?? {};
-    const series = clean(row.term);
-    const reason = entry.kind === 'printer'
-      ? `${entry.label} 机型为 ${series} 系列的机型，本活动中未投放 ${series} 系列`
-      : `本活动中未投放 ${entry.label} 系列`;
-    return { token: entry.label, kind: entry.kind, series, reason };
-  });
-  const findings = [...driftFindings, ...reviews];
+  for (const conflict of brandConflicts.values()) {
+    const labels = unique(conflict.labels).join('、');
+    findings.push({ token: labels, kind: 'brand_conflict', series: '', reason: `搜索词写的是 ${conflict.brand}，${labels} 在当前区域词库中归属 ${conflict.brands || '其他品牌'}；请核对品牌是否误写或词库是否缺失` });
+  }
+  let status = resolved.length ? 'matched' : 'unrecognized';
+  if (wrong.length) status = good.length ? 'partial' : 'drift';
+  if (good.length && wrong.length) findings.unshift({ token: '', kind: 'partial', series: '', reason: `搜索词部分匹配：${unique(good).join('、')} 已匹配投放系列，${unique(wrong).join('、')} 未匹配；请结合完整搜索需求判断` });
+  for (const kind of ['review', 'mapping_conflict', 'brand_conflict']) {
+    if (findings.some((finding) => finding.kind === kind)) status = kind;
+  }
+  if (incomplete && resolved.length) {
+    status = 'insufficient';
+    const missing = [
+      context?.unknownSkus?.length ? `${context.unknownSkus.length} 个 SKU 未入库或未填写型号` : '',
+      context?.unmappedModels?.length ? `型号 ${context.unmappedModels.join('、')} 在 D 类词库中缺失或归属不明确` : '',
+    ].filter(Boolean).join('；');
+    findings.unshift({ token: '', kind: 'insufficient', series: '', reason: `投放型号信息不完整${missing ? `：${missing}` : ''}；请补全投放 SKU 和型号映射后再判断跑偏` });
+  }
   return {
-    drift: driftFindings.length > 0,
-    review: reviews.length > 0,
-    wrong: driftFindings.map((x) => x.token),
-    matched: matched.map((x) => x.label),
-    findings,
+    status, drift: status === 'drift', review: !['matched', 'unrecognized', 'drift'].includes(status),
+    wrong: incomplete ? [] : unique(wrong), matched: unique(matched),
+    findings: findings.filter((finding, i) => findings.findIndex((other) => other.reason === finding.reason) === i),
   };
 }

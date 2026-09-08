@@ -225,6 +225,7 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px;background:var(--ca
 .anselbar{background:var(--chrome);color:var(--on-fill);padding:9px 18px;display:flex;gap:9px;align-items:center;font-size:13px}
 .anselbar .btn{background:var(--chrome-2);border-color:var(--chrome-line)}
 .antbl th{top:0}
+.antbl .drift-reason{min-width:260px;max-width:380px;overflow-wrap:anywhere}
 .antbl .anrow{cursor:pointer}
 .antbl .anrow:hover td{background:var(--hover)}
 .antbl .anrow.expd td{background:var(--cy-b)}
