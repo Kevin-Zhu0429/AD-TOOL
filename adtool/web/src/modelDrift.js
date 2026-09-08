@@ -24,28 +24,43 @@ export function buildDModelIndex(libData) {
   const spec = (libData?.libs ?? []).find((lib) => lib.id === 'D' || lib.special === 'series');
   const rows = spec ? libData?.items?.[spec.id] ?? [] : [];
   const aliases = new Map();
-  rows.forEach((row, rowIndex) => {
-    const values = [
-      ...split(row.term).map((label) => ({ label, kind: 'model' })),
-      ...split(row.printer).map((label) => ({ label, kind: 'printer' })),
-    ];
-    values.forEach(({ label, kind }) => {
-      const re = aliasRe(label, kind === 'model');
-      if (!re) return;
-      const key = clean(label).toLowerCase();
-      const entry = aliases.get(`${kind}|${key}`) ?? { label: clean(label), kind, re, rows: new Set() };
-      entry.rows.add(rowIndex);
-      aliases.set(`${kind}|${key}`, entry);
-    });
-  });
   const printerNumbers = new Map();
-  [...aliases.values()].filter((entry) => entry.kind === 'printer').forEach((entry) => {
-    const part = entry.label.toLowerCase().replace(/[^0-9a-z]+/g, '').match(/([a-z]+)(\d[0-9a-z]*)$/);
-    if (!part) return;
-    const candidate = { ...entry, prefix: part[1], number: part[2] };
-    const list = printerNumbers.get(part[2]) ?? [];
-    list.push(candidate);
-    printerNumbers.set(part[2], list);
+
+  const addAlias = (label, kind, rowIndex) => {
+    const re = aliasRe(label, kind === 'model');
+    if (!re) return null;
+    const key = `${kind}|${clean(label).toLowerCase()}`;
+    const entry = aliases.get(key) ?? { label: clean(label), kind, re, rows: new Set() };
+    entry.rows.add(rowIndex);
+    aliases.set(key, entry);
+    return entry;
+  };
+  const addPrinterNumber = (number, candidate) => {
+    const list = printerNumbers.get(number) ?? [];
+    if (!list.some((item) => item.label.toLowerCase() === candidate.label.toLowerCase() && item.rows.has([...candidate.rows][0]))) {
+      list.push(candidate);
+    }
+    printerNumbers.set(number, list);
+  };
+
+  rows.forEach((row, rowIndex) => {
+    split(row.term).forEach((label) => addAlias(label, 'model', rowIndex));
+    split(row.printer).forEach((printer) => {
+      const compact = printer.toLowerCase().replace(/[^0-9a-z]+/g, '');
+      const full = compact.match(/^([a-z]+)(\d[0-9a-z]*)$/);
+      if (full) {
+        const entry = addAlias(printer, 'printer', rowIndex);
+        if (entry) addPrinterNumber(full[2], { ...entry, prefix: full[1], number: full[2], rows: new Set([rowIndex]) });
+        return;
+      }
+      const number = compact.match(/^\d[0-9a-z]*$/)?.[0];
+      if (!number) return;
+      // D 表经常把系列和数字分列存成 “MG | 3550”。组合后才是完整打印机机型。
+      const series = clean(row.series).toLowerCase().match(/([a-z][0-9a-z]*)\s*$/)?.[1] ?? '';
+      const label = series ? `${series.toUpperCase()}${clean(printer)}` : clean(printer);
+      const entry = series ? addAlias(label, 'printer', rowIndex) : { label, kind: 'printer', rows: new Set([rowIndex]) };
+      addPrinterNumber(number, { ...entry, prefix: series, number, rows: new Set([rowIndex]) });
+    });
   });
   return { rows, aliases: [...aliases.values()], printerNumbers };
 }
@@ -106,10 +121,16 @@ export function detectModelDrift(searchTerm, context, dIndex) {
       });
       if (!mentionedBrands.size) {
         if (relevantModels.length && /(^|[^a-z])(ink|cartridge|cartucho|tinta|toner)([^a-z]|$)|\d[^0-9a-z]*xl(?![0-9a-z])/i.test(text)) continue;
+        if (!relevantModels.length && candidates.length === 1 && candidates[0].rows.size === 1) {
+          matched.push(candidates[0]);
+          continue;
+        }
         removeRelevantModels();
         reviews.push({
           token: number, kind: 'review', series: '',
-          reason: `数字 ${number} 既可能是墨盒型号，也可能对应 ${[...new Set(candidates.map((x) => x.label))].join('、')} 机型；搜索词没有明确的机型系列或品牌，需要自行判断`,
+          reason: relevantModels.length
+            ? `数字 ${number} 既可能是墨盒型号，也可能对应 ${[...new Set(candidates.map((x) => x.label))].join('、')} 机型；搜索词没有明确的机型系列或品牌，需要自行判断`
+            : `机型数字 ${number} 可对应 ${[...new Set(candidates.map((x) => x.label))].join('、')}；搜索词没有明确的机型系列或品牌，需要自行判断`,
         });
         continue;
       }

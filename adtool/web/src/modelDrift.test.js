@@ -81,3 +81,38 @@ test('uses printer prefix, then brand, and asks for review when a number is ambi
   assert.equal(unclear.review, true);
   assert.match(unclear.findings[0].reason, /需要自行判断/);
 });
+
+test('combines the D-table printer series column with numeric printer models', () => {
+  const splitPrinterLib = {
+    libs: [{ id: 'D', special: 'series' }],
+    items: { D: [
+      { brand: 'Canon', term: '540, 541', series: 'MG', printer: '3550' },
+      { brand: 'HP', term: '305', series: 'DeskJet', printer: '2700' },
+    ] },
+  };
+  const splitIndex = buildDModelIndex(splitPrinterLib);
+  const hpContext = campaignModelContext(
+    { ads: [{ sku: 'HP-305' }] }, [{ sku: 'HP-305', model: '305XL' }], splitIndex,
+  );
+  const result = detectModelDrift('tinta canon mg 3550 color', hpContext, splitIndex);
+  assert.equal(result.review, false);
+  assert.deepEqual(result.wrong, ['MG3550']);
+  assert.equal(result.findings[0].reason, 'MG3550 机型为 540, 541 系列的机型，本活动中未投放 540, 541 系列');
+});
+
+test('recognizes a number as a printer when it does not exist in the ink-model column', () => {
+  const printerOnlyLib = {
+    libs: [{ id: 'D', special: 'series' }],
+    items: { D: [
+      { brand: 'Canon', term: '545, 546', series: 'TR', printer: '4755i' },
+      { brand: 'HP', term: '305', series: 'DeskJet', printer: '2700' },
+    ] },
+  };
+  const printerOnlyIndex = buildDModelIndex(printerOnlyLib);
+  const hpContext = campaignModelContext(
+    { ads: [{ sku: 'HP-305' }] }, [{ sku: 'HP-305', model: '305' }], printerOnlyIndex,
+  );
+  const result = detectModelDrift('4755i cartucho', hpContext, printerOnlyIndex);
+  assert.equal(result.review, false);
+  assert.deepEqual(result.wrong, ['TR4755i']);
+});
