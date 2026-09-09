@@ -1,0 +1,4 @@
+# Local validation reports and private CSV samples are never source assets.
+.tmp/aba-*.png
+.tmp/aba-*.json
+.tmp/ES_Week_*.csv

@@ -1,0 +1,228 @@
+import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+import { mkdir } from 'node:fs/promises';
+import { createServer } from 'vite';
+import { startAbaTestServer } from '../../server/tests/abaHarness.js';
+import { firstFile, secondFile, csvFixture } from '../../server/tests/abaFixture.js';
+const require = createRequire(import.meta.url);
+const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
+const root = fileURLToPath(new URL('../', import.meta.url));
+const output = fileURLToPath(new URL('../../.tmp/', import.meta.url));
+await mkdir(output, { recursive: true });
+const backend = await startAbaTestServer();
+let vite, browser;
+try {
+  vite = await createServer({ root, server: { host: '127.0.0.1', port: 0, proxy: { '/api': { target: backend.url, changeOrigin: true } } } });
+  await vite.listen();
+  browser = await chromium.launch({ channel: process.env.BROWSER_CHANNEL || 'msedge', headless: true });
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1120 }, reducedMotion: 'reduce' });
+  const errors = [];
+  page.on('pageerror', (err) => errors.push(err.message));
+  await page.goto(`http://127.0.0.1:${vite.httpServer.address().port}`);
+  await page.getByLabel('用户名').fill('aba-test');
+  await page.getByLabel('密码', { exact: true }).fill('local-test-password');
+  await page.getByRole('button', { name: '登录', exact: true }).click();
+  await page.locator('.topnav').getByRole('button', { name: 'ABA 报告', exact: true }).click();
+  const idle = () => page.locator('.aba-results[aria-busy="false"]').waitFor();
+  const bodyRows = () => page.locator('.aba-table tbody tr');
+  await idle();
+  assert.match(await page.locator('.aba-table-empty').innerText(), /还没有品牌报告/);
+  const fileInput = page.locator('.aba-upload input[type="file"]');
+  const attach = async (files) => fileInput.setInputFiles(files.map((f) => ({ name: f.name, mimeType: 'text/csv', buffer: Buffer.from(f.text) })));
+  await attach([{ name: 'broken.csv', text: 'invalid' }]);
+  assert.match(await page.locator('.aba-file').innerText(), /每周报告/);
+  assert.equal(await page.getByRole('button', { name: '上传并保存' }).isDisabled(), true);
+  await page.getByRole('button', { name: '移除 broken.csv' }).click();
+  await attach([firstFile, secondFile]);
+  await page.getByRole('button', { name: '上传并保存' }).click();
+  await page.getByText(/已保存 6 条/).waitFor();
+  await idle();
+  assert.equal(await bodyRows().count(), 6);
+  assert.match(await bodyRows().first().innerText(), /合并 2 周/);
+  await page.getByLabel('多周合并相同搜索词', { exact: true }).uncheck();
+  await idle();
+  assert.equal(await bodyRows().count(), 12);
+  await page.getByLabel('多周合并相同搜索词', { exact: true }).check();
+  await idle();
+  assert.equal(await page.locator('.aba-weeks input:checked').count(), 2);
+  assert.equal(await page.locator('.aba-chart-row').count(), 2);
+  await page.locator('.aba-table th button').filter({ hasText: '曝光：曝光总量' }).click();
+  await idle();
+  assert.match(await bodyRows().first().innerText(), /cartuchos hp 305/);
+  assert.equal(await page.locator('th[aria-sort="descending"]').count(), 1);
+  await page.getByLabel('搜索查询 / 墨盒型号').fill('305');
+  await page.waitForResponse((r) => r.url().includes('/api/aba?') && r.url().includes('q=305'));
+  await idle();
+  assert.equal(await bodyRows().count(), 5);
+  assert.equal(await page.locator('.aba-linked').count(), 2);
+  assert.match(await page.locator('.aba-linked').filter({ hasText: '4310' }).first().innerText(), /21, 22/);
+  await page.screenshot({ path: output + 'aba-desktop.png', fullPage: true });
+  await page.locator('.aba-pagination').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: output + 'aba-table.png', fullPage: true });
+  await page.getByRole('button', { name: '仅最新周', exact: true }).click();
+  await idle();
+  assert.equal(await bodyRows().count(), 5);
+  await page.getByLabel('包含关联机型词', { exact: true }).uncheck();
+  await idle();
+  assert.equal(await bodyRows().count(), 3);
+  await page.getByLabel('包含关联机型词', { exact: true }).check();
+  await page.getByRole('button', { name: '清除搜索', exact: true }).first().click();
+  await idle();
+  assert.equal(await page.getByLabel('搜索查询 / 墨盒型号').inputValue(), '');
+  assert.equal(await page.getByLabel('搜索查询 / 墨盒型号').evaluate((e) => e === document.activeElement), true);
+  let composedRequests = 0;
+  const countComposed = (request) => { if (request.url().includes('/api/aba?')) composedRequests++; };
+  page.on('request', countComposed);
+  await page.getByLabel('搜索查询 / 墨盒型号').dispatchEvent('compositionstart');
+  await page.getByLabel('搜索查询 / 墨盒型号').fill('305');
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  assert.equal(composedRequests, 0, 'IME composition must not issue a search');
+  await page.getByLabel('搜索查询 / 墨盒型号').dispatchEvent('compositionend');
+  await page.waitForResponse((r) => r.url().includes('/api/aba?') && r.url().includes('q=305'));
+  await idle();
+  page.off('request', countComposed);
+  await page.getByLabel('搜索查询 / 墨盒型号').fill('不存在的词');
+  await page.getByRole('heading', { name: '没有匹配的搜索查询' }).waitFor();
+  await page.getByRole('button', { name: '清除搜索', exact: true }).first().click();
+  await idle();
+  await page.getByRole('button', { name: /ASIN 视图/ }).click();
+  await page.getByRole('heading', { name: 'ASIN 视图待开发' }).waitFor();
+  await page.getByRole('button', { name: '返回品牌视图' }).click();
+  assert.equal(await bodyRows().count(), 6);
+  // Native popup + keyboard selection, then leave it closed before screenshot.
+  await page.getByLabel('趋势指标', { exact: true }).focus();
+  await page.keyboard.press('Alt+ArrowDown');
+  await page.keyboard.press('Escape');
+  await page.getByLabel('趋势指标', { exact: true }).selectOption('click_rate');
+  assert.match(await page.locator('.aba-chart').innerText(), /47.83%/);
+  await page.getByRole('button', { name: '清空周选择', exact: true }).click();
+  await page.getByRole('heading', { name: '请选择至少一周' }).waitFor();
+  await page.getByRole('button', { name: '全选', exact: true }).click();
+  await idle();
+  // Persisted filters survive navigation and a page reload; report data stays server-side.
+  await page.locator('.topnav').getByRole('button', { name: 'SKU 库', exact: true }).click();
+  await page.screenshot({ path: output + 'aba-sibling-sku.png', fullPage: true });
+  await page.locator('.topnav').getByRole('button', { name: 'ABA 报告', exact: true }).click();
+  await idle();
+  assert.equal(await bodyRows().count(), 6);
+  await page.reload();
+  await page.locator('.topnav').getByRole('button', { name: 'ABA 报告', exact: true }).click();
+  await idle();
+  assert.equal(await bodyRows().count(), 6);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: output + 'aba-narrow.png', fullPage: true });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  const scroll = page.locator('.aba-table-scroll');
+  assert.equal(await scroll.evaluate((e) => e.scrollWidth > e.clientWidth), true);
+  await scroll.evaluate((e) => { e.scrollLeft = e.scrollWidth; });
+  assert.equal(await scroll.evaluate((e) => e.scrollLeft > 0), true);
+  await page.getByRole('button', { name: '切换主题', exact: true }).click();
+  await page.locator('.aba-table-heading').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: output + 'aba-dark-narrow.png', fullPage: true });
+  await page.setViewportSize({ width: 1440, height: 1120 });
+  // Fail and retry a read; no stale rows should masquerade as the new result.
+  await page.route('**/api/aba?**', (route) => route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: '测试：服务暂不可用' }) }));
+  await page.getByRole('button', { name: '仅最新周', exact: true }).click();
+  await page.getByRole('button', { name: '重新加载', exact: true }).waitFor();
+  assert.equal(await bodyRows().count(), 0);
+  await page.unroute('**/api/aba?**');
+  await page.getByRole('button', { name: '重新加载', exact: true }).click();
+  await idle();
+  assert.equal(await bodyRows().count(), 6);
+  // Failed upload keeps preview and supports safe retry.
+  await attach([firstFile]);
+  await page.route('**/api/aba/import', (route) => route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: '测试上传失败' }) }));
+  await page.getByRole('button', { name: '上传并保存' }).click();
+  await page.getByRole('alert').filter({ hasText: '测试上传失败' }).waitFor();
+  assert.equal(await page.locator('.aba-file').count(), 1);
+  await page.unroute('**/api/aba/import');
+  await page.getByRole('button', { name: '上传并保存' }).click();
+  await page.getByText(/无需重复保存/).waitFor();
+  await idle();
+  // More than one page verifies that pagination controls navigate actual server pages.
+  const rows = Array.from({ length: 65 }, (_, i) => [`测试搜索 ${i}`, 100 + i, 1000, 20, 20, 15, i]);
+  await attach([{ ...secondFile, text: csvFixture({ week: 36, start: '2026-08-30', end: '2026-09-05', rows }) }]);
+  await page.getByRole('button', { name: '上传并保存' }).click();
+  await page.getByText(/已更新 65 条/).waitFor();
+  await idle();
+  await page.getByLabel('每页记录数', { exact: true }).selectOption('25');
+  await idle();
+  assert.equal(await bodyRows().count(), 25);
+  await page.getByRole('button', { name: '下一页' }).click();
+  await idle();
+  assert.match(await page.locator('.aba-pagination').innerText(), /2 \/ 3 页/);
+  // Reference-style classification: multiple terms under the same numeric HP model.
+  const groupingRows = [
+    ['cartuchos hp 305', 200, 6000, 80, 40, 20, 20],
+    ['hp deskjet 3050', 50, 900, 25, 50, 15, 10],
+    ['canon TS305', 40, 800, 20, 50, 16, 8],
+    ['tinta hp 2800', 30, 700, 15, 50, 22, 7],
+    ['cartucho hp deskjet 2800e', 10, 300, 5, 50, 24, 2],
+    ['tinta hp 2810', 20, 400, 10, 50, 20, 4],
+    ['hp 4310', 10, 200, 4, 40, 20, 2],
+    ...Array.from({ length: 30 }, (_, i) => [`tinta hp ${i % 3 === 0 ? '2820' : i % 3 === 1 ? '2820e' : '2820.e'} pack ${i}`, 10, 200, 5, 50, 20 + i, 2]),
+  ];
+  await attach([{ ...firstFile, text: csvFixture({ rows: groupingRows }) }, { ...secondFile, text: csvFixture({ week: 36, start: '2026-08-30', end: '2026-09-05', rows: groupingRows }) }]);
+  await page.getByRole('button', { name: '上传并保存' }).click();
+  await page.getByText(/已更新 37 条/).waitFor();
+  await idle();
+  await page.getByLabel('搜索查询 / 墨盒型号').fill('305');
+  await page.waitForResponse((r) => r.url().includes('/api/aba?') && r.url().includes('q=305'));
+  await idle();
+  await page.getByLabel('词类型', { exact: true }).selectOption('cartridge');
+  await idle();
+  assert.equal(await bodyRows().count(), 1);
+  assert.match(await bodyRows().first().innerText(), /cartuchos hp 305/);
+  await page.getByLabel('词类型', { exact: true }).selectOption('printer');
+  await idle();
+  assert.equal(await page.locator('.aba-load-status').innerText().then((s) => s.includes('34 个搜索词')), true);
+  await page.getByLabel('每页记录数', { exact: true }).selectOption('500');
+  await idle();
+  assert.equal(await bodyRows().count(), 34);
+  assert.equal((await page.locator('.aba-query > span').allTextContents()).some((s) => /3050|TS305/.test(s)), false);
+  await page.getByLabel('显示方式', { exact: true }).selectOption('printers');
+  await idle();
+  assert.equal(await page.locator('.aba-group-row').count(), 4);
+  const group2820 = page.locator('.aba-group-row').filter({ hasText: 'HP DESKJET2820' });
+  assert.match(await group2820.innerText(), /300/); // 30 terms × 5 clicks × 2 weeks.
+  assert.match(await group2820.innerText(), /120/); // Purchases.
+  await page.getByRole('button', { name: '专注明细', exact: true }).click();
+  assert.equal(await page.locator('.aba-upload').isVisible(), false);
+  await page.getByRole('button', { name: '展开 HP DESKJET2820', exact: true }).click();
+  const details = page.getByRole('region', { name: 'HP DESKJET2820 下的搜索词', exact: true });
+  await details.locator('.aba-table').waitFor();
+  assert.equal(await details.locator('tbody tr').count(), 25);
+  await details.getByRole('button', { name: '下一页' }).click();
+  await details.locator('.aba-pagination').getByText('2 / 2 页').waitFor();
+  assert.equal(await details.locator('tbody tr').count(), 5);
+  await details.locator('summary').first().click();
+  assert.match(await details.locator('.aba-prices[open]').innerText(), /2026-08-29[\s\S]*2026-09-05/);
+  await page.getByRole('button', { name: '切换主题', exact: true }).click();
+  await page.locator('.aba-table-heading').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: output + 'aba-grouping-desktop.png', fullPage: true });
+  await page.getByRole('button', { name: '收起 HP DESKJET2820', exact: true }).click();
+  await page.route('**/api/aba?**group=**', (route) => route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: '分类明细暂不可用' }) }));
+  await page.getByRole('button', { name: '展开 HP DESKJET2800', exact: true }).click();
+  await page.getByRole('button', { name: '重试分类明细' }).waitFor();
+  await page.unroute('**/api/aba?**group=**');
+  await page.getByRole('button', { name: '重试分类明细' }).click();
+  await page.getByRole('region', { name: 'HP DESKJET2800 下的搜索词', exact: true }).locator('.aba-table').waitFor();
+  assert.equal(await page.locator('.aba-group-details tbody tr').count(), 2);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: output + 'aba-grouping-narrow.png', fullPage: true });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  await page.getByRole('button', { name: '退出专注明细', exact: true }).click();
+  assert.equal(await page.locator('.aba-upload').isVisible(), true);
+  // A fresh owner session has no access to the first account's uploaded reports.
+  const other = await browser.newContext();
+  await other.request.post(backend.url + '/api/auth/login', { data: { username: 'aba-other', password: 'local-test-password' } });
+  assert.equal((await (await other.request.get(backend.url + '/api/aba?marketplace=ES&scope=all&user_id=1')).json()).total, 0);
+  await other.close();
+  assert.deepEqual(errors, []);
+  console.log('ABA browser: import, search/model candidates, multi-week, sorting, states, retry, persistence, pagination, narrow/dark and account privacy passed.');
+} finally {
+  await browser?.close();
+  await vite?.close();
+  await backend.close();
+}

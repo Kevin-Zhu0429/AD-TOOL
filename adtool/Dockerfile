@@ -14,6 +14,7 @@ WORKDIR /app/web
 COPY web/package.json web/package-lock.json ./
 RUN npm config set registry "$NPM_REGISTRY" && npm ci
 COPY web/ ./
+COPY shared/ /app/shared/
 RUN npm run build
 
 # ---------- 2. 装后端依赖 ----------
@@ -54,6 +55,7 @@ WORKDIR /app/server
 COPY --from=deps /app/server/node_modules ./node_modules
 COPY server/package.json ./
 COPY server/src ./src
+COPY shared/ /app/shared/
 # index.js 里找的是 ../../web/dist,对应容器内 /app/web/dist
 COPY --from=web /app/web/dist /app/web/dist
 

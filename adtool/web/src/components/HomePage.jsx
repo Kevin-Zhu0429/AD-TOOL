@@ -74,6 +74,12 @@ export default function HomePage({ user, market, onNav, theme, onOpenChangelog }
 
       <div className="home-grid">
         <EntryCard
+          tone="blue" icon="chart" title="ABA 报告"
+          desc="上传品牌搜索查询周报，按搜索词、墨盒系列和对应机型筛选，查看每周查询量、曝光、点击和购买表现。"
+          meta="品牌视图 · 数据仅自己可见 · 服务器保存"
+          onClick={() => onNav('aba')}
+        />
+        <EntryCard
           tone="blue" icon="layers" title="自动广告"
           desc="按任务批量配置自动广告,一次生成可直接上传的总表。词库里的否定词会自动带进每一条活动;开系列广告时还会按 D 类反推,把其它墨盒和打印机型号一起否掉。"
           meta="生成 xlsx 批量表"

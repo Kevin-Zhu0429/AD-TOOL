@@ -11,6 +11,7 @@ import { authRouter } from './auth.js';
 import { negRouter } from './keywords.js';
 import { skuRouter } from './skus.js';
 import { productRouter } from './products.js';
+import { abaRouter } from './aba.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -38,6 +39,7 @@ app.use('/api/auth', authRouter);
 app.use('/api/neg', negRouter);
 app.use('/api/sku', skuRouter);
 app.use('/api/products', productRouter);
+app.use('/api/aba', abaRouter);
 
 app.get('/api/health', (req, res) => {
   res.json({ ok: true, time: new Date().toISOString() });

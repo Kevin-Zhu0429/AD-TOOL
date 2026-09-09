@@ -4,6 +4,32 @@
 PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
 
+-- ABA reports are private to the uploading account, including owner accounts.
+CREATE TABLE IF NOT EXISTS aba_reports (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  marketplace TEXT NOT NULL,
+  brand TEXT NOT NULL COLLATE NOCASE,
+  week_start TEXT NOT NULL,
+  week_end TEXT NOT NULL,
+  week_number INTEGER NOT NULL CHECK (week_number BETWEEN 1 AND 53),
+  source_file TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(user_id, marketplace, brand, week_end)
+);
+CREATE TABLE IF NOT EXISTS aba_queries (
+  report_id INTEGER NOT NULL REFERENCES aba_reports(id) ON DELETE CASCADE,
+  query TEXT NOT NULL,
+  query_volume INTEGER NOT NULL CHECK(query_volume >= 0),
+  impressions INTEGER NOT NULL CHECK(impressions >= 0),
+  clicks INTEGER NOT NULL CHECK(clicks >= 0),
+  click_rate REAL CHECK(click_rate >= 0),
+  click_price REAL CHECK(click_price >= 0),
+  purchases INTEGER NOT NULL CHECK(purchases >= 0),
+  PRIMARY KEY(report_id, query)
+);
+
 -- ---------- 用户 ----------
 -- role: owner    = Kevin,所有国家 + 账号管理
 --       admin    = 国家管理员,负责站点的词库可编辑

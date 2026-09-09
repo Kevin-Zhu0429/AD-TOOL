@@ -15,6 +15,7 @@ import AdminPage from './components/AdminPage.jsx';
 import ProfilePage from './components/ProfilePage.jsx';
 import ProductPage from './components/ProductPage.jsx';
 import ToolsPage from './components/ToolsPage.jsx';
+import AbaPage from './components/AbaPage.jsx';
 
 export default function App() {
   const [theme, toggleTheme] = useTheme();
@@ -98,6 +99,8 @@ export default function App() {
       null
     ) : page === 'skus' ? (
       <SkuPage key={market} market={market} />
+    ) : page === 'aba' ? (
+      <AbaPage key={`${user.id}:${market}`} market={market} userId={user.id} />
     ) : page === 'library' ? (
       <LibraryPage key={market} market={market} />
     ) : page === 'products' && user.productIntel ? (

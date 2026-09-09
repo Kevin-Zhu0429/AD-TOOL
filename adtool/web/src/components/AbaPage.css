@@ -1,0 +1,132 @@
+.aba-page { max-width: 1800px; margin: 0 auto; padding: 24px 28px 60px; }
+.aba-page h1 { font-size: 23px; margin: 0 0 5px; display: flex; align-items: center; gap: 10px; }
+.aba-page h2 { font-size: 15px; margin: 0 0 4px; }
+.aba-page p { margin: 4px 0; }
+.aba-page .hint { color: var(--text-dim); }
+.aba-page button, .aba-page select, .aba-page input[type="checkbox"], .aba-week { cursor: pointer; }
+.aba-page button:disabled { cursor: not-allowed; }
+.aba-page :is(button, input, select, [tabindex]):focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.aba-page button:active:not(:disabled) { filter: brightness(.94); }
+.aba-tabs { display: flex; gap: 8px; margin: 20px 0 14px; border-bottom: 1px solid var(--border); padding-bottom: 12px; }
+.aba-soon { font-size: 10px; opacity: .8; }
+.aba-upload { background: var(--panel); border: 1px dashed var(--border); border-radius: var(--radius); padding: 15px 18px 8px; }
+.aba-upload.dragging { border-color: var(--accent); background: var(--accent-soft); }
+.aba-upload-top, .aba-file, .aba-toolbar, .aba-week-title, .aba-trend-head, .aba-pagination { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.aba-upload-top > div, .aba-file > div { min-width: 0; }
+.aba-upload-top > button { flex-shrink: 0; min-width: 112px; }
+.aba-file-list { border-top: 1px solid var(--border-soft); margin-top: 12px; padding-top: 5px; }
+.aba-file { padding: 8px 0; overflow-wrap: anywhere; }
+.aba-file strong { font-size: 12px; font-weight: 500; }
+.aba-file .btn { flex-shrink: 0; }
+.aba-save { min-width: 115px; margin-top: 8px; }
+.aba-feedback { min-height: 24px; padding-top: 5px; font-size: 12px; color: var(--green-text); overflow-wrap: anywhere; }
+.aba-error-text { color: var(--red-text); }
+.aba-filters { padding: 18px 0 0; }
+.aba-toolbar { justify-content: flex-start; align-items: flex-end; flex-wrap: wrap; }
+.aba-toolbar label, .aba-trend-head label { font-size: 12px; color: var(--text-dim); }
+.aba-brand { width: 190px; }
+.aba-brand select, .aba-search-control { margin-top: 6px; }
+.aba-search { flex: 1; max-width: 520px; min-width: 220px; }
+.aba-search-control { display: flex; gap: 5px; }
+.aba-search-control input { min-width: 0; }
+.aba-model-toggle { display: flex; align-items: center; gap: 6px; min-height: 34px; }
+.aba-page input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px; flex-shrink: 0; }
+.aba-week-title { margin: 16px 0 7px; flex-wrap: wrap; }
+.aba-week-title > strong { display: flex; align-items: center; gap: 12px; font-size: 12px; }
+.aba-week-title > div { display: flex; gap: 3px; flex-wrap: wrap; }
+.aba-weeks { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 8px; max-height: 190px; overflow: auto; padding: 3px; }
+.aba-week { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); }
+.aba-week:hover { border-color: var(--accent); }
+.aba-week.selected { background: var(--accent-soft); border-color: var(--accent-line); }
+.aba-week strong { display: block; font-size: 12px; }
+.aba-week small { display: block; font-size: 11px; margin-top: 2px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.aba-week-count { margin-left: auto; font-size: 11px; color: var(--text-dim); white-space: nowrap; }
+.aba-model-note { padding: 9px 3px 0; }
+.aba-load-status { min-height: 42px; display: flex; align-items: center; font-size: 12px; color: var(--text-dim); }
+.aba-results { min-height: 600px; }
+.aba-trend-panel, .aba-table-panel { border: 1px solid var(--border); background: var(--panel); border-radius: var(--radius); overflow: hidden; }
+.aba-trend-panel { padding: 16px 18px 0; margin-bottom: 18px; }
+.aba-trend-head label { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+.aba-trend-head select { width: auto; }
+.aba-chart { padding: 16px 0; max-height: 310px; min-height: 94px; overflow: auto; }
+.aba-chart-row { display: grid; grid-template-columns: 142px minmax(50px, 1fr) 100px; align-items: center; gap: 16px; padding: 7px 5px; }
+.aba-chart-label { font-size: 12px; }
+.aba-chart-label small { display: block; color: var(--text-dim); font-size: 10px; }
+.aba-chart-row > strong { text-align: right; font-size: 13px; }
+.aba-track { background: var(--panel-2); height: 16px; border-radius: 2px; overflow: hidden; }
+.aba-bar { background: var(--accent); height: 100%; border-radius: 2px; }
+.aba-totals { display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid var(--border-soft); }
+.aba-totals > div { padding: 12px 10px; border-right: 1px solid var(--border-soft); display: flex; flex-direction: column; gap: 5px; }
+.aba-totals > div:first-child { padding-left: 0; }
+.aba-totals > div:last-child { border-right: 0; }
+.aba-totals span { color: var(--text-dim); font-size: 11px; }
+.aba-totals strong { font-size: 18px; font-weight: 600; }
+.aba-table-heading { padding: 15px 18px 12px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.aba-table-heading > .btn { flex-shrink: 0; }
+.aba-table-scroll { overflow: auto; height: clamp(650px, 74vh, 1050px); scrollbar-gutter: stable; }
+.aba-table { width: 100%; min-width: 1300px; border-collapse: separate; border-spacing: 0; font-size: 12px; }
+.aba-table th { position: sticky; top: 0; z-index: 1; background: var(--panel-2); text-align: right; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.aba-table th:first-child { text-align: left; }
+.aba-table th button { width: 100%; padding: 12px 10px; border: 0; background: transparent; color: var(--text-dim); text-align: inherit; font-size: 11px; }
+.aba-table th button:hover { background: var(--accent-soft); color: var(--accent-text); }
+.aba-table th[aria-sort="ascending"] button, .aba-table th[aria-sort="descending"] button { color: var(--accent-text); }
+.aba-table td { padding: 8px 10px; border-bottom: 1px solid var(--border-soft); vertical-align: top; }
+.aba-table tbody tr:hover { background: var(--accent-soft); }
+.aba-query { min-width: 275px; max-width: 380px; overflow-wrap: anywhere; }
+.aba-query > span { font-weight: 500; line-height: 1.5; }
+.aba-value { text-align: right; font-variant-numeric: tabular-nums; font-family: var(--mono); white-space: nowrap; }
+.aba-date { font-size: 11px; color: var(--text-dim); }
+.aba-linked { color: var(--accent-text); background: var(--accent-soft); padding: 5px 7px; margin-top: 6px; border-radius: 3px; }
+.aba-linked b, .aba-linked small { display: block; font-weight: 400; font-size: 10px; line-height: 1.6; }
+.aba-cell-track { display: block; height: 3px; background: var(--panel-2); margin-top: 6px; }
+.aba-cell-track > span { display: block; height: 100%; background: var(--accent-line); }
+.aba-pagination { justify-content: flex-end; padding: 12px 18px; flex-wrap: wrap; font-size: 12px; }
+.aba-pagination > span:first-child { margin-right: auto; }
+.aba-pagination label { display: flex; align-items: center; gap: 7px; }
+.aba-pagination select { width: auto; }
+.aba-table-note { padding: 0 18px 12px; }
+.aba-empty, .aba-table-empty, .aba-result-placeholder { padding: 65px 20px; text-align: center; color: var(--text-dim); }
+.aba-empty { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); }
+.aba-empty h2 { margin-top: 15px; }
+.aba-empty .btn, .aba-table-empty .btn { margin-top: 15px; }
+.aba-view-controls { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 12px 20px; margin-top: 14px; }
+.aba-view-controls > label { font-size: 12px; color: var(--text-dim); }
+.aba-view-controls select { display: block; margin-top: 5px; width: auto; min-width: 180px; }
+.aba-periods { display: flex; flex-direction: column; gap: 3px; font-size: 11px; max-height: 100px; overflow: auto; }
+.aba-merged-label { display: block; margin-top: 3px; color: var(--text-dim); font-size: 10px; }
+.aba-prices { font-size: 11px; }
+.aba-prices summary { cursor: pointer; color: var(--accent-text); }
+.aba-prices summary:hover { text-decoration: underline; }
+.aba-prices summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.aba-prices span { display: block; padding-top: 6px; }
+.aba-group-row { background: var(--panel-2); }
+.aba-group-toggle { background: none; border: 0; color: var(--accent-text); font-weight: 600; text-align: left; padding: 2px 0; }
+.aba-group-toggle:hover { text-decoration: underline; }
+.aba-group-expanded > td { padding: 0 !important; }
+.aba-group-details { background: var(--panel); padding: 12px; border-left: 3px solid var(--accent); }
+.aba-group-context { font-size: 12px; padding: 3px 6px 12px; }
+.aba-nested-scroll { height: auto; min-height: 0; }
+.aba-nested-scroll .aba-table { min-width: 1250px; }
+.aba-nested-scroll .aba-table th { position: static; }
+.aba-child-pagination { background: var(--panel-2); }
+.aba-focused .aba-upload, .aba-focused .aba-trend-panel, .aba-focused .aba-week-title, .aba-focused .aba-weeks, .aba-focused .aba-model-note { display: none; }
+.aba-focused .aba-table-scroll:not(.aba-nested-scroll) { height: max(500px, calc(100dvh - 350px)); }
+@media (max-width: 700px) {
+  .aba-page { padding: 18px 12px 50px; }
+  .aba-upload-top, .aba-trend-head { align-items: flex-start; flex-direction: column; gap: 10px; }
+  .aba-brand { width: 100%; }
+  .aba-search { max-width: none; min-width: 0; width: 100%; flex-basis: 100%; }
+  .aba-weeks { grid-template-columns: 1fr; }
+  .aba-week { padding: 9px; }
+  .aba-chart-row { grid-template-columns: 105px minmax(30px, 1fr) 73px; gap: 9px; }
+  .aba-chart-row > strong { font-size: 12px; }
+  .aba-totals { grid-template-columns: repeat(2, 1fr); }
+  .aba-totals > div { padding: 10px 0; }
+  .aba-totals > div:nth-child(even) { padding-left: 15px; border-right: 0; }
+  .aba-trend-panel { padding: 13px 12px 0; }
+  .aba-pagination { gap: 8px; padding: 12px; }
+  .aba-view-controls { gap: 12px; }
+  .aba-view-controls > label:not(.aba-model-toggle) { flex: 1; }
+  .aba-view-controls select { width: 100%; min-width: 140px; }
+  .aba-table-heading { align-items: flex-start; flex-direction: column; }
+}

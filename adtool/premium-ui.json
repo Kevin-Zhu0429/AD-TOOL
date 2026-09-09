@@ -1,0 +1,16 @@
+{
+  "profile": "product-admin",
+  "sourceRoots": ["web/src"],
+  "locale": "zh-CN",
+  "canonicalMap": "UX-CONTRACT.md",
+  "ownership": { "Select/Listbox": "native", "Date": "native" },
+  "requiredCommands": ["unit", "api", "build", "lint", "abaBrowser"],
+  "commands": {
+    "unit": "npm --prefix web test",
+    "api": "node --test server/tests/aba.test.js",
+    "build": "npm --prefix web run build",
+    "lint": "npm --prefix web run lint",
+    "abaBrowser": "node web/tests/aba.browser.mjs"
+  },
+  "evidence": { "crudFullFlow": "web/tests/aba.browser.mjs", "failurePaths": "server/tests/aba.test.js" }
+}

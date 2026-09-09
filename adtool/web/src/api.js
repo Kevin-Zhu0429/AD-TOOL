@@ -4,6 +4,7 @@ async function request(path, options = {}) {
     headers: options.body ? { 'Content-Type': 'application/json' } : undefined,
     body: options.body ? JSON.stringify(options.body) : undefined,
     credentials: 'include',
+    signal: options.signal,
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || `请求失败 (${res.status})`);
@@ -11,6 +12,8 @@ async function request(path, options = {}) {
 }
 
 export const api = {
+  aba: (params, signal) => request(`/aba?${new URLSearchParams(Object.entries(params).filter(([, value]) => value !== undefined))}`, { signal }),
+  importAba: (marketplace, files) => request('/aba/import', { method: 'POST', body: { marketplace, files } }),
   me: () => request('/auth/me'),
   login: (username, password) =>
     request('/auth/login', { method: 'POST', body: { username, password } }),

@@ -128,6 +128,9 @@ input, select, textarea { font-family: inherit; }
 }
 
 /* ---------- 滚动条 ---------- */
+:root { scrollbar-color: var(--scroll-thumb) transparent; scrollbar-width: auto; }
+* { scrollbar-color: var(--scroll-thumb) transparent; scrollbar-width: auto; }
+@media (forced-colors: active) { :root, * { scrollbar-color: auto; } }
 ::-webkit-scrollbar { width: 11px; height: 11px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
