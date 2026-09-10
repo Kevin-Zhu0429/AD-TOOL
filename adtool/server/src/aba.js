@@ -3,7 +3,8 @@ import { createHash } from 'node:crypto';
 import { db, audit } from './db.js';
 import { requireLogin, canRead } from './auth.js';
 import { MARKETPLACES, regionOf } from './libs.js';
-import { ABA_COLUMNS, ABA_PAGE_SIZES, abaMatcher, aggregateAbaRows, parseAbaReport } from '../../shared/aba.js';
+import { ABA_COLUMNS, BRAND_COLUMNS, BRAND_SOURCE_COLUMNS, brandRates, ABA_PAGE_SIZES, abaMatcher, aggregateAbaRows, parseAbaReport } from '../../shared/aba.js';
+import { abaAsinRouter } from './abaAsin.js';
 
 export const abaRouter = express.Router();
 abaRouter.use(requireLogin);
@@ -14,6 +15,8 @@ abaRouter.use((req, res, next) => {
   req.abaMarket = market;
   next();
 });
+
+abaRouter.use('/asin', abaAsinRouter);
 
 abaRouter.post('/import', (req, res) => {
   const files = req.body?.files;
@@ -28,7 +31,7 @@ abaRouter.post('/import', (req, res) => {
         const key = `${report.brand.toLowerCase()}|${report.week_end}`;
         if (seen.has(key)) throw new Error('本次选择中包含同品牌同一周的两份报告，请只保留一份');
         seen.add(key);
-        return { ...report, content_hash: createHash('sha256').update(file.text).digest('hex') };
+        return { ...report, content_hash: createHash('sha256').update('brand-v2\n' + file.text).digest('hex') };
       } catch (err) { throw new Error(`${String(file?.name ?? '未命名文件').slice(0, 255)}：${err.message}`); }
     });
   } catch (err) { return res.status(400).json({ error: err.message }); }
@@ -50,8 +53,8 @@ abaRouter.post('/import', (req, res) => {
       const { id } = db.prepare('SELECT id FROM aba_reports WHERE user_id=? AND marketplace=? AND brand=? AND week_end=?')
         .get(userId, req.abaMarket, report.brand, report.week_end);
       db.prepare('DELETE FROM aba_queries WHERE report_id=?').run(id);
-      const insert = db.prepare(`INSERT INTO aba_queries (report_id, query, query_volume, impressions, clicks, click_rate, click_price, purchases)
-        VALUES (@report_id, @query, @query_volume, @impressions, @clicks, @click_rate, @click_price, @purchases)`);
+      const insert = db.prepare(`INSERT INTO aba_queries (report_id, query, query_volume, impressions, clicks, click_rate, click_price, purchases, brand_impressions, brand_clicks, brand_purchases)
+        VALUES (@report_id, @query, @query_volume, @impressions, @clicks, @click_rate, @click_price, @purchases, @brand_impressions, @brand_clicks, @brand_purchases)`);
       for (const row of report.rows) insert.run({ ...row, report_id: id });
       results.push({ source_file: report.source_file, brand: report.brand, week_end: report.week_end, status: previous ? 'updated' : 'added', count: report.rows.length });
     }
@@ -94,12 +97,13 @@ abaRouter.get('/', (req, res) => {
       if (req.query.group && matching.group.key !== req.query.group) continue;
       const report = selectedById.get(row.report_id);
       rows.push({ ...row, week_start: report.week_start, week_end: report.week_end, week_number: report.week_number,
+        recognition: matching.group.kind === 'other' ? '墨盒 KW 词' : matching.group.label,
         linked: matching.linked, candidates: matching.candidates, group: matching.group });
     }
   }
-  const items = view === 'printers' ? aggregateAbaRows(rows, 'printer') : merged ? aggregateAbaRows(rows) : rows;
+  const items = (view === 'printers' ? aggregateAbaRows(rows, 'printer') : merged ? aggregateAbaRows(rows) : rows).map(brandRates);
   const priceSortable = items.every((row) => (row.record_count ?? 1) === 1);
-  const allowedSort = [...ABA_COLUMNS.map((c) => c.key), ...(view === 'printers' ? ['query_count'] : [])];
+  const allowedSort = [...ABA_COLUMNS.map((c) => c.key), ...BRAND_COLUMNS.map((c) => c.key), ...(view === 'printers' ? ['query_count'] : [])];
   const sort = allowedSort.includes(req.query.sort) && (req.query.sort !== 'click_price' || priceSortable) ? req.query.sort : 'query_volume';
   const direction = req.query.direction === 'asc' ? 'asc' : 'desc';
   items.sort((a, b) => {
@@ -111,16 +115,20 @@ abaRouter.get('/', (req, res) => {
   const pageSize = ABA_PAGE_SIZES.includes(Number(req.query.pageSize)) ? Number(req.query.pageSize) : 100;
   const pageCount = Math.max(1, Math.ceil(items.length / pageSize));
   const page = Math.min(pageCount, Math.max(1, Math.floor(Number(req.query.page) || 1)));
-  const trend = selected.toReversed().map((r) => ({ week_start: r.week_start, week_end: r.week_end, week_number: r.week_number, query_volume: 0, impressions: 0, clicks: 0, purchases: 0, count: 0 }));
+  const trend = selected.toReversed().map((r) => ({ week_start: r.week_start, week_end: r.week_end, week_number: r.week_number, query_volume: 0, impressions: 0, clicks: 0, purchases: 0, brand_impressions: 0, brand_clicks: 0, brand_purchases: 0, count: 0 }));
   const byWeek = new Map(trend.map((r) => [r.week_end, r]));
   for (const row of rows) {
     const week = byWeek.get(row.week_end);
     for (const key of ['query_volume', 'impressions', 'clicks', 'purchases']) week[key] += row[key];
+    BRAND_SOURCE_COLUMNS.forEach(({ key }) => { week[key] = week[key] == null || row[key] == null ? null : week[key] + row[key]; });
     week.count++;
   }
-  for (const week of trend) week.click_rate = week.query_volume ? week.clicks / week.query_volume * 100 : null;
+  for (const week of trend) {
+    week.click_rate = week.query_volume ? week.clicks / week.query_volume * 100 : null;
+    Object.assign(week, brandRates(week));
+  }
   res.json({ reports, brands, brand, selectedWeeks: selected.map((r) => r.week_end), items: items.slice((page - 1) * pageSize, page * pageSize),
     total: items.length, recordCount: rows.length, queryCount: new Set(rows.map((r) => r.query)).size,
     linkedCount: items.filter((r) => r.linked).length, page, pageSize, pageCount, sort, direction, trend,
-    view, wordType, merged, priceSortable, hasModelLibrary: !!dRows.length });
+    view, wordType, merged, priceSortable, missingBrandData: rows.some((r) => BRAND_SOURCE_COLUMNS.some(({ key }) => r[key] == null)), hasModelLibrary: !!dRows.length });
 });

@@ -13,6 +13,7 @@ const ALIAS = {
   sku: /^sku$|卖家sku|商品sku|seller ?sku/i,
   stock: /在库|可售|库存|on ?hand|stock/i,
   transit: /在途|补货|transit|inbound/i,
+  asin: /^asin$|子asin|商品asin/i,
 };
 
 /** 把 Excel 第一行表头映射成列 key,映射不上就按列序来 */
@@ -129,19 +130,23 @@ export default function SkuPage({ market }) {
   }
 
   function saveEdit() {
+    if (busy) return;
     const body = {};
     for (const c of cols) body[c.key] = String(edit[c.key] ?? '');
     const id = edit.id;
-    setEdit(null);
-    act(() => api.updateSku(id, body), '已保存');
+    act(async () => {
+      const result = await api.updateSku(id, body);
+      setEdit(null);
+      return result;
+    }, '已保存');
   }
 
   function downloadTemplate() {
     const rows = [
       cols.map((c) => c.label),
-      ['ES', 'HP', '301', 'BKC', 'CY-ES-HP301XL-BKCL', 120, 300],
-      ['ES', 'HP', '302', '2BK', 'CY-ES-HP302XL-2BK', 0, 500],
-      ['DE', 'Canon', 'PG-545', 'BK', 'CY-DE-CA545XL-BK', 80, ''],
+      ['ES', 'HP', '301', 'BKC', 'CY-ES-HP301XL-BKCL', 120, 300, ''],
+      ['ES', 'HP', '302', '2BK', 'CY-ES-HP302XL-2BK', 0, 500, ''],
+      ['DE', 'Canon', 'PG-545', 'BK', 'CY-DE-CA545XL-BK', 80, '', ''],
     ];
     const ws = XLSX.utils.aoa_to_sheet(rows);
     ws['!cols'] = cols.map((c) => ({ wch: c.width ?? 14 }));
@@ -184,6 +189,7 @@ export default function SkuPage({ market }) {
         const row = {};
         cols.forEach((c, i) => {
           const at = idx ? idx[c.key] : i;
+          if (c.key === 'asin' && (at === undefined || at >= r.length)) return;
           row[c.key] = at === undefined ? '' : r[at] ?? '';
         });
         if (cols.some((c) => String(row[c.key] ?? '').trim())) rows.push(row);
@@ -214,6 +220,7 @@ export default function SkuPage({ market }) {
           <p className="hint">
             每个账号一份自己的库,别人看不到,大家只传自己负责的品牌。
             开广告时在「投放 SKU」那里点「从 SKU 库选」,按站点和型号挑好直接填进去。
+            填写 ASIN 后，ABA ASIN 视图会关联该 SKU 的型号、品牌和套组。
           </p>
         </div>
         <div className="spacer" />
@@ -325,7 +332,7 @@ export default function SkuPage({ market }) {
             )}
           </div>
 
-          {msg && <div className={`note ${msg.kind}`} style={{ marginBottom: 11 }}>{msg.text}</div>}
+            {msg && <div id="sku-feedback" className={`note ${msg.kind}`} role={msg.kind === 'err' ? 'alert' : 'status'} style={{ marginBottom: 11 }}>{msg.text}</div>}
 
           <div className="scroll">
             <table className="tbl">
@@ -372,6 +379,9 @@ export default function SkuPage({ market }) {
                           {editing ? (
                             <input
                               className="inp cellinp" type={c.num ? 'number' : 'text'}
+                              aria-label={`${c.label} ${it.sku}`}
+                              aria-invalid={c.key === 'asin' && !!edit.asin && !/^[A-Z0-9]{10}$/i.test(edit.asin.trim())}
+                              aria-describedby={msg?.kind === 'err' ? 'sku-feedback' : undefined}
                               value={edit[c.key] ?? ''}
                               onChange={(e) => setEdit({ ...edit, [c.key]: e.target.value })}
                             />

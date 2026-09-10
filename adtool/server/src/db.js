@@ -31,6 +31,14 @@ migrate();
  * 6) 产品库按“站点 + 数据月份 + ASIN”隔离；无法追溯月份的旧数据放进“历史数据”
  */
 function migrate() {
+  const abaColumns = db.prepare('PRAGMA table_info(aba_queries)').all().map((c) => c.name);
+  for (const column of ['brand_impressions', 'brand_clicks', 'brand_purchases']) {
+    if (!abaColumns.includes(column)) db.exec(`ALTER TABLE aba_queries ADD COLUMN ${column} INTEGER CHECK(${column} >= 0)`);
+  }
+  if (!db.prepare('PRAGMA table_info(sku_items)').all().some((c) => c.name === 'asin')) {
+    db.exec('ALTER TABLE sku_items ADD COLUMN asin TEXT');
+  }
+  db.exec('CREATE INDEX IF NOT EXISTS idx_sku_asin ON sku_items (user_id, country, asin)');
   const cols = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
   if (!cols.includes('goods_admin')) {
     db.exec('ALTER TABLE users ADD COLUMN goods_admin INTEGER NOT NULL DEFAULT 0');

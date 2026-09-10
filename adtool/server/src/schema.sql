@@ -27,6 +27,35 @@ CREATE TABLE IF NOT EXISTS aba_queries (
   click_rate REAL CHECK(click_rate >= 0),
   click_price REAL CHECK(click_price >= 0),
   purchases INTEGER NOT NULL CHECK(purchases >= 0),
+  brand_impressions INTEGER CHECK(brand_impressions >= 0),
+  brand_clicks INTEGER CHECK(brand_clicks >= 0),
+  brand_purchases INTEGER CHECK(brand_purchases >= 0),
+  PRIMARY KEY(report_id, query)
+);
+
+CREATE TABLE IF NOT EXISTS aba_asin_reports (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  marketplace TEXT NOT NULL,
+  asin TEXT NOT NULL,
+  week_start TEXT NOT NULL,
+  week_end TEXT NOT NULL,
+  week_number INTEGER NOT NULL CHECK(week_number BETWEEN 1 AND 53),
+  source_file TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(user_id, marketplace, asin, week_end)
+);
+CREATE TABLE IF NOT EXISTS aba_asin_queries (
+  report_id INTEGER NOT NULL REFERENCES aba_asin_reports(id) ON DELETE CASCADE,
+  query TEXT NOT NULL,
+  query_volume INTEGER NOT NULL CHECK(query_volume >= 0),
+  market_impressions INTEGER NOT NULL CHECK(market_impressions >= 0),
+  market_clicks INTEGER NOT NULL CHECK(market_clicks >= 0),
+  market_purchases INTEGER NOT NULL CHECK(market_purchases >= 0),
+  asin_impressions INTEGER NOT NULL CHECK(asin_impressions >= 0),
+  asin_clicks INTEGER NOT NULL CHECK(asin_clicks >= 0),
+  asin_purchases INTEGER NOT NULL CHECK(asin_purchases >= 0),
   PRIMARY KEY(report_id, query)
 );
 
@@ -146,6 +175,7 @@ CREATE TABLE IF NOT EXISTS sku_items (
   model      TEXT,
   set_group  TEXT,
   sku        TEXT    NOT NULL,
+  asin       TEXT,
   stock      INTEGER,
   transit    INTEGER,
   dedupe     TEXT    NOT NULL,

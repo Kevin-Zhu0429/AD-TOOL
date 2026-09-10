@@ -12,6 +12,8 @@ async function request(path, options = {}) {
 }
 
 export const api = {
+  abaAsin: (params, signal) => request(`/aba/asin?${new URLSearchParams(Object.entries(params).filter(([, value]) => value !== undefined))}`, { signal }),
+  importAbaAsin: (marketplace, files) => request('/aba/asin/import', { method: 'POST', body: { marketplace, files } }),
   aba: (params, signal) => request(`/aba?${new URLSearchParams(Object.entries(params).filter(([, value]) => value !== undefined))}`, { signal }),
   importAba: (marketplace, files) => request('/aba/import', { method: 'POST', body: { marketplace, files } }),
   me: () => request('/auth/me'),

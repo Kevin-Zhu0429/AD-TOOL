@@ -4,7 +4,7 @@ import Database from 'better-sqlite3';
 import path from 'node:path';
 import fs from 'node:fs';
 import { startAbaTestServer } from './abaHarness.js';
-import { csvFixture, firstFile, secondFile } from './abaFixture.js';
+import { csvFixture, brandFixture, firstFile, secondFile } from './abaFixture.js';
 
 test('ABA authenticated import, privacy, persistence, sorting, paging and transaction recovery', async (t) => {
   const server = await startAbaTestServer();
@@ -106,6 +106,25 @@ test('ABA authenticated import, privacy, persistence, sorting, paging and transa
     assert.equal(reopened.prepare('SELECT count(*) AS n FROM aba_reports WHERE user_id=1').get().n, 2);
     assert.equal(reopened.prepare('SELECT count(*) AS n FROM aba_queries q JOIN aba_reports r ON r.id=q.report_id WHERE r.user_id=1').get().n, 71);
     reopened.close();
+  });
+  await t.test('brand fields remain unknown for old reports, reimport fills them and recalculates weighted rates', async () => {
+    assert.equal((await call(route + '&weeks=2026-08-29', a)).data.missingBrandData, true);
+    const files = [{ ...firstFile, text: brandFixture({}, [100, 10, 2]) }, { ...secondFile, text: brandFixture({ week: 36, start: '2026-08-30', end: '2026-09-05' }, [120, 5, 3]) }];
+    assert.equal((await upload(a, files)).status, 200);
+    const result = (await call(route + '&weeks=2026-08-29,2026-09-05&q=cartuchos&sort=brand_share', a)).data;
+    assert.equal(result.missingBrandData, false);
+    const row = result.items[0];
+    assert.equal(row.brand_impressions, 220);
+    assert.equal(row.brand_clicks, 15);
+    assert.equal(row.brand_purchases, 5);
+    assert.equal(row.brand_cvr, 5 / 15 * 100);
+    assert.equal(row.brand_share, 5 / 30 * 100);
+    assert.equal(row.market_cvr, 30 / 90 * 100);
+    assert.equal((await upload(a, files)).data.reports[0].status, 'unchanged');
+    assert.equal((await call(route, b)).data.items[0].brand_purchases, null);
+    const group = (await call(route + '&weeks=2026-08-29,2026-09-05&q=2700&view=printers', a)).data.items[0];
+    assert.equal(group.brand_purchases, 5);
+    assert.equal(group.brand_cvr, 5 / 15 * 100);
   });
   if (process.env.ABA_FIXTURE_DIR) await t.test('both supplied real reports reconcile to 2,000 rows and known source totals', async () => {
     const files = ['08_29', '09_05'].map((end) => { const name = `ES_Week_2026_${end}.csv`; return { name, text: fs.readFileSync(path.join(process.env.ABA_FIXTURE_DIR, name), 'utf8') }; });

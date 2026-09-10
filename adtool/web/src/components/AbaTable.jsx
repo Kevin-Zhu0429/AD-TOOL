@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState } from 'react';
 import { api } from '../api.js';
-import { ABA_COLUMNS, ABA_PAGE_SIZES } from '../../../shared/aba.js';
+import { BRAND_COLUMNS, ABA_PAGE_SIZES } from '../../../shared/aba.js';
 
 const number = new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 0 });
 const decimal = new Intl.NumberFormat('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -55,22 +55,22 @@ function GroupQueries({ group, params }) {
 export default function AbaTable({ data, params, onSort, empty, nested = false }) {
   const [expanded, setExpanded] = useState(null);
   const grouped = data.view === 'printers';
-  const columns = grouped ? [{ key: 'query', label: '机型分类' }, { key: 'query_count', label: '搜索词数量' }, ...ABA_COLUMNS.slice(1).filter((c) => c.key !== 'click_price')] : ABA_COLUMNS;
-  const maxVolume = Math.max(1, ...data.items.map((r) => r.query_volume));
+  const columns = grouped ? [{ key: 'recognition', label: '机型分类' }, { key: 'query_count', label: '搜索词数量' }, ...BRAND_COLUMNS.slice(2)] : BRAND_COLUMNS;
   return <div className={`aba-table-scroll${nested ? ' aba-nested-scroll' : ''}`} tabIndex={0} role="region" aria-label={grouped ? '机型分类汇总表，可横向滚动' : '搜索查询明细表，可横向滚动'}>
-    <table className={`aba-table${grouped ? ' aba-group-table' : ''}`}><thead><tr>{columns.map((column) => {
-      const disabled = column.key === 'click_price' && !data.priceSortable;
-      return <th key={column.key} scope="col" aria-sort={data.sort === column.key ? data.direction === 'desc' ? 'descending' : 'ascending' : 'none'}>
-        <button disabled={disabled} onClick={() => onSort(column.key)}>{column.label}<span aria-hidden="true">{disabled ? '' : data.sort === column.key ? data.direction === 'desc' ? ' ↓' : ' ↑' : ' ↕'}</span></button>
-      </th>;
-    })}</tr></thead><tbody>
+    <table className={`aba-table aba-brand-table${grouped ? ' aba-group-table' : ''}`}><thead><tr>{columns.map((column) => <th key={column.key} scope="col" aria-sort={data.sort === column.key ? data.direction === 'desc' ? 'descending' : 'ascending' : 'none'}>
+      <button onClick={() => onSort(column.key)}>{column.label}<span aria-hidden="true">{data.sort === column.key ? data.direction === 'desc' ? ' ↓' : ' ↑' : ' ↕'}</span></button>
+    </th>)}</tr></thead><tbody>
       {data.items.map((row) => <Fragment key={row.key ?? `${row.report_id}:${row.query}`}>
-        <tr className={grouped ? 'aba-group-row' : undefined}>{columns.map((column) => <td key={column.key} className={column.key === 'query' ? 'aba-query' : 'aba-value'}>
-          {column.key === 'query' ? <>
-            {grouped ? <button className="aba-group-toggle" aria-expanded={expanded === row.key} aria-label={`${expanded === row.key ? '收起' : '展开'} ${row.query}`} onClick={() => setExpanded((old) => old === row.key ? null : row.key)}><span aria-hidden="true">{expanded === row.key ? '▾' : '▸'}</span> {row.query}</button> : <span>{row.query}</span>}
-            {row.record_count > 1 && !grouped && <small className="aba-merged-label">合并 {row.record_count} 周</small>}
-            {(grouped ? row.group.kind === 'review' : !nested && row.linked) && <div className="aba-linked"><b>{grouped ? '单列统计，未分摊至候选机型' : '机型关联 · 候选对应墨盒'}</b>{row.candidates.map((candidate) => <small key={candidate}>{candidate}</small>)}</div>}
-          </> : <MetricCell row={row} column={column} maxVolume={maxVolume} />}
+        <tr className={grouped ? 'aba-group-row' : undefined}>{columns.map((column) => <td key={column.key} className={column.key === 'query' ? 'aba-query' : column.key === 'recognition' ? 'aba-recognition' : 'aba-value'}>
+          {column.key === 'recognition' ? <>
+            {grouped ? <button className="aba-group-toggle" aria-expanded={expanded === row.key} aria-label={`${expanded === row.key ? '收起' : '展开'} ${row.query}`} onClick={() => setExpanded((old) => old === row.key ? null : row.key)}><span aria-hidden="true">{expanded === row.key ? '▾' : '▸'}</span> {row.recognition}</button> : <strong>{row.recognition}</strong>}
+            {(row.group?.kind === 'review' || (!nested && row.linked)) && <div className="aba-linked"><b>{grouped ? '单列统计，未分摊至候选机型' : '机型关联 · 候选对应墨盒'}</b>{row.candidates.map((c) => <small key={c}>{c}</small>)}</div>}
+            {grouped && <small>{row.periods.map((p) => p.week_end.slice(0, 4) + ' 第 ' + p.week_number + ' 周').join('、')}</small>}
+          </> : column.key === 'query' ? <><span>{row.query}</span>
+            <details className="aba-prices"><summary>{(row.periods?.length ?? 1) > 1 ? `合并 ${row.periods.length} 周` : `第 ${row.week_number} 周 · ${row.week_end}`}</summary>
+              {(row.periods ?? [row]).map((p) => <span key={p.week_end}>{p.week_end.slice(0, 4)} 第 {p.week_number} 周 · {p.week_start} — {p.week_end}</span>)}
+            </details>
+          </> : <MetricCell row={row} column={column} />}
         </td>)}</tr>
         {grouped && expanded === row.key && <tr className="aba-group-expanded"><td colSpan={columns.length}><GroupQueries group={row} params={params} /></td></tr>}
       </Fragment>)}

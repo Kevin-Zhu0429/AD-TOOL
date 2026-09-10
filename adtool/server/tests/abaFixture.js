@@ -1,3 +1,5 @@
+import { readCsv, BRAND_SOURCE_COLUMNS } from '../../shared/aba.js';
+
 export const dRows = [
   { brand: 'HP', term: '305', series: 'DeskJet', printer: '2700, 2800, 2810, 2820e' },
   { brand: 'HP', term: '302', series: 'DeskJet', printer: '3050' },
@@ -21,3 +23,11 @@ export function csvFixture({ week = 35, start = '2026-08-23', end = '2026-08-29'
 }
 export const firstFile = { name: 'ES_Week_2026_08_29.csv', text: csvFixture() };
 export const secondFile = { name: 'ES_Week_2026_09_05.csv', text: csvFixture({ week: 36, start: '2026-08-30', end: '2026-09-05' }) };
+
+export function brandFixture(options = {}, brandCounts = [100, 10, 2]) {
+  const text = csvFixture(options);
+  const end = text.indexOf('\n');
+  const [header, ...rows] = readCsv(text.slice(end + 1));
+  return text.slice(0, end + 1) + [[...header, ...BRAND_SOURCE_COLUMNS.map((c) => c.label)], ...rows.map((r) => [...r, ...brandCounts])]
+    .map((r) => r.map(quote).join(',')).join('\n');
+}

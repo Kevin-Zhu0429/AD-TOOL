@@ -19,6 +19,7 @@ export const SKU_COLS = [
   { key: 'sku', label: 'SKU', required: true, width: 28, hint: '后台实际 SKU,一行一个' },
   { key: 'stock', label: '在库库存', num: true, width: 10, hint: '选填,挑 SKU 时会显示' },
   { key: 'transit', label: '在途库存', num: true, width: 10, hint: '选填,在途 / 补货中数量' },
+  { key: 'asin', label: 'ASIN', width: 16, hint: '选填，10 位字母数字；用于关联 ABA ASIN 报告' },
 ];
 
 export const SKU_KEYS = SKU_COLS.map((c) => c.key);
@@ -76,6 +77,8 @@ export function normRow(input) {
   if (sku.length > SKU_MAX_LEN) return { error: `SKU 过长:${sku.slice(0, 20)}…` };
 
   const stock = normStock(input?.stock);
+  const asin = cleanCell(input?.asin).toUpperCase();
+  if (asin && !/^[A-Z0-9]{10}$/.test(asin)) return { error: 'ASIN 须为 10 位字母或数字，每个 SKU 填一个 ASIN' };
   if (stock === undefined) return { error: `在库库存要填数字:${cleanCell(input?.stock).slice(0, 12)}` };
   const transit = normStock(input?.transit);
   if (transit === undefined) return { error: `在途库存要填数字:${cleanCell(input?.transit).slice(0, 12)}` };
@@ -88,6 +91,7 @@ export function normRow(input) {
     sku,
     stock,
     transit,
+    asin: asin || null,
   };
   return { row };
 }

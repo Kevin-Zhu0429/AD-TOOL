@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api.js';
 import { draftKey, dropDraft, isPristine, restoreTasks, writeDraft } from '../draft.js';
 import Icon from './Icon.jsx';
@@ -66,6 +66,10 @@ export default function ManualPage({ market }) {
   const [activeId, setActiveId] = useState(() => restored?.activeId ?? null);
   const [fromDraft, setFromDraft] = useState(!!restored);
   const [result, setResult] = useState(null);
+  const taskStrip = useRef(null);
+  useEffect(() => {
+    taskStrip.current?.querySelector('.taskpill.on')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }, [activeId]);
 
   useEffect(() => {
     setResult(null);
@@ -186,7 +190,7 @@ export default function ManualPage({ market }) {
   const multi = tasks.length > 1;
 
   return (
-    <div className="builder">
+    <div className="builder manual-builder">
       <header className="bhero">
         <div className="bhero-glow" />
         <div className="bhero-text">
@@ -216,7 +220,8 @@ export default function ManualPage({ market }) {
       </header>
 
       <div className="bbar">
-        <div className="tabstrip">
+        <div className="manual-task-navigation">
+        <div className="tabstrip" ref={taskStrip} tabIndex={0} role="region" aria-label="广告活动列表，可横向滚动">
           {plans.map(({ task, plan }, i) => (
             <div
               key={task.id}
@@ -243,6 +248,8 @@ export default function ManualPage({ market }) {
               )}
             </div>
           ))}
+        </div>
+        <div className="manual-task-actions">
           <button className="btn sm addtask" onClick={addTask}>
             <Icon name="plus" className="ico-sm" />新活动
           </button>
@@ -251,6 +258,7 @@ export default function ManualPage({ market }) {
               <Icon name="copy" className="ico-sm" />复制
             </button>
           )}
+        </div>
         </div>
 
         <div className="spacer" />

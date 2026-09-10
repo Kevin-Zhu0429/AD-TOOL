@@ -4,13 +4,15 @@
   "locale": "zh-CN",
   "canonicalMap": "UX-CONTRACT.md",
   "ownership": { "Select/Listbox": "native", "Date": "native" },
-  "requiredCommands": ["unit", "api", "build", "lint", "abaBrowser"],
+  "requiredCommands": ["unit", "api", "asinApi", "build", "lint", "abaBrowser", "asinBrowser"],
   "commands": {
     "unit": "npm --prefix web test",
     "api": "node --test server/tests/aba.test.js",
     "build": "npm --prefix web run build",
     "lint": "npm --prefix web run lint",
-    "abaBrowser": "node web/tests/aba.browser.mjs"
+    "abaBrowser": "node web/tests/aba.browser.mjs",
+    "asinApi": "node --test server/tests/abaAsin.test.js",
+    "asinBrowser": "node web/tests/abaAsin.browser.mjs"
   },
   "evidence": { "crudFullFlow": "web/tests/aba.browser.mjs", "failurePaths": "server/tests/aba.test.js" }
 }

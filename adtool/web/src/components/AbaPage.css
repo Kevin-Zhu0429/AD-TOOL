@@ -9,6 +9,23 @@
 .aba-page button:active:not(:disabled) { filter: brightness(.94); }
 .aba-tabs { display: flex; gap: 8px; margin: 20px 0 14px; border-bottom: 1px solid var(--border); padding-bottom: 12px; }
 .aba-soon { font-size: 10px; opacity: .8; }
+.aba-asin-selectors { gap: 12px; }
+.aba-asin-selectors > label { min-width: 105px; }
+.aba-asin-selectors select { margin-top: 6px; }
+.aba-asin-sku-select { flex: 1; max-width: 500px; min-width: 200px !important; }
+.aba-asin-table { min-width: 1520px; }
+.aba-asin-table .aba-recognition { min-width: 170px; max-width: 230px; white-space: normal; overflow-wrap: anywhere; }
+.aba-recognition strong { font-weight: 500; }
+.aba-recognition small, .aba-asin-id, .aba-asin-sku { display: block; margin-top: 5px; line-height: 1.45; font-size: 11px; color: var(--text-dim); }
+.aba-asin-id { color: var(--accent-text); font-family: var(--mono); }
+.aba-asin-table .aba-query { min-width: 310px; }
+.aba-asin-table th:nth-child(2) { text-align: left; }
+.aba-brand-table { min-width: 1500px; }
+.aba-brand-table th:nth-child(2) { text-align: left; }
+.aba-brand-table .aba-recognition { min-width: 180px; max-width: 240px; white-space: normal; }
+.aba-prices.aba-market-conflict summary { color: var(--red-text); }
+.aba-asin-table .aba-prices { margin-top: 6px; }
+.aba-asin-selectors + .aba-model-note { padding-bottom: 10px; }
 .aba-upload { background: var(--panel); border: 1px dashed var(--border); border-radius: var(--radius); padding: 15px 18px 8px; }
 .aba-upload.dragging { border-color: var(--accent); background: var(--accent-soft); }
 .aba-upload-top, .aba-file, .aba-toolbar, .aba-week-title, .aba-trend-head, .aba-pagination { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
@@ -56,6 +73,7 @@
 .aba-track { background: var(--panel-2); height: 16px; border-radius: 2px; overflow: hidden; }
 .aba-bar { background: var(--accent); height: 100%; border-radius: 2px; }
 .aba-totals { display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid var(--border-soft); }
+.aba-brand-totals { grid-template-columns: repeat(3, 1fr); }
 .aba-totals > div { padding: 12px 10px; border-right: 1px solid var(--border-soft); display: flex; flex-direction: column; gap: 5px; }
 .aba-totals > div:first-child { padding-left: 0; }
 .aba-totals > div:last-child { border-right: 0; }

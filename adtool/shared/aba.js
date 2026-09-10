@@ -12,6 +12,28 @@ export const ABA_COLUMNS = [
   { key: 'week_end', label: '时间' },
   { key: 'week_number', label: '周数' },
 ];
+export const BRAND_SOURCE_COLUMNS = [
+  { key: 'brand_impressions', label: '曝光: 曝光品牌数量' },
+  { key: 'brand_clicks', label: '点击量：点击的品牌数' },
+  { key: 'brand_purchases', label: '购买次数：品牌数量' },
+];
+export const BRAND_COLUMNS = [
+  { key: 'recognition', label: '机型识别' },
+  { key: 'query', label: '搜索查询' },
+  { key: 'impressions', label: '市场 IMP' },
+  { key: 'clicks', label: '市场点击 TT' },
+  { key: 'purchases', label: '市场购买 TT' },
+  { key: 'market_cvr', label: '市场 CVR', kind: 'rate' },
+  { key: 'brand_impressions', label: '品牌 IMP' },
+  { key: 'brand_clicks', label: '品牌点击' },
+  { key: 'brand_purchases', label: '品牌购买' },
+  { key: 'brand_cvr', label: '品牌 CVR', kind: 'rate' },
+  { key: 'brand_share', label: '品牌占有率', kind: 'rate' },
+];
+export function brandRates(row) {
+  const ratio = (a, b) => a != null && b > 0 ? a / b * 100 : null;
+  return { ...row, market_cvr: ratio(row.purchases, row.clicks), brand_cvr: ratio(row.brand_purchases, row.brand_clicks), brand_share: ratio(row.brand_purchases, row.purchases) };
+}
 const normalize = (v) => String(v ?? '').normalize('NFKC').trim().toLowerCase();
 const headerKey = (v) => normalize(v).replace(/\s/g, '');
 
@@ -44,13 +66,13 @@ export function readCsv(text) {
   return rows;
 }
 
-function dateValue(value) {
+export function dateValue(value) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return NaN;
   const time = Date.parse(`${value}T00:00:00Z`);
   return Number.isFinite(time) && new Date(time).toISOString().slice(0, 10) === value ? time : NaN;
 }
 
-function metric(value, label, line, nullable = false, integer = false) {
+export function metric(value, label, line, nullable = false, integer = false) {
   const raw = String(value ?? '').trim();
   if (nullable && (!raw || raw === '-' || raw === '—')) return null;
   if (!/^(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d+)?%?$/.test(raw)) throw new Error(`第 ${line} 行「${label}」不是有效非负数字`);
@@ -101,6 +123,10 @@ export function parseAbaReport(text, filename, marketplace) {
     fields.slice(1).forEach((field, index) => {
       row[field.key] = metric(values[positions[index + 1]], field.label, line, !!field.kind, !field.kind);
     });
+    for (const field of BRAND_SOURCE_COLUMNS) {
+      const position = keys.indexOf(headerKey(field.label));
+      row[field.key] = position < 0 ? null : metric(values[position], field.label, line, true, true);
+    }
     return row;
   });
   return { brand: brands[0].trim(), marketplace, week_start: start, week_end: finish, week_number: Number(week), source_file: filename, rows };
@@ -192,10 +218,12 @@ export function aggregateAbaRows(rows, mode = 'query') {
     if (!bucket) {
       bucket = { ...row, key, query: mode === 'printer' ? row.group.label : row.query,
         query_volume: 0, impressions: 0, clicks: 0, purchases: 0, record_count: 0,
+        brand_impressions: 0, brand_clicks: 0, brand_purchases: 0,
         candidates: [], linked: false, queries: new Set(), periodMap: new Map(), prices: [] };
       buckets.set(key, bucket);
     }
     sumFields.forEach((field) => { bucket[field] += row[field]; });
+    BRAND_SOURCE_COLUMNS.forEach(({ key }) => { bucket[key] = bucket[key] === null || row[key] == null ? null : bucket[key] + row[key]; });
     bucket.record_count++;
     bucket.queries.add(row.query);
     bucket.linked ||= row.linked;

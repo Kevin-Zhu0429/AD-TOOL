@@ -1,5 +1,13 @@
 /* 手动广告页:布局沿用 BuilderPage.css,这里只加投放粘贴框相关的样式 */
 
+.manual-builder .bbar { flex-wrap: wrap; }
+.manual-task-navigation { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1 1 460px; max-width: 100%; }
+.manual-task-navigation .tabstrip { min-width: 0; flex: 1 1 0; padding: 3px 0 7px; scrollbar-width: thin; scrollbar-color: inherit; }
+.manual-task-navigation .tabstrip::-webkit-scrollbar { display: block; height: 8px; }
+.manual-task-actions { display: flex; gap: 6px; flex: 0 0 auto; }
+.manual-task-actions .btn { flex: 0 0 auto; white-space: nowrap; }
+.manual-keyword-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+
 .unitbox {
   border: 1px solid var(--border-soft);
   border-radius: 10px;

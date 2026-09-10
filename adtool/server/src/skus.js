@@ -9,7 +9,7 @@ export const skuRouter = express.Router();
 skuRouter.use(requireLogin);
 
 const SELECT = `SELECT s.id, s.user_id, s.country, s.brand, s.model,
-                       s.set_group AS setGroup, s.sku, s.stock, s.transit,
+                       s.set_group AS setGroup, s.sku, s.stock, s.transit, s.asin,
                        s.created_at, s.updated_at, u.display_name AS owner_name
                   FROM sku_items s LEFT JOIN users u ON u.id = s.user_id`;
 
@@ -71,15 +71,16 @@ function saveRows(user, rows, replace) {
     const key = dedupeKey(r.row);
     if (seen.has(key)) return;      // 这一批里自己重复的,后一条为准
     seen.add(key);
-    ok.push({ row: r.row, dedupe: key });
+    ok.push({ row: r.row, dedupe: key, hasAsin: Object.hasOwn(raw, 'asin') ? 1 : 0 });
   });
 
   const ins = db.prepare(
-    `INSERT INTO sku_items (user_id, country, brand, model, set_group, sku, stock, transit, dedupe)
-     VALUES (@user_id, @country, @brand, @model, @setGroup, @sku, @stock, @transit, @dedupe)
+    `INSERT INTO sku_items (user_id, country, brand, model, set_group, sku, stock, transit, asin, dedupe)
+     VALUES (@user_id, @country, @brand, @model, @setGroup, @sku, @stock, @transit, @asin, @dedupe)
      ON CONFLICT (user_id, dedupe) DO UPDATE SET
        brand = excluded.brand, model = excluded.model, set_group = excluded.set_group,
        sku = excluded.sku, stock = excluded.stock, transit = excluded.transit,
+       asin = CASE WHEN @hasAsin THEN excluded.asin ELSE sku_items.asin END,
        updated_at = datetime('now', 'localtime')`
   );
   const exists = db.prepare('SELECT id FROM sku_items WHERE user_id = ? AND dedupe = ?');
@@ -96,9 +97,9 @@ function saveRows(user, rows, replace) {
           .run(user.id, c).changes;
       }
     }
-    for (const { row, dedupe } of ok) {
+    for (const { row, dedupe, hasAsin } of ok) {
       const had = !replace && exists.get(user.id, dedupe);
-      ins.run({ ...row, user_id: user.id, dedupe });
+      ins.run({ ...row, user_id: user.id, dedupe, hasAsin });
       if (had) updated++;
       else added++;
     }
@@ -130,7 +131,7 @@ skuRouter.post('/bulk', (req, res) => {
     if (!line.trim()) continue;
     const parts = line.includes('\t') ? line.split('\t') : line.split(/\s*[~|]\s*/);
     const row = {};
-    SKU_COLS.forEach((c, i) => { row[c.key] = parts[i] ?? ''; });
+    SKU_COLS.forEach((c, i) => { if (c.key !== 'asin' || parts[i] !== undefined) row[c.key] = parts[i] ?? ''; });
     rows.push(row);
   }
   if (!rows.length) return res.status(400).json({ error: '没有要写入的行' });
@@ -152,6 +153,7 @@ skuRouter.patch('/:id', (req, res) => {
     sku: req.body?.sku ?? cur.sku,
     stock: req.body?.stock ?? cur.stock,
     transit: req.body?.transit ?? cur.transit,
+    asin: req.body?.asin ?? cur.asin,
   };
   const r = normRow(merged);
   if (r.error) return res.status(400).json({ error: r.error });
@@ -164,7 +166,7 @@ skuRouter.patch('/:id', (req, res) => {
 
   db.prepare(
     `UPDATE sku_items SET country = @country, brand = @brand, model = @model,
-            set_group = @setGroup, sku = @sku, stock = @stock, transit = @transit,
+            set_group = @setGroup, sku = @sku, stock = @stock, transit = @transit, asin = @asin,
             dedupe = @dedupe, updated_at = datetime('now', 'localtime')
       WHERE id = @id`
   ).run({ ...r.row, dedupe, id: cur.id });

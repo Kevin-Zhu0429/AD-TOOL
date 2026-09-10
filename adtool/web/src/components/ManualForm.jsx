@@ -32,7 +32,7 @@ function Unit({ on, label, hint, bid, text, count, placeholder, bidPlaceholder, 
       </div>
       {bidNote && <p className="hint unitbox-bid">{bidNote}</p>}
       <textarea
-        className="inp" rows={6} placeholder={placeholder}
+        className="inp" rows={6} placeholder={placeholder} aria-label={`${label}投放词`}
         value={text} onChange={(e) => onChange({ text: e.target.value })}
       />
     </div>
@@ -43,8 +43,20 @@ export default function ManualForm({ task, plan, libCount, lib, market, onChange
   const set = (patch) => onChange(patch);
   const [pick, setPick] = useState(false);
   const [pickNote, setPickNote] = useState('');
-  const setUnit = (bucket, key, patch) =>
+  const [clearedKeywords, setClearedKeywords] = useState(null);
+  const setUnit = (bucket, key, patch) => {
+    if (bucket === 'kw' && 'text' in patch) setClearedKeywords(null);
     onChange({ [bucket]: { ...task[bucket], [key]: { ...task[bucket][key], ...patch } } });
+  };
+  const hasKeywords = MATCH_TYPES.some(({ id }) => task.kw[id]?.text);
+  function clearKeywords() {
+    setClearedKeywords(Object.fromEntries(MATCH_TYPES.map(({ id }) => [id, task.kw[id]?.text ?? ''])));
+    set({ kw: Object.fromEntries(MATCH_TYPES.map(({ id }) => [id, { ...task.kw[id], text: '' }])) });
+  }
+  function undoClearKeywords() {
+    set({ kw: Object.fromEntries(MATCH_TYPES.map(({ id }) => [id, { ...task.kw[id], text: clearedKeywords[id] }])) });
+    setClearedKeywords(null);
+  }
 
   const skuCount = parseLines(task.skus).length;
   const negCount = (plan?.campNegs?.length ?? 0) + (plan?.groupNegs?.length ?? 0);
@@ -309,6 +321,16 @@ export default function ManualForm({ task, plan, libCount, lib, market, onChange
               ? '出价框里填的是这一类的目标 CPC,留空就用上面那个;写进表里的是折算后的出价。'
               : '出价留空就用上面的广告组默认竞价。'}
           </p>
+
+          {task.mode === 'kw' && (
+            <div className="manual-keyword-actions">
+              <button type="button" className="btn sm" disabled={!hasKeywords} onClick={clearKeywords}>
+                清空三种匹配投放词
+              </button>
+              <span className="hint" role="status">{clearedKeywords ? '已清空当前活动的精准、词组、广泛投放词' : ''}</span>
+              {clearedKeywords && <button type="button" className="btn sm ghost" onClick={undoClearKeywords}>撤销清空</button>}
+            </div>
+          )}
 
           {task.mode === 'kw'
             ? MATCH_TYPES.map((mt) => {
