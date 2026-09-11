@@ -3,7 +3,7 @@ import { api } from '../api.js';
 import { ASIN_COLUMNS } from '../../../shared/abaAsin.js';
 import { AbaPagination } from './AbaTable.jsx';
 
-const number = new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 0 });
+const number = new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 2 });
 const percent = new Intl.NumberFormat('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 function Identity({ row, data, params }) {
@@ -11,6 +11,8 @@ function Identity({ row, data, params }) {
   const skus = data.skuItems.filter((s) => asins.includes(s.asin) && (!params.skuId || String(s.id) === params.skuId) && (!data.selectedModel || data.selectedModel.skuIds.includes(s.id)));
   return <><small className="aba-asin-id">{row.series_model ? `${row.series_model} · 合并 ${asins.length} 个 ASIN` : row.asin}</small>{row.series_model && <details className="aba-prices"><summary>查看来源 ASIN</summary>{asins.map((asin) => <span key={asin}>{asin}</span>)}</details>}{skus.length ? skus.map((s) => <small className="aba-asin-sku" key={s.id}>{[s.sku, s.brand, s.model ? `${s.model} 系列` : '', s.setGroup].filter(Boolean).join(' · ')}</small>) : <small className="aba-asin-sku">未关联 SKU · 可在 SKU 库补充 ASIN</small>}
     {!!row.conflict_count && <details className="aba-prices aba-market-conflict"><summary>市场数据待核对 · {row.conflict_count} 项</summary>{row.market_conflicts.map((c, i) => <span key={i}>{c.week_end} · {c.query} · {c.label}：{c.values.map((v) => `${v.asin} = ${number.format(v.value)}`).join('；')}</span>)}{row.conflict_count > 20 && <span>仅显示前 20 项；展开分类内搜索词可逐词核对。</span>}</details>}
+    {!!row.average_weeks && <small className="aba-asin-sku">周平均 · 按实际出现 {row.average_weeks} 周计算</small>}
+    {row.averaged_queries && <small className="aba-asin-sku">各搜索词周平均之和</small>}
     <details className="aba-prices"><summary>{row.periods.length > 1 ? `合并 ${row.periods.length} 周` : `第 ${row.periods[0].week_number} 周 · ${row.periods[0].week_end}`}</summary>{row.periods.map((p) => <span key={p.week_end}>{p.week_end.slice(0, 4)} 第 {p.week_number} 周 · {p.week_start} — {p.week_end}</span>)}</details></>;
 }
 
@@ -30,7 +32,7 @@ function GroupQueries({ group, params }) {
     return () => controller.abort();
   }, [group.asin, group.group.key, params, paging, revision]);
   return <section className="aba-group-details" aria-label={`${group.series_model || group.asin} ${group.recognition} 下的搜索词`} aria-busy={loading}>
-    <p className="aba-group-context">{group.series_model || group.asin} · {group.recognition} · {number.format(group.query_count)} 个搜索词 · ASIN 总点击 {number.format(group.asin_clicks)} · ASIN 总购买 {number.format(group.asin_purchases)}</p>
+    <p className="aba-group-context">{group.series_model || group.asin} · {group.recognition} · {number.format(group.query_count)} 个搜索词 · ASIN {params.aggregation === 'average' ? '周平均点击' : '总点击'} {number.format(group.asin_clicks)} · ASIN {params.aggregation === 'average' ? '周平均购买' : '总购买'} {number.format(group.asin_purchases)}</p>
     {loading ? <p role="status">正在加载分类明细…</p> : error ? <p role="alert" className="aba-error-text">{error} <button className="btn" onClick={() => setRevision((n) => n + 1)}>重试分类明细</button></p> : data && <>
       <AbaAsinTable data={data} params={params} nested onSort={(sort) => setPaging((p) => ({ ...p, sort, direction: data.sort === sort && data.direction === 'desc' ? 'asc' : 'desc', page: 1 }))} />
       <AbaPagination data={data} nested onChange={(patch) => setPaging((p) => ({ ...p, ...patch }))} />

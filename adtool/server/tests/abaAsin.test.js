@@ -135,9 +135,9 @@ test('ASIN reports: authenticated storage, raw metrics, SKU linkage and filter b
       { country: 'ES', brand: 'Series', model: '305', sku: 'SERIES-SAME-ASIN', asin: one },
     ] });
     await upload([{ name: 'one.csv', text: asinFixture({ asin: one, rows: [marketRow] }) }, { name: 'two.csv', text: asinFixture({ asin: two, rows: [otherRow] }) }]);
-    const model = (await get()).modelOptions.find((m) => m.brand === 'Series');
-    assert.equal(model.asins.length, 2);
-    const scope = '&weeks=2026-08-29&model=' + encodeURIComponent(model.key);
+    const model = (await get()).modelOptions.find((m) => m.model === '305');
+    assert.ok(model.asins.includes(one) && model.asins.includes(two));
+    const scope = '&weeks=2026-08-29&brand=series&model=' + encodeURIComponent(model.key);
     let result = await get(scope);
     assert.equal(result.total, 1);
     assert.equal(result.items[0].market_clicks, 100);
@@ -156,6 +156,42 @@ test('ASIN reports: authenticated storage, raw metrics, SKU linkage and filter b
     assert.equal(result.items[0].brand_share, null);
     assert.equal(result.items[0].asin_purchases, 7);
     assert.equal(result.items[0].conflict_count, 1);
+  });
+  await t.test('model then brand then ASIN/SKU cascades include every brand; averages use observed weeks', async () => {
+    const one = 'B000009001', two = 'B000009002', third = 'B000009003';
+    await call('/sku/rows', a, { rows: [
+      { country: 'ES', brand: 'Alpha', model: '901', sku: 'ALPHA-901', asin: one },
+      { country: 'ES', brand: 'Beta', model: '901XL', sku: 'BETA-901', asin: two },
+      { country: 'ES', brand: 'Beta', model: '902', sku: 'BETA-902', asin: third },
+    ] });
+    const row = ['hp deskjet 2820e', 100, 1000, 100, 20, 200, 10, 5];
+    await upload([
+      { name: 'a.csv', text: asinFixture({ asin: one, rows: [row, ['tinta hp deskjet 2820e', 20, 50, 10, 2, 10, 3, 1]] }) },
+      { name: 'b.csv', text: asinFixture({ asin: two, rows: [row] }) },
+      { name: 'c.csv', text: asinFixture({ asin: third, rows: [row] }) },
+      { name: 'next.csv', text: asinFixture({ asin: one, week: 36, start: '2026-08-30', end: '2026-09-05', rows: [[...row.slice(0, 6), 11, 5]] }) },
+    ]);
+    const all = await get();
+    assert.ok(all.modelOptions.some((m) => m.key === '901') && all.modelOptions.some((m) => m.key === '902'));
+    const model = await get('&model=901');
+    assert.deepEqual(model.brands.map((b) => b.label), ['Alpha', 'Beta']);
+    assert.deepEqual(model.asins, [one, two]);
+    const beta = await get('&model=901&brand=beta&weeks=2026-08-29');
+    assert.deepEqual(beta.asins, [two]);
+    assert.ok(beta.skuItems.every((s) => s.brand === 'Beta' && s.model === '901XL'));
+    assert.equal((await get('&model=901&brand=beta&asin=' + one)).total, 0);
+    assert.equal((await get('&model=901&brand=beta&skuId=' + model.skuItems.find((s) => s.brand === 'Alpha').id)).total, 0);
+    assert.deepEqual((await get('&model=901', b)).brands, []);
+    const params = '&model=901&brand=alpha&weeks=2026-08-29,2026-09-05&aggregation=average';
+    const average = await get(params);
+    assert.equal(average.aggregation, 'average');
+    assert.equal(average.items.find((r) => r.query === row[0]).asin_clicks, 10.5);
+    assert.equal(average.items.find((r) => r.query !== row[0]).asin_clicks, 3);
+    const group = (await get(params + '&view=printers')).items[0];
+    assert.equal(group.asin_clicks, 13.5);
+    const children = await get(params + '&group=' + encodeURIComponent(group.group.key));
+    assert.equal(children.items.reduce((sum, r) => sum + r.asin_clicks, 0), group.asin_clicks);
+    assert.equal((await get('&model=901&brand=alpha&weeks=2026-08-29&aggregation=average')).aggregation, 'sum');
   });
   if (process.env.ASIN_SAMPLE_DIR) await t.test('all four real reports preserve source totals, including header-only week', async () => {
     const files = fs.readdirSync(process.env.ASIN_SAMPLE_DIR).filter((f) => f.endsWith('.csv')).map((name) => ({ name, text: fs.readFileSync(path.join(process.env.ASIN_SAMPLE_DIR, name), 'utf8') }));

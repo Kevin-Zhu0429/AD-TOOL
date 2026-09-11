@@ -37,11 +37,10 @@ export function asinModelOptions(skuItems, reportAsins) {
   const models = new Map();
   for (const sku of skuItems) {
     if (!available.has(sku.asin) || !String(sku.model ?? '').trim()) continue;
-    const brand = String(sku.brand ?? '').trim();
     const model = modelKey(sku.model);
     if (!model) continue;
-    const key = JSON.stringify([brand.toLowerCase(), model]);
-    if (!models.has(key)) models.set(key, { key, model, brand, label: [brand, model].filter(Boolean).join(' · '), asins: new Set(), skuIds: [] });
+    const key = model;
+    if (!models.has(key)) models.set(key, { key, model, label: model, asins: new Set(), skuIds: [] });
     models.get(key).asins.add(sku.asin);
     models.get(key).skuIds.push(sku.id);
   }
@@ -82,6 +81,31 @@ export function aggregateAsinSeries(rows, { view = 'queries', mergeWeeks = true,
       periods: [...periods.values()].sort((a, b) => b.week_end.localeCompare(a.week_end)), candidates: [...candidates],
       conflict_count: conflicts.length, market_conflicts: conflicts.slice(0, 20) };
   });
+}
+
+/** Average each query over its observed weeks; grouped values sum those query averages. */
+export function aggregateAsinView(rows, { series = false, view = 'queries', mergeWeeks = true, average = false, modelLabel = '' } = {}) {
+  const queries = series ? aggregateAsinSeries(rows, { mergeWeeks: mergeWeeks || average, modelLabel })
+    : mergeWeeks || average ? mergeAsinRows(rows)
+      : rows.map((r) => ({ ...r, key: `${r.report_id}:${r.query}`, periods: [{ week_start: r.week_start, week_end: r.week_end, week_number: r.week_number }] }));
+  if (average) for (const row of queries) {
+    row.average_weeks = row.periods.length;
+    for (const key of ASIN_COUNT_KEYS) if (row[key] != null) row[key] /= row.average_weeks;
+  }
+  if (view !== 'printers') return queries.map(asinRates);
+  const groups = series ? aggregateAsinSeries(rows, { view, modelLabel }) : groupAsinRows(rows);
+  if (average) {
+    const totals = new Map();
+    const groupKey = (row) => JSON.stringify([series ? '' : row.asin, row.group.key]);
+    for (const row of queries) {
+      const key = groupKey(row);
+      if (!totals.has(key)) totals.set(key, Object.fromEntries(ASIN_COUNT_KEYS.map((k) => [k, 0])));
+      const total = totals.get(key);
+      for (const k of ASIN_COUNT_KEYS) total[k] = total[k] == null || row[k] == null ? null : total[k] + row[k];
+    }
+    for (const group of groups) Object.assign(group, totals.get(groupKey(group)), { averaged_queries: true });
+  }
+  return groups.map(asinRates);
 }
 
 /** A1 and C1 are the sole identity/period sources; filenames are display-only. */
@@ -179,7 +203,7 @@ export function parseMergedAsinWorkbook(sheets, filename, marketplace) {
     }
   }
   if (!total) throw new Error('合并表没有搜索词数据；空周报请使用原始 CSV');
-  if (groups.size > 500) throw new Error('一份合并表最多包含 500 份 ASIN 周报');
+  if (groups.size > 5000) throw new Error('一份合并表最多包含 5,000 份 ASIN 周报');
   const csvLine = (values) => values.map((v) => `"${String(v).replaceAll('"', '""')}"`).join(',');
   const seen = new Set();
   return [...groups.values()].map(({ asin, period, values, location }) => {

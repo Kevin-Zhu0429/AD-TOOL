@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseAsinReport, parseAsinUpload, mergeAsinRows, asinRates, aggregateAsinSeries, asinModelOptions } from '../../shared/abaAsin.js';
+import { parseAsinReport, parseAsinUpload, mergeAsinRows, asinRates, aggregateAsinSeries, asinModelOptions, aggregateAsinView } from '../../shared/abaAsin.js';
 import { asinFixture, asinFirst, asinSecond, mergedFixture } from '../../server/tests/abaAsinFixture.js';
 
 test('ASIN identity and week come only from A1/C1, even when filename conflicts', () => {
@@ -76,4 +76,30 @@ test('series aggregation deduplicates weekly market metrics and propagates confl
   const options = asinModelOptions([{ id: 1, asin: base.asin, brand: 'HP', model: '305XL' }, { id: 2, asin: other.asin, brand: 'HP', model: '305' }, { id: 3, asin: 'missing', model: '302' }], [base.asin, other.asin]);
   assert.equal(options.length, 1);
   assert.equal(options[0].asins.length, 2);
+});
+
+
+test('weekly averages use each query observed weeks, preserve decimals and add up in printer groups', () => {
+  const report = parseAsinReport(asinFirst.text, asinFirst.name, 'ES');
+  const base = { ...report, ...report.rows[0], candidates: [], recognition: 'HP 2820', group: { key: '2820' } };
+  const next = { ...base, week_end: '2026-09-05', week_number: 36, asin_clicks: 11 };
+  const rare = { ...base, query: 'rare printer query', asin_clicks: 3, asin_purchases: 1 };
+  const rows = [base, next, rare];
+  const result = aggregateAsinView(rows, { average: true });
+  assert.equal(result[0].asin_clicks, 10.5);
+  assert.equal(result[0].average_weeks, 2);
+  assert.equal(result[1].asin_clicks, 3);
+  assert.equal(result[1].average_weeks, 1);
+  const group = aggregateAsinView(rows, { average: true, view: 'printers' })[0];
+  assert.equal(group.asin_clicks, 13.5);
+  assert.equal(group.query_count, 2);
+  assert.equal(group.asin_cvr, group.asin_purchases / 13.5 * 100);
+  const series = aggregateAsinView([...rows, { ...base, asin: 'B000008888' }], { average: true, series: true })[0];
+  assert.equal(series.market_clicks, 100);
+  assert.equal(series.asin_clicks, 15.5);
+  assert.equal(series.average_weeks, 2);
+  const conflict = aggregateAsinView([base, { ...base, asin: 'B000008888', market_clicks: 101 }, next], { average: true, series: true })[0];
+  assert.equal(conflict.market_clicks, null);
+  assert.equal(conflict.market_cvr, null);
+  assert.equal(conflict.conflict_count, 1);
 });

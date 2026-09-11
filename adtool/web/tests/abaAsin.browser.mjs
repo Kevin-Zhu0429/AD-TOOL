@@ -211,8 +211,10 @@ try {
   await view.getByLabel('词类型', { exact: true }).selectOption('all');
   await view.getByLabel('显示方式', { exact: true }).selectOption('queries');
   await idle();
-  const modelOption = await view.getByLabel('墨盒型号', { exact: true }).locator('option').filter({ hasText: 'Series · 305' }).getAttribute('value');
+  const modelOption = await view.getByLabel('墨盒型号', { exact: true }).locator('option').filter({ hasText: /^305（/ }).getAttribute('value');
   await view.getByLabel('墨盒型号', { exact: true }).selectOption(modelOption);
+  await idle();
+  await view.getByLabel('品牌', { exact: true }).selectOption('series');
   await idle();
   assert.equal(await rows().count(), 1);
   assert.equal(await rows().first().locator('td').nth(2).innerText(), '1,000');
@@ -222,8 +224,8 @@ try {
   assert.match(await rows().first().innerText(), /合并 2 个 ASIN/);
   await view.getByLabel('显示方式', { exact: true }).selectOption('printers');
   await idle();
-  await view.getByRole('button', { name: '展开 Series · 305 HP DESKJET2820', exact: true }).click();
-  const seriesChildren = view.getByRole('region', { name: 'Series · 305 HP DESKJET2820 下的搜索词', exact: true });
+  await view.getByRole('button', { name: '展开 305 HP DESKJET2820', exact: true }).click();
+  const seriesChildren = view.getByRole('region', { name: '305 HP DESKJET2820 下的搜索词', exact: true });
   await seriesChildren.locator('.aba-table').waitFor();
   assert.equal(await seriesChildren.locator('tbody tr').count(), 1);
   assert.match(await seriesChildren.locator('.aba-group-context').innerText(), /ASIN 总点击 30.*ASIN 总购买 7/);
@@ -237,6 +239,63 @@ try {
   assert.match(await view.locator('.aba-market-conflict').innerText(), /B000002001 = 20.*B000002002 = 25/);
   await view.locator('.aba-table-heading').scrollIntoViewIfNeeded();
   await page.screenshot({ path: output + 'aba-series-conflict.png', fullPage: true });
+  await page.request.post(new URL('/api/sku/rows', page.url()).href, { data: { rows: [
+    { country: 'ES', brand: 'Second brand', model: '305', sku: 'SECOND-BRAND', asin: 'B000002003' },
+  ] } });
+  await attach([
+    { name: 'next.csv', text: asinFixture({ asin: one, week: 36, start: '2026-08-30', end: '2026-09-05', rows: [[...oneRow.slice(0, 6), 11, 5]] }) },
+    { name: 'brand.csv', text: asinFixture({ asin: 'B000002003', rows: [oneRow] }) },
+  ]);
+  await view.getByRole('button', { name: '上传并保存' }).click();
+  await view.getByText(/B000002003.*已保存 1 条/).waitFor();
+  await idle();
+  await view.getByLabel('墨盒型号', { exact: true }).selectOption('305');
+  await idle();
+  assert.match(await view.getByLabel('品牌', { exact: true }).innerText(), /Second brand/);
+  await view.getByLabel('品牌', { exact: true }).selectOption('second brand');
+  await idle();
+  assert.equal(await view.getByLabel('ASIN', { exact: true }).locator('option').count(), 2);
+  await view.getByLabel('品牌', { exact: true }).selectOption('series');
+  await idle();
+  await view.getByLabel('ASIN', { exact: true }).selectOption(one);
+  await idle();
+  await view.getByRole('button', { name: '全选', exact: true }).click();
+  await idle();
+  await view.getByLabel('多周统计', { exact: true }).selectOption('average');
+  await idle();
+  assert.equal(await rows().first().locator('td').nth(7).innerText(), '10.5');
+  assert.match(await rows().first().innerText(), /按实际出现 2 周计算/);
+  await view.getByLabel('显示方式', { exact: true }).selectOption('printers');
+  await idle();
+  await view.getByRole('button', { name: '展开 305 HP DESKJET2820', exact: true }).click();
+  await seriesChildren.locator('.aba-table').waitFor();
+  assert.equal(await seriesChildren.locator('tbody tr').first().locator('td').nth(7).innerText(), '10.5');
+  await page.setViewportSize({ width: 1600, height: 1080 });
+  await view.getByLabel('墨盒型号', { exact: true }).scrollIntoViewIfNeeded();
+  await page.screenshot({ path: output + 'aba-brand-average.png', fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  await view.getByRole('button', { name: '仅最新周', exact: true }).click();
+  await idle();
+  assert.equal(await view.getByLabel('多周统计', { exact: true }).isDisabled(), true);
+  const many = Array.from({ length: 23 }, (_, i) => ({ name: `bulk-${i}.csv`, text: asinFixture({ asin: `B${String(80000 + i).padStart(9, '0')}` }) }));
+  await attach(many);
+  let batchesSent = 0;
+  await page.route('**/api/aba/asin/import', async (route) => {
+    const payload = route.request().postDataJSON();
+    assert.ok(payload.files.length <= 10);
+    if (++batchesSent === 2) return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: '模拟第二批失败' }) });
+    return route.continue();
+  });
+  await view.getByRole('button', { name: '上传并保存' }).click();
+  await view.getByRole('alert').filter({ hasText: '此前已保存 10 份周报' }).waitFor();
+  assert.equal(await view.locator('.aba-file').count(), 23);
+  await page.unroute('**/api/aba/asin/import');
+  await view.getByRole('button', { name: '上传并保存' }).click();
+  await view.getByText('已完成 23 份周报，共 92 条记录。', { exact: true }).waitFor();
+  await idle();
+  const bulk = await (await page.request.get(new URL('/api/aba/asin?marketplace=ES&year=&weeks=2026-08-29', page.url()).href)).json();
+  assert.equal(bulk.reports.filter((r) => many.some((f) => f.text.startsWith(`ASIN=["${r.asin}"]`))).length, 23);
   assert.deepEqual(errors, []);
   console.log('ASIN browser passed: CSV/XLSX, filters, SKU linkage, printer groups, model/color-set merge, market deduplication/conflict review, pagination/retry and privacy.');
 } finally {
