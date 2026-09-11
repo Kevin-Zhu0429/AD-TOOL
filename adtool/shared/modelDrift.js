@@ -207,6 +207,21 @@ function cartridgeGroups(entry, dIndex) {
   return [...groups.values()];
 }
 
+/**
+ * Multiple cartridge groups are a confirmed compatibility set only when the
+ * D-table gives the printer a complete, stable identity. Bare numbers or rows
+ * with a missing/changing series stay conservative and require library review.
+ */
+function hasConfirmedPrinterIdentity(entry, dIndex) {
+  if (entry.kind !== 'printer' || !entry.brand) return false;
+  const label = compact(entry.label);
+  if (!/[a-z]/.test(label) || !/\d/.test(label)) return false;
+  const rows = [...entry.rows].map((i) => dIndex.rows[i]).filter(Boolean);
+  const series = rows.map((row) => compact(row.series));
+  return rows.length > 0 && series.every(Boolean) && unique(series).length === 1 &&
+    rows.every((row) => clean(row.brand).toLowerCase() === entry.brand);
+}
+
 const covered = (rows, context) => [...rows].some((i) => context?.expectedRows?.has(i));
 
 function candidateDetails(entries, context, dIndex) {
@@ -244,7 +259,8 @@ export function detectModelDrift(searchTerm, context, dIndex) {
       brandConflicts.set(key, conflict);
       continue;
     }
-    const mappingConflict = entries.some((entry) => entry.kind === 'printer' && cartridgeGroups(entry, dIndex).length > 1);
+    const mappingConflict = entries.some((entry) => entry.kind === 'printer' && cartridgeGroups(entry, dIndex).length > 1 &&
+      !hasConfirmedPrinterIdentity(entry, dIndex));
     if (mappingConflict) {
       findings.push({ token, kind: 'mapping_conflict', series: '', reason: `词库存在同一机型的多组墨盒对应关系：${candidateDetails(entries, context, dIndex)}；尚未确认这些记录是否都兼容，请核对词库` });
       continue;
@@ -265,11 +281,14 @@ export function detectModelDrift(searchTerm, context, dIndex) {
       continue;
     }
     const entry = entries[0];
-    const series = cartridgeGroups(entry, dIndex)[0]?.term ?? '';
+    const groups = cartridgeGroups(entry, dIndex);
+    const series = groups.map((group) => group.term).join(' / ');
     const absence = incomplete ? '本活动已识别投放中未找到' : '本活动中未投放';
     findings.push({ token: entry.label, kind: entry.kind, series,
       reason: entry.kind === 'printer'
-        ? `${entry.label} 机型为 ${series} 系列的机型，${absence} ${series} 系列`
+        ? groups.length > 1
+          ? `${entry.label} 机型兼容 ${series} 墨盒，${absence}上述兼容墨盒系列`
+          : `${entry.label} 机型为 ${series} 系列的机型，${absence} ${series} 系列`
         : `${absence} ${entry.label} 系列`,
     });
   }

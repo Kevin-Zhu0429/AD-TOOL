@@ -208,16 +208,42 @@ test('4310 review explains both candidate printers, cartridges and campaign cove
   assert.deepEqual(check('hp deskjet 4310', '350').wrong, ['DESKJET4310']);
 });
 
-test('duplicate rows are harmless but differing mappings require a library review', () => {
+test('complete same-brand and same-series printers accept multiple compatible cartridge groups', () => {
   const result = check('amazon cartouche encre hp 2570', '338');
-  assert.equal(result.status, 'mapping_conflict');
-  for (const term of ['338, 343', '337, 343', '336, 342', '110']) assert.ok(result.findings[0].reason.includes(term));
-  assert.equal(result.findings[0].reason.split('PHOTOSMART2570').length, 2);
-  assert.equal(check('hp photosmart2570', '338').status, 'mapping_conflict');
+  assert.equal(result.status, 'matched');
+  assert.equal(check('hp photosmart2570', '110').status, 'matched');
+  const wrong = check('hp photosmart2570', '350');
+  assert.equal(wrong.status, 'drift');
+  for (const term of ['338, 343', '337, 343', '336, 342', '110']) assert.ok(wrong.findings[0].reason.includes(term));
   const duplicateIndex = buildDModelIndex({ libs: [{ id: 'D' }], items: { D: [regressionRows[5], regressionRows[5],
     { ...regressionRows[5], term: '22, 21XL, 21' }] } });
   const ctx = campaignModelContext({ ads: [{ sku: '21' }] }, [{ sku: '21', model: '21' }], duplicateIndex);
   assert.equal(detectModelDrift('hp 4310', ctx, duplicateIndex).status, 'matched');
+});
+
+test('multiple mappings without a complete series-qualified identity still require review', () => {
+  const unresolvedIndex = buildDModelIndex({ libs: [{ id: 'D' }], items: { D: [
+    { brand: 'HP', term: '45', printer: '9999' },
+    { brand: 'HP', term: '78', printer: '9999' },
+  ] } });
+  const ctx = campaignModelContext({ ads: [{ sku: '45' }] }, [{ sku: '45', model: '45' }], unresolvedIndex);
+  assert.equal(detectModelDrift('hp 9999', ctx, unresolvedIndex).status, 'mapping_conflict');
+});
+
+test('reported K7108 and MP210 relationships are treated as compatible alternatives', () => {
+  const compatibleIndex = buildDModelIndex({ libs: [{ id: 'D' }], items: { D: [
+    { brand: 'HP', term: '339, 344', series: 'OfficeJet', printer: 'K7108' },
+    { brand: 'HP', term: '338, 343', series: 'OfficeJet', printer: 'K7108' },
+    { brand: 'HP', term: '337, 343', series: 'OfficeJet', printer: 'K7108' },
+    { brand: 'Canon', term: '37, 38', series: 'PIXMA', printer: 'MP210' },
+    { brand: 'Canon', term: '40, 41', series: 'PIXMA', printer: 'MP210' },
+  ] } });
+  const contextFor = (model) => campaignModelContext(
+    { ads: [{ sku: `SKU-${model}` }] }, [{ sku: `SKU-${model}`, model }], compatibleIndex,
+  );
+  assert.equal(detectModelDrift('ink for hp K7108', contextFor('338'), compatibleIndex).status, 'matched');
+  assert.equal(detectModelDrift('canon MP210 printer', contextFor('40'), compatibleIndex).status, 'matched');
+  assert.equal(detectModelDrift('ink for hp K7108', contextFor('40'), compatibleIndex).status, 'drift');
 });
 
 test('mixed relevant and unrelated demand is partial instead of definite drift', () => {
@@ -270,10 +296,10 @@ test('search interpretation is independent of campaign and result labels use one
   assert.equal(resolveSearchModels('hp350', regressionIndex)[0].type, 'ambiguous');
   for (const [term, model, label] of [
     ['hp305xl', '350', '疑似跑偏'], ['hp 4310', '21', '需人工判断'], ['canon 350/351', '350', '需核对品牌'],
-    ['56 ou 27', '56', '部分匹配'], ['hp 2570', '338', '需核对词库'],
+    ['56 ou 27', '56', '部分匹配'], ['hp 2570', '338', '匹配'],
   ]) {
     const result = check(term, model);
     assert.equal(driftPresentation(result).label, label);
-    assert.equal(driftPresentation(result).tone, result.drift ? 'bad' : 'warn');
+    assert.equal(driftPresentation(result).tone, result.drift ? 'bad' : result.status === 'matched' ? 'good' : 'warn');
   }
 });

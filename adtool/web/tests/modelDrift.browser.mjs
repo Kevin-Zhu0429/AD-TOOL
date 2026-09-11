@@ -21,6 +21,8 @@ const rows = [
  {brand:'HP',term:'337, 343',series:'PhotoSmart',printer:'2570'},
  {brand:'HP',term:'336, 342',series:'PhotoSmart',printer:'2570'},
  {brand:'HP',term:'110',series:'PhotoSmart',printer:'2570'},
+ {brand:'HP',term:'45',printer:'9999'},
+ {brand:'HP',term:'78',printer:'9999'},
  {brand:'HP',term:'56, 57',printer:'D5550'},
  {brand:'HP',term:'27, 28',printer:'D3500'},
 ];
@@ -46,7 +48,7 @@ try {
  const errors=[];page.on('pageerror',error=>errors.push(error.message));
  await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/__drift-test`);
  await page.locator('#btnLoadA').waitFor();
- const terms=['cartouche hp 350 xl noir','hp305xl',"cartouche d'encre canon350 et 351",'hp 4310','amazon cartouche encre hp 2570',"cartouche d'encre 56 ou 27",'black ink multipack'];
+ const terms=['cartouche hp 350 xl noir','hp305xl',"cartouche d'encre canon350 et 351",'hp 4310','amazon cartouche encre hp 2570','hp 9999',"cartouche d'encre 56 ou 27",'black ink multipack'];
  function workbook(models=['350','21','56','338']){
   const wb=XLSX.utils.book_new();
   const bulk=[{Product:'Sponsored Products',Entity:'Campaign','Campaign ID':'c1','Campaign Name':'截图案例验证',State:'enabled','Daily Budget':10},
@@ -66,12 +68,21 @@ try {
  await page.locator('#fileAName').filter({hasText:'drift-fixture.xlsx'}).waitFor();
  await analysis();
  assert.equal(await page.locator('#anbody tbody tr').count(),6);
- for (const [term,label] of [['hp305xl','疑似跑偏'],[terms[2],'需核对品牌'],['hp 4310','需人工判断'],[terms[4],'需核对词库'],[terms[5],'部分匹配']]) assert.ok((await termRow(term).innerText()).includes(label),term);
+ for (const [term,label] of [['hp305xl','疑似跑偏'],[terms[2],'需核对品牌'],['hp 4310','需人工判断'],['hp 9999','需核对词库'],[terms[6],'部分匹配']]) assert.ok((await termRow(term).innerText()).includes(label),term);
+ assert.equal(await termRow(terms[4]).count(),0,'confirmed compatible PhotoSmart 2570 must not be reported');
  const ambiguous=await termRow('hp 4310').innerText();
  assert.match(ambiguous,/OFFICEJET4310[\s\S]*21, 22[\s\S]*DESKJET4310[\s\S]*308/);
  assert.ok((await termRow('hp305xl','资料缺失验证').innerText()).includes('资料不足'));
  assert.equal(await termRow(terms[0]).count(),0);
  assert.match(await page.locator('#chgCount').innerText(),/^0 处改动/);
+ assert.match(await page.locator('[data-driftfilter="drift"]').innerText(),/疑似跑偏\s+1/);
+ await page.locator('[data-driftfilter="review"]').click();
+ assert.equal(await page.locator('#anbody tbody tr').count(),1);
+ assert.ok((await page.locator('#anbody tbody tr').innerText()).includes('需人工判断'));
+ await page.locator('[data-driftfilter="mapping_conflict"]').click();
+ assert.equal(await page.locator('#anbody tbody tr').count(),1);
+ assert.ok((await page.locator('#anbody tbody tr').innerText()).includes('hp 9999'));
+ await page.locator('[data-driftfilter=""]').click();
  await page.screenshot({path:output+'drift-desktop.png'});
  await page.locator('#anQ').fill('no-such-search-term');
  await page.locator('#anbody .empty').waitFor();

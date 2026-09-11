@@ -199,7 +199,7 @@ export function mountOptimizer(root, host) {
     // 否定词库(站点级,页面挂载后由 setLibrary 送进来)和批量否定里的选词状态
     lib:null, libErr:'', market:'', skuItems:[], driftIndex:null, driftContexts:{},
     bnLib:{on:{},follow:true,q:'',off:{},models:[],only:'both',mq:'',ver:0,_sig:'',_all:[]},
-    view:'work', an:{tab:'sku',byAsin:false,q:'',pf:'',minClicks:0,mark:'',tf:'',kf:'',exp:{},stSel:{},
+    view:'work', an:{tab:'sku',byAsin:false,q:'',pf:'',minClicks:0,mark:'',tf:'',kf:'',driftFilter:'',exp:{},stSel:{},
       skuSub:{},skuExcl:{},sku:'',skuOnlyEx:false,_skuStList:[],adSel:{},_skuAds:[],
       sort:{sku:{k:'clicks',d:-1},term:{k:'spend',d:-1},kw:{k:'spend',d:-1},pf:{k:'spend',d:-1}}}
   };
@@ -1618,13 +1618,21 @@ export function mountOptimizer(root, host) {
     if(!S.lib)return '<div class="empty">D 类机型表尚未加载，暂时无法检测。</div>';
     if(!S.driftIndex?.rows.length)return '<div class="empty">当前区域 D 类词库没有型号数据，请补全词库后再检测。</div>';
     if(!S.skuItems.length)return '<div class="empty">当前站点的 SKU 库没有数据，无法从投放 SKU 识别系列。</div>';
-    var list=anDriftData();S.an._driftList=list;
+    var all=anDriftData(),counts={};
+    all.forEach(function(x){counts[x.drift.status]=(counts[x.drift.status]||0)+1});
+    var list=S.an.driftFilter?all.filter(function(x){return x.drift.status===S.an.driftFilter}):all;
+    S.an._driftList=list;
     var camps={};list.forEach(function(x){camps[x.cp.id]=1});
     var bar='<div class="anbar">'+anPfOptions()+
       '<input type="text" id="anQ" placeholder="搜活动名 / 搜索词" value="'+esc(S.an.q)+'">'+
+      (S.an.q?'<button type="button" class="btn sm" id="anQClear">清除搜索</button>':'')+
+      '<div class="seg drift-filter" aria-label="检测结果筛选">'+[
+        ['', '全部', all.length], ['drift', '疑似跑偏', counts.drift||0],
+        ['review', '需人工判断', counts.review||0], ['mapping_conflict', '需核对词库', counts.mapping_conflict||0],
+      ].map(function(o){return '<button type="button" class="sgb'+(S.an.driftFilter===o[0]?' on':'')+'" data-driftfilter="'+o[0]+'" aria-pressed="'+(S.an.driftFilter===o[0])+'">'+o[1]+' <b>'+o[2]+'</b></button>'}).join('')+'</div>'+
       '<div style="flex:1"></div><span class="flagchip bad">Beta</span><b>'+Object.keys(camps).length+'</b> 条活动 · <b>'+list.length+'</b> 个疑似或待判断词</div>'+
       '<div class="anhint">先结合品牌、墨盒词、XL 和成对编号识别搜索需求，再按当前区域 D 类词库与活动投放系列核对。疑似跑偏标红；部分匹配、品牌冲突、多机型或资料不足会说明具体原因，需核对后再决定是否否定。</div>';
-    if(!list.length)return bar+'<div class="empty">当前范围内没有检测到疑似跑偏机型词。</div>';
+    if(!list.length)return bar+'<div class="empty">'+(S.an.driftFilter?'当前范围内没有“'+esc(MD.driftPresentation({status:S.an.driftFilter}).label)+'”的搜索词。':'当前范围内没有检测到疑似跑偏机型词。')+'</div>';
     return bar+'<table class="tbl antbl"><thead><tr><th>广告活动</th><th>本活动投放系列</th><th>顾客搜索词</th><th>检测结果与原因</th>'+mHeads()+'<th>否定</th></tr></thead><tbody>'+
       list.map(function(x,i){var s=x.s;
         return '<tr class="lv-'+MD.driftPresentation(x.drift).tone+'"><td style="max-width:260px;word-break:break-all"><a class="anlink" data-angoto="'+esc(x.cp.id)+'">'+esc(x.cp.name)+'</a></td>'+
@@ -1847,6 +1855,12 @@ export function mountOptimizer(root, host) {
     if(tf){S.an.tf=tf.dataset.antf;renderAnalysis();return}
     var kf=e.target.closest('[data-ankf]');
     if(kf){S.an.kf=kf.dataset.ankf;renderAnalysis();return}
+    var df=e.target.closest('[data-driftfilter]');
+    if(df){S.an.driftFilter=df.dataset.driftfilter;renderAnalysis();return}
+    if(e.target.id==='anQClear'){
+      S.an.q='';clearTimeout(S._anT);renderAnalysis();
+      var qf=$('#anQ');if(qf)qf.focus();return;
+    }
     var ap=e.target.closest('[data-adpick]');
     if(ap){
       var op=ap.dataset.adpick;

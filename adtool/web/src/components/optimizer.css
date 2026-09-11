@@ -219,6 +219,12 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px;background:var(--ca
 .sgb:last-child{border-right:0}
 .sgb:hover{background:var(--soft)}
 .sgb.on{background:var(--fill);color:var(--on-fill)}
+.seg button.sgb{border:0;border-right:1px solid var(--line);background:transparent;font:inherit}
+.seg button.sgb:last-child{border-right:0}
+.seg button.sgb:hover{background:var(--soft)}
+.seg button.sgb.on{background:var(--fill);color:var(--on-fill)}
+.seg button.sgb:focus-visible{outline:2px solid var(--cy);outline-offset:-2px}
+.drift-filter .sgb b{font-family:var(--mono);margin-left:2px}
 .sgb.mk-red.on{background:var(--mg)} .sgb.mk-blue.on{background:var(--blue)}
 .anhint{padding:9px 18px;font-size:12px;color:var(--ink45);border-bottom:1px solid var(--line2);line-height:1.6}
 .anhint b{color:var(--ink70)}

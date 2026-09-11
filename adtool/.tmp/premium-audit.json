@@ -1,96 +1,6 @@
 {
   "findings": [
     {
-      "category": "unresolved",
-      "file": "web/src/components/AdminPage.jsx",
-      "line": 134,
-      "message": "Native select is used without an explicit ownership decision.",
-      "remediation": "Record Select/Listbox as native or reuse the authored canonical owner.",
-      "ruleId": "ownership.native-select-undecided",
-      "severity": "error"
-    },
-    {
-      "category": "unresolved",
-      "file": "web/src/components/AppShell.jsx",
-      "line": 64,
-      "message": "Native select is used without an explicit ownership decision.",
-      "remediation": "Record Select/Listbox as native or reuse the authored canonical owner.",
-      "ruleId": "ownership.native-select-undecided",
-      "severity": "error"
-    },
-    {
-      "category": "unresolved",
-      "file": "web/src/components/LibraryPage.jsx",
-      "line": 330,
-      "message": "Native select is used without an explicit ownership decision.",
-      "remediation": "Record Select/Listbox as native or reuse the authored canonical owner.",
-      "ruleId": "ownership.native-select-undecided",
-      "severity": "error"
-    },
-    {
-      "category": "unresolved",
-      "file": "web/src/components/ManualForm.jsx",
-      "line": 127,
-      "message": "Native select is used without an explicit ownership decision.",
-      "remediation": "Record Select/Listbox as native or reuse the authored canonical owner.",
-      "ruleId": "ownership.native-select-undecided",
-      "severity": "error"
-    },
-    {
-      "category": "unresolved",
-      "file": "web/src/components/NegHelper.jsx",
-      "line": 168,
-      "message": "Native select is used without an explicit ownership decision.",
-      "remediation": "Record Select/Listbox as native or reuse the authored canonical owner.",
-      "ruleId": "ownership.native-select-undecided",
-      "severity": "error"
-    },
-    {
-      "category": "unresolved",
-      "file": "web/src/components/PrinterPicker.jsx",
-      "line": 128,
-      "message": "Native select is used without an explicit ownership decision.",
-      "remediation": "Record Select/Listbox as native or reuse the authored canonical owner.",
-      "ruleId": "ownership.native-select-undecided",
-      "severity": "error"
-    },
-    {
-      "category": "unresolved",
-      "file": "web/src/components/ProductPage.jsx",
-      "line": 138,
-      "message": "Native select is used without an explicit ownership decision.",
-      "remediation": "Record Select/Listbox as native or reuse the authored canonical owner.",
-      "ruleId": "ownership.native-select-undecided",
-      "severity": "error"
-    },
-    {
-      "category": "unresolved",
-      "file": "web/src/components/SkuPage.jsx",
-      "line": 302,
-      "message": "Native select is used without an explicit ownership decision.",
-      "remediation": "Record Select/Listbox as native or reuse the authored canonical owner.",
-      "ruleId": "ownership.native-select-undecided",
-      "severity": "error"
-    },
-    {
-      "category": "unresolved",
-      "file": "web/src/components/SkuPicker.jsx",
-      "line": 88,
-      "message": "Native select is used without an explicit ownership decision.",
-      "remediation": "Record Select/Listbox as native or reuse the authored canonical owner.",
-      "ruleId": "ownership.native-select-undecided",
-      "severity": "error"
-    },
-    {
-      "category": "unresolved",
-      "file": "web/src/components/TaskForm.jsx",
-      "line": 252,
-      "message": "Native select is used without an explicit ownership decision.",
-      "remediation": "Record Select/Listbox as native or reuse the authored canonical owner.",
-      "ruleId": "ownership.native-select-undecided",
-      "severity": "error"
-    },
-    {
       "category": "violation",
       "file": "web/src/components/LoginPage.jsx",
       "line": 50,
@@ -147,7 +57,7 @@
     {
       "category": "violation",
       "file": "web/src/components/ManualForm.jsx",
-      "line": 255,
+      "line": 267,
       "message": "Literal product textarea does not show evidence of the canonical resize-none rule.",
       "remediation": "Use the shared Textarea owner or apply resize-none/resize: none with adequate height or auto-grow behavior.",
       "ruleId": "form.textarea-resize-missing",
@@ -219,7 +129,7 @@
     {
       "category": "violation",
       "file": "web/src/components/SkuPage.jsx",
-      "line": 259,
+      "line": 266,
       "message": "Literal product textarea does not show evidence of the canonical resize-none rule.",
       "remediation": "Use the shared Textarea owner or apply resize-none/resize: none with adequate height or auto-grow behavior.",
       "ruleId": "form.textarea-resize-missing",
@@ -251,25 +161,16 @@
       "remediation": "Add global scrollbar-color and scrollbar-width standards properties plus fallbacks.",
       "ruleId": "scrollbar.webkit-only",
       "severity": "error"
-    },
-    {
-      "category": "violation",
-      "file": "web/src/index.css",
-      "line": 131,
-      "message": "Scrollbar theme does not provide both standards-based scrollbar properties.",
-      "remediation": "Add global scrollbar-color and scrollbar-width standards properties plus fallbacks.",
-      "ruleId": "scrollbar.webkit-only",
-      "severity": "error"
     }
   ],
   "mode": "strict",
   "projectRoot": "C:\\Users\\zkcsk\\Desktop\\web-frontend\\adtool",
   "schemaVersion": 1,
   "summary": {
-    "errors": 29,
-    "total": 29,
-    "unresolved": 10,
-    "violations": 19,
+    "errors": 18,
+    "total": 18,
+    "unresolved": 0,
+    "violations": 18,
     "warnings": 0
   }
 }
