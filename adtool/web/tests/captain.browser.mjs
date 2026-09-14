@@ -13,36 +13,44 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const root = fileURLToPath(new URL('../', import.meta.url));
 const originalFetch = global.fetch;
 const backend = await startAbaTestServer();
-const operator = backend.db.prepare("SELECT id FROM users WHERE username = 'aba-test'").get();
-
-backend.db.prepare(
-  `INSERT INTO captain_channel_bindings
-     (user_id, brand, brand_key, country, open_channel_id, channel_name, site_id)
-   VALUES (?, 'HP', 'hp', 'DE', 'captain-browser-de', 'HP 德国店', 2)`
-).run(operator.id);
-backend.db.prepare(
+const users = Object.fromEntries(backend.db.prepare(
+  "SELECT id, username FROM users WHERE username IN ('aba-test', 'aba-other', 'aba-de')"
+).all().map((row) => [row.username, row.id]));
+const insertSku = backend.db.prepare(
   `INSERT INTO sku_items
      (user_id, country, brand, model, set_group, sku, stock, transit, dedupe)
-   VALUES (?, 'ES', 'HP', '301', 'BKC', 'BROWSER-SKU', 0, 0, 'ES|browser-sku')`
-).run(operator.id);
+   VALUES (?, ?, 'HP', '301', 'BKC', 'BROWSER-SKU', 0, 0, ?)`
+);
+insertSku.run(users['aba-test'], 'ES', 'ES|browser-sku');
+insertSku.run(users['aba-de'], 'DE', 'DE|browser-sku');
+insertSku.run(users['aba-other'], 'FR', 'FR|browser-sku');
 
 global.fetch = async (input, options = {}) => {
   const url = new URL(String(input));
   if (url.pathname === '/oauth2/token') return Response.json({ access_token: 'browser-token', expires_in: 3600 });
   if (url.pathname === '/v1/open_user/get_site_list') {
-    return Response.json({ code: 200, data: [{ site_id: 2, site_name: '德国', code: 'DE' }] });
+    return Response.json({ code: 200, data: [
+      { site_id: 1, code: 'ES' }, { site_id: 2, code: 'DE' }, { site_id: 3, code: 'FR' },
+    ] });
   }
   if (url.pathname === '/v1/open_user/get_channel_list') {
-    return Response.json({ code: 200, max_result: 1, data: [{
-      title: 'HP 德国店', site_id: 2, open_channel_id: 'captain-browser-de', status: 1,
-    }] });
+    return Response.json({ code: 200, max_result: 6, data: [
+      { title: 'CC_EU_ES', site_id: 1, open_channel_id: 'captain-browser-cc-es', status: 1 },
+      { title: 'CC_EU_DE', site_id: 2, open_channel_id: 'captain-browser-cc-de', status: 1 },
+      { title: 'CC_EU_FR', site_id: 3, open_channel_id: 'captain-browser-cc-fr', status: 1 },
+      { title: 'HP_EU_ES', site_id: 1, open_channel_id: 'captain-browser-es', status: 1 },
+      { title: 'HP_EU_DE', site_id: 2, open_channel_id: 'captain-browser-de', status: 1 },
+      { title: 'HP_EU_FR', site_id: 3, open_channel_id: 'captain-browser-fr', status: 1 },
+    ] });
   }
   if (url.pathname === '/v1/open_fba/inventory_list') {
-    assert.equal(new Headers(options.headers).get('OpenChannelId'), 'captain-browser-de');
+    const channel = new Headers(options.headers).get('OpenChannelId');
+    const stock = { 'captain-browser-es': 20, 'captain-browser-de': 20, 'captain-browser-fr': 20 }[channel];
+    assert.ok(stock);
     return Response.json({ code: 200, max_result: 1, data: [{
-      SKU: 'BROWSER-SKU', asin: 'B012345678', fulfillable_quantity: 42,
-      inbound_shipped_quantity: 3, inbound_receiving_quantity: 2,
-      inbound_working_quantity: 1, is_delete: 0,
+      SKU: 'BROWSER-SKU', asin: 'B012345678', fulfillable_quantity: stock,
+      inbound_shipped_quantity: 1, inbound_receiving_quantity: 0,
+      inbound_working_quantity: 0, is_delete: 0,
     }] });
   }
   throw new Error(`Unexpected Captain request: ${url}`);
@@ -68,31 +76,46 @@ try {
     await page.getByLabel('密码', { exact: true }).fill('local-test-password');
     await page.getByRole('button', { name: '登录', exact: true }).click();
   }
+  async function logout(username) {
+    await page.getByRole('button', { name: new RegExp(username) }).click();
+    await page.getByRole('button', { name: '退出登录' }).click();
+  }
 
-  await login('aba-test');
-  await page.locator('.topnav').getByRole('button', { name: 'SKU 库', exact: true }).click();
-  await page.getByText('HP · DE').waitFor();
-  await page.getByRole('button', { name: '同步船长库存', exact: true }).click();
-  await page.getByText(/已更新 1 行，读取 1 个库存 SKU/).waitFor();
-  const skuRow = page.locator('tbody tr').filter({ hasText: 'BROWSER-SKU' });
-  assert.match(await skuRow.innerText(), /42/);
-  assert.match(await skuRow.innerText(), /6/);
-
-  await page.getByRole('button', { name: /aba-test/ }).click();
-  await page.getByRole('button', { name: '退出登录' }).click();
   await login('aba-other');
   await page.locator('.topnav').getByRole('button', { name: '账号管理', exact: true }).click();
   await page.getByRole('button', { name: '船长库存', exact: true }).click();
   await page.getByRole('button', { name: '读取船长店铺', exact: true }).click();
-  await page.getByText('已读取 1 个库存店铺，包含 1 个真实站点').waitFor();
-  assert.equal(await page.locator('.captain-table-scroll').first().getByText('HP 德国店').count(), 1);
-  assert.equal(await page.getByLabel('HP 德国店 对应的 SKU 库品牌').inputValue(), 'HP');
+  await page.getByText('已读取 2 个库存店铺，包含 6 个真实站点').waitFor();
+  assert.equal(await page.getByLabel('CC_EU 对应的 SKU 库品牌').inputValue(), 'CC');
+  assert.equal(await page.getByLabel('CC_EU ES 负责人').inputValue(), '');
+  assert.equal(await page.getByLabel('CC_EU ES 负责人').locator('option').first().innerText(), '该国家暂无账号有此品牌 SKU');
+  assert.equal(await page.getByLabel('HP_EU 对应的 SKU 库品牌').inputValue(), 'HP');
+  assert.equal(await page.getByLabel('HP_EU ES 负责人').inputValue(), String(users['aba-test']));
+  assert.equal(await page.getByLabel('HP_EU DE 负责人').inputValue(), String(users['aba-de']));
+  assert.equal(await page.getByLabel('HP_EU FR 负责人').inputValue(), String(users['aba-other']));
+  await page.getByLabel('HP_EU DE 负责人').selectOption('');
+  await page.getByLabel('HP_EU FR 负责人').selectOption('');
+  await page.locator('tbody tr').filter({ hasText: 'HP_EU' }).getByRole('button', { name: '保存分配', exact: true }).click();
+  await page.getByText(/HP_EU 已绑定 ES/).waitFor();
+  await page.getByRole('button', { name: '同步全部库存', exact: true }).click();
+  await page.getByText(/已处理 1 个账号，更新 1 行/).waitFor();
+  assert.equal(await page.getByText('部分绑定 1/3').count(), 1);
+
+  await logout('aba-other');
+  await login('aba-test');
+  await page.locator('.topnav').getByRole('button', { name: 'SKU 库', exact: true }).click();
+  await page.getByText('HP · ES').waitFor();
+  assert.equal(await page.getByText('HP · DE').count(), 0);
+  await page.getByRole('button', { name: '同步船长库存', exact: true }).click();
+  await page.getByText(/已更新 1 行，读取 3 个库存 SKU/).waitFor();
+  const skuRow = page.locator('tbody tr').filter({ hasText: 'BROWSER-SKU' });
+  assert.match(await skuRow.innerText(), /20/);
+  assert.match(await skuRow.innerText(), /1/);
 
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.getByRole('button', { name: '同步全部库存', exact: true }).scrollIntoViewIfNeeded();
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   assert.deepEqual(pageErrors, []);
-  console.log('Captain browser workflow passed');
+  console.log('Captain country assignment browser workflow passed');
 } finally {
   global.fetch = originalFetch;
   delete process.env.CAPTAIN_CLIENT_ID;

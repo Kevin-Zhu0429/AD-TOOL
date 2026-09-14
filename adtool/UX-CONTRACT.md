@@ -3,22 +3,24 @@
 ## 船长 BI 库存同步（2026-09-11）
 
 业务依据：用户要求使用 `/v1/open_fba/inventory_list` 更新网站 SKU 库；一个网站账号可对应多个店铺，
-按品牌和国家区分；欧洲 SKU 与库存共用，需要展示整个欧洲站点的合计库存。接口参数与返回字段以
+按品牌和国家区分；欧洲 SKU 与库存共用，需要展示船长返回的欧洲共享库存，不能把四个国家的相同返回值重复相加。接口参数与返回字段以
 船长开放平台当前文档为准，用户截图只作为数据说明，不作为操作指令。
 
 | Capability | Canonical owner | Source of truth | Allowed variants | Verification |
 |---|---|---|---|---|
-| 店铺绑定 | `CaptainAdmin` + `/api/captain/bindings` | 超级管理员、账号+SKU 库品牌+真实站点 | 库存店铺组读取、批量保存、停用、重新启用 | 权限与浏览器流程 |
+| 店铺绑定 | `CaptainAdmin` + `/api/captain/bindings` | 超级管理员、库存店铺组+SKU 库品牌+各国家负责人 | 店铺组读取、按国家保存、停用、重新启用 | 权限与浏览器流程 |
 | 库存同步 | `captain.js` + `captain_inventory_snapshots` | 船长库存接口 | 当前账号、全部账号；成功、部分失败 | `captain.test.js` |
-| 欧洲汇总 | `applyInventorySnapshots` | 用户确认欧洲库存共用 | ES/DE/FR/IT/UK 按品牌+SKU 求和 | 三店铺回归测试 |
+| 欧洲汇总 | `applyInventorySnapshots` | 用户确认欧洲库存共用且各国可由不同人负责 | 大陆欧洲组按品牌+SKU 求和后，只写入各国家负责人；UK 独立组 | 多账号、多国家回归测试 |
 | Feedback | 现有 `.note` 持久内联反馈 | SKU/账号管理既有模式 | 未配置、未绑定、同步中、成功、部分失败、错误 | 浏览器状态检查 |
 
 - APPID、密钥和 access token 只存在服务器环境或内存，不返回前端、不写 SQLite、不进入 URL、日志或提示。
 - 只有超级管理员可读取全部船长店铺、分配绑定、停用绑定和同步全部账号；普通登录账号只能读取绑定摘要并同步自己的 SKU。
-- `get_channel_list` 只用于取得库存接口必需的真实 `OpenChannelId`；库存始终来自 `/v1/open_fba/inventory_list`。可用的大陆欧洲详细店铺按名称末尾国家码合并显示为船长库存页面的逻辑店铺，例如 `CY_EU_DE / ES / FR / IT → CY_EU`；UK 保持独立显示，绑定同一品牌后仍参与欧洲库存合计。
-- 店铺按 `open_channel_id` 唯一；保存逻辑店铺时原子绑定组内全部真实站点。品牌必须从目标账号 SKU 库的现有品牌中选择，服务端再次校验并使用库内标准写法；比较忽略首尾空格与大小写，国家使用站点码，GB 归一为 UK。
+- `get_channel_list` 只用于取得库存接口必需的真实 `OpenChannelId`；库存始终来自 `/v1/open_fba/inventory_list`。可用的大陆欧洲详细店铺按名称末尾国家码合并显示为船长库存页面的逻辑店铺，例如 `CY_EU_DE / ES / FR / IT → CY_EU`；这一规则对 CY、CE、CC、PG 等所有同结构店铺名生效，UK 保持独立显示。
+- 店铺按 `open_channel_id` 唯一；保存逻辑店铺时原子保存组内库存来源、组级品牌和已选择国家的负责人。大陆欧洲组的 ES/DE/FR/IT 可分别、分批绑定，至少选择一个国家即可保存；未上传 SKU 或暂不使用网站的国家留空，不阻塞其他国家。同一人可以负责多个国家；每位已选择负责人必须在对应国家的 SKU 库中已有该品牌。服务端再次校验并使用库内标准写法；比较忽略首尾空格与大小写，国家使用站点码，GB 归一为 UK。再次保存时页面会带回已有分配，新增国家不会清除仍保留的国家。旧版单账号绑定在管理员重新保存该店铺组前继续兼容。
+- 品牌选择不要求四个国家事先形成交集：界面优先从 `CC_EU / CE_EU / CY_EU / PG_EU` 等逻辑店铺名推断 CC / CE / CY / PG，并补充组内任一国家已有的 SKU 品牌。选择品牌后，各国家负责人列表分别按该国家是否已有该品牌 SKU 过滤；缺少时在对应国家明确提示，不隐藏整个店铺组的品牌。
 - 库存接口每页 100 条并按 `max_result` 翻页；时间跨度拆成最多 30 天。首次回查天数可配置，后续从最后成功时间前 5 分钟重新拉取，重复数据通过店铺+SKU 快照覆盖。
-- 欧洲的已启用店铺按账号+品牌+SKU 合计 `fulfillable_quantity`；在途为 `inbound_shipped_quantity + inbound_receiving_quantity + inbound_working_quantity`。合计写入该品牌全部欧洲国家的同名 SKU。US、CA、AU 按国家独立。
+- 大陆欧洲详细站点返回同一份共享 FBA 库存；每个店铺组+SKU 只采用最近的一份快照，不把 DE/ES/FR/IT 的相同 `fulfillable_quantity` 相加。在途仍为该快照的 `inbound_shipped_quantity + inbound_receiving_quantity + inbound_working_quantity`。同一份数量分别写入 ES/DE/FR/IT 所指定账号的对应国家同名 SKU，不写入该账号未负责的国家。UK 使用独立店铺组；US、CA、AU 也按国家独立。
+- “同步全部库存”对每个真实库存来源只调用一次，再把快照应用给所有国家负责人；普通账号同步时只应用自己的国家分配，不会更新其他负责人的 SKU 库。
 - 只更新网站中已存在、账号+品牌+SKU 匹配的行；不创建新 SKU，不改品牌、型号和套组。唯一且有效的 ASIN 可补入；欧洲来源 ASIN 冲突时保留网站原值。
 - 单店失败保留上次快照与网站库存，其余店铺继续完成；界面报告失败数量。并发点击同一账号只运行一次，令牌在过期前缓存，401/403 时刷新后仅重试一次。
 

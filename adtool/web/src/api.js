@@ -69,6 +69,8 @@ export const api = {
   saveCaptainBinding: (body) => request('/captain/bindings', { method: 'POST', body }),
   toggleCaptainBinding: (id, enabled) =>
     request(`/captain/bindings/${id}`, { method: 'PATCH', body: { enabled } }),
+  toggleCaptainAssignment: (id, enabled) =>
+    request(`/captain/assignments/${id}`, { method: 'PATCH', body: { enabled } }),
   syncAllCaptainInventory: () => request('/captain/sync-all', { method: 'POST' }),
 
   // ---------- 广告组合库（每个账号、每个站点各一份） ----------

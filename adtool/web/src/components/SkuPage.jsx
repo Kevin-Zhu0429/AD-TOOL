@@ -292,7 +292,7 @@ export default function SkuPage({ market }) {
             <div className="card captain-sync-card">
               <div className="card-title">船长库存</div>
               <p className="hint">
-                欧洲店铺按品牌合并库存，同一 SKU 会同步到 ES / DE / FR / IT / UK。
+                欧洲库存按品牌合并；这里只更新分配给你的国家，其他国家由各自负责人同步。
               </p>
               {captain?.bindings?.length ? (
                 <div className="captain-binding-list">

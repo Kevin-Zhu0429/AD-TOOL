@@ -6,6 +6,9 @@
 .captain-actions { margin-left: auto; justify-content: flex-end; }
 .captain-table-scroll { max-height: 52vh; }
 .captain-field { min-width: 150px; padding: 5px 8px; font-size: 12px; }
+.captain-assignees { display: grid; gap: 6px; min-width: 220px; }
+.captain-assignee { display: grid; grid-template-columns: 34px minmax(150px, 1fr); align-items: center; gap: 7px; }
+.captain-assignee .tag { justify-self: start; }
 .captain-store-meta { margin-top: 3px; color: var(--text-faint); font-size: 11px; }
 .captain-result { display: flex; align-items: center; gap: 6px; max-width: 260px; }
 .captain-result > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-dim); }

@@ -187,8 +187,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_sku_unique ON sku_items (user_id, dedupe);
 CREATE INDEX IF NOT EXISTS idx_sku_user ON sku_items (user_id, country);
 
 -- ---------- 船长 BI 店铺绑定与库存快照 ----------
--- API 凭证只放环境变量；这里仅保存店铺与网站账号/品牌/站点的对应关系。
--- 欧洲站点在同步时按 user_id + brand 汇总，再写回该品牌的全部欧洲 SKU 行。
+-- API 凭证只放环境变量；兼容表保存真实库存来源及旧版单账号绑定。
+-- 新版负责人关系由下方店铺组与国家分配表维护。
 CREATE TABLE IF NOT EXISTS captain_channel_bindings (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -208,6 +208,39 @@ CREATE TABLE IF NOT EXISTS captain_channel_bindings (
 
 CREATE INDEX IF NOT EXISTS idx_captain_binding_user
   ON captain_channel_bindings (user_id, brand_key, country, enabled);
+
+-- 库存来源与网站负责人分开保存。同一个欧洲库存店铺组可共用一份库存，
+-- 但 ES / DE / FR / IT 可分别写入不同网站账号的 SKU 库。
+CREATE TABLE IF NOT EXISTS captain_channel_groups (
+  group_key   TEXT PRIMARY KEY,
+  group_name  TEXT    NOT NULL,
+  scope       TEXT    NOT NULL,
+  brand       TEXT    NOT NULL,
+  brand_key   TEXT    NOT NULL,
+  enabled     INTEGER NOT NULL DEFAULT 1,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  updated_at  TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+
+CREATE TABLE IF NOT EXISTS captain_channel_group_members (
+  group_key       TEXT NOT NULL REFERENCES captain_channel_groups(group_key) ON DELETE CASCADE,
+  open_channel_id TEXT NOT NULL UNIQUE REFERENCES captain_channel_bindings(open_channel_id) ON DELETE CASCADE,
+  PRIMARY KEY (group_key, open_channel_id)
+);
+
+CREATE TABLE IF NOT EXISTS captain_channel_assignments (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  group_key  TEXT    NOT NULL REFERENCES captain_channel_groups(group_key) ON DELETE CASCADE,
+  country    TEXT    NOT NULL,
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  enabled    INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  UNIQUE (group_key, country)
+);
+
+CREATE INDEX IF NOT EXISTS idx_captain_assignment_user
+  ON captain_channel_assignments (user_id, country, enabled);
 
 -- inventory_list 是按修改时间增量返回；保存每家店最后一次看到的完整数量，
 -- 才能在多店铺之间稳定汇总，而不会因某个 SKU 本轮没变化就少算库存。
