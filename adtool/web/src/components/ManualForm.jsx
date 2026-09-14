@@ -7,6 +7,7 @@ import {
 import { Sec } from './FormBits.jsx';
 import { LibraryNegatives, ExtraNegatives } from './NegPanels.jsx';
 import SkuPicker from './SkuPicker.jsx';
+import PortfolioField from './PortfolioField.jsx';
 
 /* 一条手动广告活动 = 一整页表单,和自动广告页一样所有区块同时可见 */
 
@@ -32,14 +33,14 @@ function Unit({ on, label, hint, bid, text, count, placeholder, bidPlaceholder, 
       </div>
       {bidNote && <p className="hint unitbox-bid">{bidNote}</p>}
       <textarea
-        className="inp" rows={6} placeholder={placeholder} aria-label={`${label}投放词`}
+        className="inp resize-none" rows={6} placeholder={placeholder} aria-label={`${label}投放词`}
         value={text} onChange={(e) => onChange({ text: e.target.value })}
       />
     </div>
   );
 }
 
-export default function ManualForm({ task, plan, libCount, lib, market, onChange }) {
+export default function ManualForm({ task, plan, libCount, lib, market, skuItems, portfolios, portfolioError, onChange }) {
   const set = (patch) => onChange(patch);
   const [pick, setPick] = useState(false);
   const [pickNote, setPickNote] = useState('');
@@ -117,11 +118,10 @@ export default function ManualForm({ task, plan, libCount, lib, market, onChange
                 value={task.group} onChange={(e) => set({ group: e.target.value })}
               />
             </label>
-            <label className="field">
-              <span>广告组合编号</span>
-              <input className="inp mono" value={task.portfolio}
-                onChange={(e) => set({ portfolio: e.target.value })} />
-            </label>
+            <PortfolioField
+              task={task} skuItems={skuItems} portfolios={portfolios}
+              loading={skuItems === null || portfolios === null} error={portfolioError} onChange={set}
+            />
           </div>
           <div className="g3" style={{ marginTop: 11 }}>
             <label className="field">
@@ -265,7 +265,7 @@ export default function ManualForm({ task, plan, libCount, lib, market, onChange
           meta={<span className="stat"><b>{skuCount}</b> 个</span>}
         >
           <textarea
-            className="inp" rows={10} placeholder="这条活动要投的 SKU"
+            className="inp resize-none" rows={10} placeholder="这条活动要投的 SKU"
             value={task.skus} onChange={(e) => set({ skus: e.target.value })}
           />
           <div className="row wrap" style={{ marginTop: 9 }}>

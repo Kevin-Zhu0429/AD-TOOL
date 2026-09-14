@@ -159,7 +159,7 @@ export default function NegHelper({ market, lib, onClose }) {
                   ))}
                 </div>
                 <textarea
-                  className="inp neghelp-q" rows={2} autoFocus
+                  className="inp neghelp-q resize-none" rows={2} autoFocus
                   placeholder={PLACEHOLDER[field]}
                   value={query} onChange={(e) => setQuery(e.target.value)}
                 />
@@ -304,7 +304,7 @@ export default function NegHelper({ market, lib, onClose }) {
                 )}
 
                 <textarea
-                  className="inp neghelp-out" readOnly value={text}
+                  className="inp neghelp-out resize-none" readOnly value={text}
                   placeholder="勾中左边的行,这里出词"
                   onFocus={(e) => e.target.select()}
                 />

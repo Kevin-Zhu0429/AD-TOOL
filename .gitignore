@@ -26,3 +26,4 @@ dist-ssr
 # 生产数据目录和本地环境变量
 adtool/data-prod/
 .env
+server/.env

@@ -30,7 +30,7 @@ export default function PasswordPage({ onDone }) {
       <h1 style={{ fontSize: 19, marginBottom: 4 }}>修改密码</h1>
       <p className="hint" style={{ marginBottom: 18 }}>忘了原密码的话,找超级管理员重置。</p>
 
-      <form className="card" onSubmit={submit}>
+      <form className="card" onSubmit={submit} noValidate>
         <div className="stack" style={{ gap: 11 }}>
           <label className="field">
             <span>原密码</span>

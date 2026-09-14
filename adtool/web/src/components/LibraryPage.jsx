@@ -363,7 +363,7 @@ export default function LibraryPage({ market }) {
             <div className="card">
               <div className="card-title">批量添加</div>
               <textarea
-                className="inp" rows={7} value={draft}
+                className="inp resize-none" rows={7} value={draft}
                 placeholder={
                   lib.cols.length === 1
                     ? `一行一个\n${lib.id === 'B' ? 'epson\nbrother' : 'pad\ncord'}`

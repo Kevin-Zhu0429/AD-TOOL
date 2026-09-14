@@ -81,6 +81,8 @@
 .aba-totals strong { font-size: 18px; font-weight: 600; }
 .aba-table-heading { padding: 15px 18px 12px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .aba-table-heading > .btn { flex-shrink: 0; }
+.aba-table-actions { display: flex; align-items: center; justify-content: flex-end; gap: 12px; flex-shrink: 0; }
+.aba-export-feedback { padding: 0 18px 12px; font-size: 12px; }
 .aba-table-scroll { overflow: auto; height: clamp(650px, 74vh, 1050px); scrollbar-gutter: stable; }
 .aba-table { width: 100%; min-width: 1300px; border-collapse: separate; border-spacing: 0; font-size: 12px; }
 .aba-table th { position: sticky; top: 0; z-index: 1; background: var(--panel-2); text-align: right; border-bottom: 1px solid var(--border); white-space: nowrap; }
@@ -147,4 +149,5 @@
   .aba-view-controls > label:not(.aba-model-toggle) { flex: 1; }
   .aba-view-controls select { width: 100%; min-width: 140px; }
   .aba-table-heading { align-items: flex-start; flex-direction: column; }
+  .aba-table-actions { width: 100%; justify-content: space-between; flex-wrap: wrap; }
 }

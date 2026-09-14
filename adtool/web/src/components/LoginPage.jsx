@@ -47,7 +47,7 @@ export default function LoginPage({ onLoggedIn, theme, onToggleTheme }) {
         </>
       )}
 
-      <form className="login-card animate-in" onSubmit={submit}>
+      <form className="login-card animate-in" onSubmit={submit} noValidate>
         <button
           type="button"
           className="btn ghost icon login-theme"

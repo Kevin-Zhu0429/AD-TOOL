@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import * as XLSX from 'xlsx';
 import { api } from '../api.js';
 import './LibraryPage.css';
@@ -48,6 +48,10 @@ export default function SkuPage({ market }) {
   const [facet, setFacet] = useState({ country: '', brand: '' });
   const [checked, setChecked] = useState(() => new Set());
   const [edit, setEdit] = useState(null);          // 正在编辑的那一行:{id, ...列}
+  const [captain, setCaptain] = useState(null);
+  const [syncBusy, setSyncBusy] = useState(false);
+  const [syncMsg, setSyncMsg] = useState(null);
+  const filterRef = useRef(null);
 
   async function load(next = scope) {
     setError('');
@@ -60,7 +64,14 @@ export default function SkuPage({ market }) {
       setData(null);
     }
   }
-  useEffect(() => { load('mine'); }, []);
+  async function loadCaptain() {
+    try {
+      setCaptain(await api.captainStatus());
+    } catch (e) {
+      setCaptain({ configured: false, bindings: [], error: e.message });
+    }
+  }
+  useEffect(() => { load('mine'); loadCaptain(); }, []);
 
   const cols = useMemo(() => data?.cols ?? [], [data]);
   const items = useMemo(() => data?.items ?? [], [data]);
@@ -139,6 +150,23 @@ export default function SkuPage({ market }) {
       setEdit(null);
       return result;
     }, '已保存');
+  }
+
+  async function syncCaptain() {
+    setSyncBusy(true);
+    setSyncMsg(null);
+    try {
+      const result = await api.syncCaptainInventory();
+      await Promise.all([load(scope), loadCaptain()]);
+      const text = `已更新 ${result.updated} 行，读取 ${result.fetched} 个库存 SKU` +
+        (result.unmatched ? `，${result.unmatched} 个 SKU 在网站库里未匹配` : '') +
+        (result.failed ? `，${result.failed} 家店铺失败` : '');
+      setSyncMsg({ kind: result.failed ? 'warn' : 'ok', text });
+    } catch (e) {
+      setSyncMsg({ kind: 'err', text: e.message });
+    } finally {
+      setSyncBusy(false);
+    }
   }
 
   function downloadTemplate() {
@@ -261,10 +289,42 @@ export default function SkuPage({ market }) {
       <div className="lib-body">
         <div className="stack">
           {mine && (
+            <div className="card captain-sync-card">
+              <div className="card-title">船长库存</div>
+              <p className="hint">
+                欧洲店铺按品牌合并库存，同一 SKU 会同步到 ES / DE / FR / IT / UK。
+              </p>
+              {captain?.bindings?.length ? (
+                <div className="captain-binding-list">
+                  {captain.bindings.map((binding) => (
+                    <div key={binding.id}>
+                      <span>{binding.brand} · {binding.country}</span>
+                      <b className={`tag ${binding.enabled ? 'green' : 'gray'}`}>
+                        {binding.enabled ? '已绑定' : '已停用'}
+                      </b>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="hint captain-sync-empty">
+                  {captain?.configured ? '还没有绑定店铺，请联系超级管理员。' : '服务器尚未配置船长 API。'}
+                </p>
+              )}
+              <button
+                className="btn primary captain-sync-button"
+                disabled={syncBusy || !captain?.configured || !captain?.bindings?.some((binding) => binding.enabled)}
+                onClick={syncCaptain}
+              >
+                {syncBusy ? '正在同步…' : '同步船长库存'}
+              </button>
+              {syncMsg && <div className={`note ${syncMsg.kind}`} role={syncMsg.kind === 'err' ? 'alert' : 'status'}>{syncMsg.text}</div>}
+            </div>
+          )}
+          {mine && (
           <div className="card">
             <div className="card-title">批量添加</div>
             <textarea
-              className="inp" rows={8} value={draft}
+              className="inp resize-none" rows={8} value={draft}
               placeholder={`从 Excel 直接复制粘贴,一行一个 SKU\n列的顺序:${cols.map((c) => c.label).join(' → ')}\n\nES\tHP\t301\tBKC\tCY-ES-HP301XL-BKCL\t120\t300`}
               onChange={(e) => setDraft(e.target.value)}
             />
@@ -301,10 +361,20 @@ export default function SkuPage({ market }) {
 
         <div className="card lib-main">
           <div className="row wrap" style={{ marginBottom: 11 }}>
-            <input
-              className="inp" style={{ width: 190 }} placeholder="搜索(所有列)…"
-              value={filter} onChange={(e) => setFilter(e.target.value)}
-            />
+            <div className="sku-search">
+              <input
+                ref={filterRef}
+                className="inp" placeholder="搜索(所有列)…"
+                value={filter} onChange={(e) => setFilter(e.target.value)}
+              />
+              {filter && (
+                <button
+                  className="btn ghost icon sku-search-clear"
+                  aria-label="清空 SKU 搜索"
+                  onClick={() => { setFilter(''); filterRef.current?.focus(); }}
+                >×</button>
+              )}
+            </div>
             {facetValues.countries.length > 1 && (
               <select
                 className="inp" style={{ width: 110 }} value={facet.country}

@@ -30,6 +30,7 @@ export default function AppShell({
     ...(user.adOpt ? [{ id: 'optimizer', label: '广告优化', icon: 'chart' }] : []),
     { id: 'library', label: '否定词库', icon: 'book' },
     { id: 'skus', label: 'SKU 库', icon: 'file' },
+    { id: 'portfolios', label: '广告组合库', icon: 'layers' },
     { id: 'aba', label: 'ABA 报告', icon: 'chart' },
     ...(user.productIntel ? [{ id: 'products', label: '产品情报', icon: 'chart' }] : []),
     { id: 'tools', label: '小工具', icon: 'box' },

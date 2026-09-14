@@ -11,6 +11,7 @@ import ManualPage from './components/ManualPage.jsx';
 import OptimizerPage from './components/OptimizerPage.jsx';
 import LibraryPage from './components/LibraryPage.jsx';
 import SkuPage from './components/SkuPage.jsx';
+import PortfolioPage from './components/PortfolioPage.jsx';
 import AdminPage from './components/AdminPage.jsx';
 import ProfilePage from './components/ProfilePage.jsx';
 import ProductPage from './components/ProductPage.jsx';
@@ -46,6 +47,15 @@ export default function App() {
       .catch(() => {})
       .finally(() => setChecking(false));
   }, []);
+
+  useEffect(() => {
+    const labels = {
+      home: '首页', builder: '自动广告', manual: '手动广告', optimizer: '广告优化',
+      library: '否定词库', skus: 'SKU 库', portfolios: '广告组合库', aba: 'ABA 报告',
+      products: '产品情报', tools: '小工具', admin: '账号管理', profile: '个人资料',
+    };
+    document.title = `${labels[page] ?? '首页'} — 广告工作台`;
+  }, [page]);
 
   function onLoggedIn(u) {
     setUser(u);
@@ -99,6 +109,8 @@ export default function App() {
       null
     ) : page === 'skus' ? (
       <SkuPage key={market} market={market} />
+    ) : page === 'portfolios' ? (
+      <PortfolioPage key={market} market={market} />
     ) : page === 'aba' ? (
       <AbaPage key={`${user.id}:${market}`} market={market} userId={user.id} />
     ) : page === 'library' ? (

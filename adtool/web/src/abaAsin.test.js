@@ -94,6 +94,11 @@ test('weekly averages use each query observed weeks, preserve decimals and add u
   assert.equal(group.asin_clicks, 13.5);
   assert.equal(group.query_count, 2);
   assert.equal(group.asin_cvr, group.asin_purchases / 13.5 * 100);
+  assert.equal(group.query_rows, undefined);
+  const exportedGroup = aggregateAsinView(rows, { average: true, view: 'printers', includeQueries: true })[0];
+  assert.deepEqual(exportedGroup.query_rows.map((row) => row.query), ['hp deskjet 2820e', 'rare printer query']);
+  assert.equal(exportedGroup.query_rows[0].asin_clicks, 10.5);
+  assert.equal(exportedGroup.query_rows[0].asin_cvr, exportedGroup.query_rows[0].asin_purchases / 10.5 * 100);
   const series = aggregateAsinView([...rows, { ...base, asin: 'B000008888' }], { average: true, series: true })[0];
   assert.equal(series.market_clicks, 100);
   assert.equal(series.asin_clicks, 15.5);

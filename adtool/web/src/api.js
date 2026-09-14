@@ -61,6 +61,23 @@ export const api = {
   updateSku: (id, body) => request(`/sku/${id}`, { method: 'PATCH', body }),
   deleteSkus: (ids) => request('/sku/delete', { method: 'POST', body: { ids } }),
 
+  // ---------- 船长 BI 库存同步 ----------
+  captainStatus: () => request('/captain/status'),
+  syncCaptainInventory: () => request('/captain/sync', { method: 'POST' }),
+  captainAdmin: () => request('/captain/admin'),
+  discoverCaptainChannels: () => request('/captain/discover', { method: 'POST' }),
+  saveCaptainBinding: (body) => request('/captain/bindings', { method: 'POST', body }),
+  toggleCaptainBinding: (id, enabled) =>
+    request(`/captain/bindings/${id}`, { method: 'PATCH', body: { enabled } }),
+  syncAllCaptainInventory: () => request('/captain/sync-all', { method: 'POST' }),
+
+  // ---------- 广告组合库（每个账号、每个站点各一份） ----------
+  portfolios: (marketplace) => request(`/portfolio?marketplace=${encodeURIComponent(marketplace)}`),
+  addPortfolioRows: (marketplace, rows, replace = false) =>
+    request('/portfolio/rows', { method: 'POST', body: { marketplace, rows, replace } }),
+  updatePortfolio: (id, body) => request(`/portfolio/${id}`, { method: 'PATCH', body }),
+  deletePortfolios: (ids) => request('/portfolio/delete', { method: 'POST', body: { ids } }),
+
   // ---------- 分市场产品库与竞品分析 ----------
   products: (marketplace, dataMonth = '') => {
     const q = new URLSearchParams({ marketplace });

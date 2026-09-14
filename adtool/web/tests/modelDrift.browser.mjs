@@ -34,7 +34,7 @@ import css from '/src/components/optimizer.css?inline';
 const host=document.querySelector('#host');const shadow=host.attachShadow({mode:'open'});
 const style=document.createElement('style');style.textContent=css;shadow.append(style);
 const mount=document.createElement('div');shadow.append(mount);
-const app=mountOptimizer(mount,host);
+const app=mountOptimizer(mount,host,{streamThresholdBytes:1});
 const library=${JSON.stringify(library)},skus=${JSON.stringify(skus)};
 window.updateTestLibrary=(items=skus,lib=library)=>app.setLibrary('FR',lib,'',items);
 window.updateTestLibrary();
@@ -66,6 +66,9 @@ try {
  const termRow=(term,campaign='截图案例验证')=>page.locator('#anbody tbody tr').filter({has:page.getByText(term,{exact:true})}).filter({hasText:campaign});
  await page.locator('#fileA').setInputFiles(workbook());
  await page.locator('#fileAName').filter({hasText:'drift-fixture.xlsx'}).waitFor();
+ await page.locator('#btnSet').click();
+ assert.equal(await page.locator('#s_scope option[value="all"]').isDisabled(),true,'streamed workbook only exports changed rows');
+ await page.locator('#maskSet [data-close]').click();
  await analysis();
  assert.equal(await page.locator('#anbody tbody tr').count(),6);
  for (const [term,label] of [['hp305xl','疑似跑偏'],[terms[2],'需核对品牌'],['hp 4310','需人工判断'],['hp 9999','需核对词库'],[terms[6],'部分匹配']]) assert.ok((await termRow(term).innerText()).includes(label),term);

@@ -110,7 +110,8 @@ abaAsinRouter.get('/', (req, res) => {
   const average = req.query.aggregation === 'average' && selectedWeeks.length > 1;
   const merged = average || req.query.merge !== '0';
   const view = req.query.view === 'printers' ? 'printers' : 'queries';
-  const items = aggregateAsinView(rows, { series: !!model, view, mergeWeeks: merged, average, modelLabel: selectedModel?.label });
+  const exportAll = req.query.export === '1' && view === 'printers';
+  const items = aggregateAsinView(rows, { series: !!model, view, mergeWeeks: merged, average, modelLabel: selectedModel?.label, includeQueries: exportAll });
   const sort = ASIN_COLUMNS.some((c) => c.key === req.query.sort) || (view === 'printers' && req.query.sort === 'query_count') ? req.query.sort : 'market_impressions';
   const direction = req.query.direction === 'asc' ? 'asc' : 'desc';
   items.sort((a, b) => {
@@ -126,5 +127,5 @@ abaAsinRouter.get('/', (req, res) => {
     unlinkedAsins: [...new Set(dated.filter((r) => !skuItems.some((s) => s.asin === r.asin && String(s.model ?? '').trim())).map((r) => r.asin))],
     asins: [...new Set(brandReports.map((r) => r.asin))], skuItems: filteredSkus, weeks, selectedWeeks,
     selectedReportCount: selected.size, hasModelLibrary: !!dRows.length, total: items.length, recordCount: rows.length,
-    items: items.slice((page - 1) * pageSize, page * pageSize), sort, direction, page, pageSize, pageCount, merged, view, aggregation: average ? 'average' : 'sum' });
+    items: exportAll ? items : items.slice((page - 1) * pageSize, page * pageSize), sort, direction, page, pageSize, pageCount, merged, view, aggregation: average ? 'average' : 'sum' });
 });

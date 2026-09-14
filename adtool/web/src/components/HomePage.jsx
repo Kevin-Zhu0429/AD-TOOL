@@ -113,6 +113,12 @@ export default function HomePage({ user, market, onNav, theme, onOpenChangelog }
           meta="模板导入 · 只有自己看得到"
           onClick={() => onNav('skus')}
         />
+        <EntryCard
+          tone="violet" icon="layers" title={`${market} 站广告组合库`}
+          desc="导入广告组合编号和名称。开自动或手动广告时，会按投放 SKU 的型号自动选择对应 Series；多个系列自动选择混投，也可手动覆盖。"
+          meta="两列模板 · 每个账号独立"
+          onClick={() => onNav('portfolios')}
+        />
         {user.productIntel && (
           <EntryCard
             tone="amber" icon="chart" title={`${market} 站产品情报`}

@@ -111,6 +111,8 @@ test('ASIN reports: authenticated storage, raw metrics, SKU linkage and filter b
     const scope = '&asin=B000000305&weeks=2026-08-29,2026-09-05';
     const result = await get(scope + '&view=printers&sort=query_count');
     assert.equal(result.total, 3);
+    const exported = await get(scope + '&view=printers&sort=query_count&pageSize=25&export=1');
+    assert.equal(exported.items.length, exported.total);
     const group = result.items.find((r) => /2820/.test(r.recognition));
     assert.equal(group.query_count, 2);
     assert.equal(group.market_clicks, 140);
@@ -118,6 +120,10 @@ test('ASIN reports: authenticated storage, raw metrics, SKU linkage and filter b
     assert.equal(group.market_cvr, 40 / 140 * 100);
     assert.equal(group.asin_cvr, 50);
     assert.equal(group.brand_share, 25);
+    assert.equal(group.query_rows, undefined);
+    const exportedGroup = exported.items.find((r) => /2820/.test(r.recognition));
+    assert.deepEqual(exportedGroup.query_rows.map((row) => row.query), ['hp deskjet 2820e', 'tinta hp 2820.e']);
+    assert.equal(exportedGroup.query_rows[0].market_clicks, 120);
     const children = await get(scope + '&group=' + encodeURIComponent(group.group.key));
     assert.equal(children.total, 2);
     assert.equal(children.items.reduce((n, r) => n + r.asin_purchases, 0), group.asin_purchases);

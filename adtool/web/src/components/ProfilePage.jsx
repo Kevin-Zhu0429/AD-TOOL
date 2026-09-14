@@ -74,7 +74,7 @@ export default function ProfilePage({ user, onUserChange, onDone }) {
         </div>
       </div>
 
-      <form className="card" onSubmit={saveName}>
+      <form className="card" onSubmit={saveName} noValidate>
         <div className="card-title"><Icon name="user" className="ico-sm" />显示姓名</div>
         <p className="hint" style={{ marginBottom: 12 }}>
           这个名字会出现在词库的「添加人」和操作记录里。
@@ -94,7 +94,7 @@ export default function ProfilePage({ user, onUserChange, onDone }) {
         {nameMsg && <div className={`note ${nameMsg.kind}`} style={{ marginTop: 11 }}>{nameMsg.text}</div>}
       </form>
 
-      <form className="card" onSubmit={savePassword}>
+      <form className="card" onSubmit={savePassword} noValidate>
         <div className="card-title"><Icon name="lock" className="ico-sm" />修改密码</div>
         <p className="hint" style={{ marginBottom: 12 }}>
           忘了密码就找超级管理员重置。

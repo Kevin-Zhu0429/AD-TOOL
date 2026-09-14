@@ -7,6 +7,7 @@ import * as XLSX from 'xlsx';
 import * as C from './optCore.js';
 import * as NL from './negLib.js';
 import * as MD from './modelDrift.js';
+import { parseBulkWorkbookFile } from './largeWorkbook.js';
 
 const MARKUP = `
 <div class="app">
@@ -26,6 +27,11 @@ const MARKUP = `
     <button class="btn pri" id="btnExport">导出批量表</button>
   </div>
   <div class="cmyk"><i></i><i></i><i></i><i></i></div>
+  <div class="loadbar" id="loadBar" role="status" aria-live="polite" aria-atomic="true" hidden>
+    <div class="loadcopy"><strong id="loadTitle">正在读取批量表</strong><span id="loadDetail"></span></div>
+    <progress id="loadProgress" max="100"></progress>
+    <button class="btn sm" id="loadAction" type="button">取消</button>
+  </div>
 
   <div class="kpibar" id="kpibar" style="display:none"></div>
 
@@ -113,6 +119,7 @@ const MARKUP = `
       <select id="s_vocab"><option value="">跟随原表</option><option value="zh">中文（更新/已暂停）</option><option value="en">英文（Update/paused）</option></select>
       <label>导出范围</label>
       <select id="s_scope"><option value="changed">仅改动行（推荐）</option><option value="all">完整表（未改动行留空操作列）</option></select>
+      <div class="hint" id="s_scope_hint" hidden>大文件为保证生成稳定，仅支持导出改动行。</div>
       <label>货币符号</label><input type="text" id="s_cur" style="text-align:center">
       <div class="hint">枚举值默认跟随你下载的批量表语言。若上传被后台拒收，换一种写法再导一次即可。</div>
     </div>
@@ -181,7 +188,8 @@ const MARKUP = `
  * 返回 { unmount, setLibrary } —— 站点否定词库由外面的 React 页面拉好再送进来,
  * 批量否定就能直接用词库里的词。
  */
-export function mountOptimizer(root, host) {
+export function mountOptimizer(root, host, options) {
+  options=options||{};
   root.innerHTML = MARKUP;
 
   // 挂在 window / host 上的监听要能收回,离开这一页时不留东西
@@ -189,7 +197,7 @@ export function mountOptimizer(root, host) {
   const on = (el, ev, fn) => { el.addEventListener(ev, fn); offs.push(() => el.removeEventListener(ev, fn)); };
 
   var S = {
-    model:null, raw:null, fileName:'',
+    model:null, raw:null, sourceFile:null, largeFile:false, loading:false, loadAbort:null, fileName:'',
     changes:new C.ChangeSet(), cfg:Object.assign({},C.DEFAULT_CFG),
     cur:'€', vocab:'', scope:'changed',
     sel:null, tab:'placement', filter:'all', pf:'', sort:'spend', q:'',
@@ -218,29 +226,70 @@ export function mountOptimizer(root, host) {
   function stateLabel(k){ return {enabled:'已启用',paused:'已暂停',archived:'已存档'}[k]||k }
 
   /* ---------- 载入 ---------- */
-  function readFile(file, cb){
-    var fr=new FileReader();
-    fr.onload=function(e){ try{ cb(new Uint8Array(e.target.result)); }catch(err){ alert('解析失败：'+err.message); } };
-    fr.onerror=function(){ alert('文件读取失败'); };
-    fr.readAsArrayBuffer(file);
+  function fileSize(n){
+    if(n>=1024*1024)return (n/1024/1024).toFixed(n>=100*1024*1024?0:1)+' MB';
+    return Math.max(1,Math.round(n/1024))+' KB';
   }
-  function loadMain(file){
-    readFile(file,function(bytes){
-      try{
-        var m=C.parse(bytes);
-        S.model=m; S.raw=bytes; S.fileName=file.name; S.changes=new C.ChangeSet(); S.driftContexts={};
-        S.periodTouched=false; S.stRptName='';
-        setTerms(m.searchTerms||[]);
-        autoPeriodLabel(file.name);
-        if(m.currency) S.cur=m.currency==='EUR'?'€':(m.currency==='USD'?'$':(m.currency==='GBP'?'£':m.currency+' '));
-        S.sel=null; S.checked={}; S.an.exp={}; S.an.stSel={}; S.an.q=''; setView('work');
-        $('#fileAName').textContent=file.name;
-        $('#drop').style.display='none'; $('#main').style.display='grid';
-        $('#kpibar').style.display='flex'; $('#footbar').style.display='flex';
-        buildPortfolios(); renderAll();
-        toast('已载入 '+m.campaigns.length+' 条广告活动');
-      }catch(err){ alert('解析失败：'+err.message); }
-    });
+  function setLoadState(kind,title,detail,percent){
+    var bar=$('#loadBar'),progress=$('#loadProgress'),action=$('#loadAction');
+    bar.hidden=false;bar.classList.toggle('error',kind==='error');
+    bar.setAttribute('role',kind==='error'?'alert':'status');
+    $('#loadTitle').textContent=title;$('#loadDetail').textContent=detail||'';
+    if(typeof percent==='number'){progress.hidden=false;progress.value=percent}else progress.hidden=true;
+    action.textContent=kind==='busy'?'取消':'重新选择';
+    action.dataset.mode=kind==='busy'?'cancel':'choose';
+    $('#btnLoadA').disabled=kind==='busy';$('#btnLoadA2').disabled=kind==='busy';
+  }
+  function clearLoadState(){
+    $('#loadBar').hidden=true;$('#btnLoadA').disabled=false;$('#btnLoadA2').disabled=false;
+  }
+  $('#loadAction').onclick=function(){
+    if(this.dataset.mode==='cancel')S.loadAbort?.abort();
+    else $('#fileA').click();
+  };
+  async function readFile(file,cb){
+    try{return await cb(new Uint8Array(await file.arrayBuffer()))}
+    catch(err){throw new Error('文件读取失败：'+err.message)}
+  }
+  async function loadMain(file){
+    if(S.loading)return;
+    var controller=new AbortController(),lastUpdate=0,lastStage='',lastPercent=-1;
+    S.loading=true;S.loadAbort=controller;
+    setLoadState('busy','正在读取 '+file.name,fileSize(file.size),0);
+    try{
+      var result=await parseBulkWorkbookFile(file,{signal:controller.signal,streamThresholdBytes:options.streamThresholdBytes,onProgress:function(info){
+        var now=performance.now(),stageChanged=info.stage!==lastStage,percentChanged=info.percent!==lastPercent;
+        if(!stageChanged&&!percentChanged&&now-lastUpdate<120)return;
+        lastUpdate=now;lastStage=info.stage;lastPercent=info.percent;
+        var detail=fileSize(file.size)+(info.rows?' · 已读取 '+info.rows.toLocaleString('zh-CN')+' 行':'');
+        setLoadState('busy',info.stage,detail,info.percent);
+      }});
+      if(controller.signal.aborted)return;
+      var m=result.model;
+      setLoadState('busy','正在准备工作台',m.rows.length.toLocaleString('zh-CN')+' 行 · '+m.campaigns.length.toLocaleString('zh-CN')+' 条广告活动',100);
+      await new Promise(function(resolve){requestAnimationFrame(resolve)});
+      S.model=m;S.raw=result.raw;S.sourceFile=file;S.largeFile=result.largeFile;S.fileName=file.name;
+      if(S.largeFile&&S.scope==='all')S.scope='changed';
+      S.changes=new C.ChangeSet();S.driftContexts={};S.periodTouched=false;S.stRptName='';
+      setTerms(m.searchTerms||[]);
+      autoPeriodLabel(file.name);
+      if(m.currency)S.cur=m.currency==='EUR'?'€':(m.currency==='USD'?'$':(m.currency==='GBP'?'£':m.currency+' '));
+      S.sel=null;S.checked={};S.an.exp={};S.an.stSel={};S.an.q='';setView('work');
+      $('#fileAName').textContent=file.name;
+      $('#drop').style.display='none';$('#main').style.display='grid';
+      $('#kpibar').style.display='flex';$('#footbar').style.display='flex';
+      buildPortfolios();renderAll();clearLoadState();
+      toast('已载入 '+m.campaigns.length.toLocaleString('zh-CN')+' 条广告活动');
+    }catch(err){
+      if(err?.name==='AbortError'){
+        clearLoadState();toast('已取消读取批量表');
+      }else{
+        var hint=/DecompressionStream/.test(err?.message||'')?' 请使用最新版 Chrome 或 Edge 再试。':'';
+        setLoadState('error','批量表读取失败',(err?.message||String(err))+hint,null);
+      }
+    }finally{
+      if(S.loadAbort===controller){S.loading=false;S.loadAbort=null}
+    }
   }
 
   /* ---------- 事件：载入 ---------- */
@@ -255,7 +304,7 @@ export function mountOptimizer(root, host) {
         if(!res.matched){ alert('报告解析成功，但没有一条能匹配到当前批量表里的广告活动。请确认两份文件来自同一个店铺。'); return; }
         mergeStReport({terms:res.terms,file:file.name,matched:res.matched,unmatched:res.unmatched});
       }catch(err){ alert('搜索词报告解析失败：'+err.message); }
-    });
+    }).catch(function(err){setLoadState('error','搜索词报告读取失败',err.message,null)});
   }
   ['dragenter','dragover'].forEach(function(ev){on(host,ev,function(e){e.preventDefault();$('#dropbox')&&$('#dropbox').classList.add('dragover')})});
   ['dragleave','drop'].forEach(function(ev){on(host,ev,function(e){e.preventDefault();$('#dropbox')&&$('#dropbox').classList.remove('dragover')})});
@@ -1156,6 +1205,9 @@ export function mountOptimizer(root, host) {
     $('#s_ctr').value=(S.cfg.lowCtr*100).toFixed(2); $('#s_cvr').value=(S.cfg.lowCvr*100).toFixed(0);
     $('#s_skucvr').value=(S.cfg.skuCvrMin*100).toFixed(0); $('#s_skuacos').value=(S.cfg.skuAcosMax*100).toFixed(1);
     $('#s_skudead').value=S.cfg.skuDeadClicks;
+    var fullOption=$('#s_scope').querySelector('option[value="all"]');
+    fullOption.disabled=S.largeFile;$('#s_scope_hint').hidden=!S.largeFile;
+    if(S.largeFile&&S.scope==='all')S.scope='changed';
     $('#s_vocab').value=S.vocab; $('#s_scope').value=S.scope; $('#s_cur').value=S.cur;
     $('#maskSet').classList.add('on');
   };
@@ -1168,7 +1220,7 @@ export function mountOptimizer(root, host) {
     S.cfg.skuCvrMin=(parseFloat($('#s_skucvr').value)||20)/100;
     S.cfg.skuAcosMax=(parseFloat($('#s_skuacos').value)||6.5)/100;
     S.cfg.skuDeadClicks=parseFloat($('#s_skudead').value)||5;
-    S.vocab=$('#s_vocab').value; S.scope=$('#s_scope').value; S.cur=$('#s_cur').value||'€';
+    S.vocab=$('#s_vocab').value; S.scope=S.largeFile?'changed':$('#s_scope').value; S.cur=$('#s_cur').value||'€';
     $('#maskSet').classList.remove('on'); renderAll(); toast('规则已更新');
   };
 
@@ -1210,9 +1262,19 @@ export function mountOptimizer(root, host) {
     $('#expGo').disabled=issues.some(function(i){return i.level==='error'});
     $('#maskExp').classList.add('on');
   };
-  $('#expGo').onclick=function(){
+  $('#expGo').onclick=async function(){
+    var button=this,oldText=button.textContent;
     try{
-      var wb=XLSX.read(S.raw,{type:'array'});
+      button.disabled=true;button.textContent='正在生成…';
+      var wb;
+      if(S.largeFile){
+        if(S.scope==='all')throw new Error('大文件只能导出改动行。');
+        var sourceBytes=new Uint8Array(await S.sourceFile.arrayBuffer());
+        var source=XLSX.read(sourceBytes,{type:'array',sheets:['广告组合','Portfolios']});
+        wb=XLSX.utils.book_new();
+        var portfolioName=source.SheetNames.find(function(name){return (name==='广告组合'||name==='Portfolios')&&source.Sheets[name]});
+        if(portfolioName)XLSX.utils.book_append_sheet(wb,source.Sheets[portfolioName],portfolioName);
+      }else wb=XLSX.read(S.raw,{type:'array'});
       var rows=C.buildExportRows(S.model,S.changes,{vocab:S.vocab});
       var aoa;
       if(S.scope==='all'){
@@ -1228,14 +1290,21 @@ export function mountOptimizer(root, host) {
       }else{
         aoa=[S.model.header].concat(rows);
       }
-      wb.Sheets[S.model.sheetName]=XLSX.utils.aoa_to_sheet(aoa);
+      var outputSheet=XLSX.utils.aoa_to_sheet(aoa);
+      if(wb.SheetNames.indexOf(S.model.sheetName)<0)XLSX.utils.book_append_sheet(wb,outputSheet,S.model.sheetName);
+      else wb.Sheets[S.model.sheetName]=outputSheet;
       // 导出的批量表只需要广告组合与商品推广活动两个工作表
       var dropped=C.retainExportSheets(wb,S.model.sheetName);
       var out=XLSX.write(wb,{type:'array',bookType:'xlsx'});
       download(new Blob([out],{type:'application/octet-stream'}),exportName('xlsx'));
       $('#maskExp').classList.remove('on');
       toast('已生成批量表，回后台上传即可'+(dropped.length?'（已摘掉 '+dropped.length+' 个后台不收的工作表）':''));
-    }catch(err){ alert('导出失败：'+err.message); }
+    }catch(err){
+      var box=document.createElement('div');box.className='diag export-error';box.setAttribute('role','alert');
+      var title=document.createElement('h4');title.textContent='导出失败';
+      var detail=document.createElement('div');detail.textContent=err?.message||String(err);
+      box.append(title,detail);$('#expBody').append(box);
+    }finally{button.textContent=oldText;button.disabled=false}
   };
   $('#btnCsv').onclick=$('#chgCsv').onclick=function(){
     var list=C.changeList(S.model,S.changes);

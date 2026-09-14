@@ -1,0 +1,16 @@
+.captain-admin { min-width: 0; }
+.captain-admin-loading { min-height: 96px; color: var(--text-faint); }
+.captain-intro { display: flex; align-items: center; gap: 20px; }
+.captain-intro > div:first-child { max-width: 720px; }
+.captain-intro .card-title { margin-bottom: 7px; }
+.captain-actions { margin-left: auto; justify-content: flex-end; }
+.captain-table-scroll { max-height: 52vh; }
+.captain-field { min-width: 150px; padding: 5px 8px; font-size: 12px; }
+.captain-store-meta { margin-top: 3px; color: var(--text-faint); font-size: 11px; }
+.captain-result { display: flex; align-items: center; gap: 6px; max-width: 260px; }
+.captain-result > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-dim); }
+
+@media (max-width: 760px) {
+  .captain-intro { align-items: stretch; flex-direction: column; }
+  .captain-actions { margin-left: 0; justify-content: flex-start; }
+}

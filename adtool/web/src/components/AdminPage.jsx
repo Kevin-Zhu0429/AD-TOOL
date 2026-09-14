@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
+import CaptainAdmin from './CaptainAdmin.jsx';
 import './AdminPage.css';
 
 const ROLES = [
@@ -104,6 +105,9 @@ export default function AdminPage({ user, markets }) {
         </button>
         <button className={`lib-tab${tab === 'audit' ? ' on' : ''}`} onClick={() => setTab('audit')}>
           操作留痕
+        </button>
+        <button className={`lib-tab${tab === 'captain' ? ' on' : ''}`} onClick={() => setTab('captain')}>
+          船长库存
         </button>
       </div>
 
@@ -392,6 +396,8 @@ export default function AdminPage({ user, markets }) {
           </div>
         </div>
       )}
+
+      {tab === 'captain' && <CaptainAdmin users={users} />}
     </div>
   );
 }

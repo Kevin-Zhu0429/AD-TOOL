@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import * as XLSX from 'xlsx';
 import { api } from '../api.js';
+import { buildAsinGroupExport } from '../abaAsinExport.js';
 import AbaAsinTable from './AbaAsinTable.jsx';
 import { AbaPagination } from './AbaTable.jsx';
 import AbaReportUpload from './AbaReportUpload.jsx';
@@ -7,6 +9,7 @@ import AbaReportUpload from './AbaReportUpload.jsx';
 const number = new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 0 });
 const defaults = { brand: '', aggregation: 'sum', model: '', view: 'queries', month: '', asin: '', skuId: '', q: '', wordType: 'all', merge: '1', sort: 'market_impressions', direction: 'desc', page: 1, pageSize: 100 };
 const storageKey = (userId, market) => `aba-asin-filters:${userId}:${market}`;
+const displayKey = (userId, market) => `aba-asin-hide-codes:${userId}:${market}`;
 function restore(userId, market) {
   try {
     const saved = JSON.parse(sessionStorage.getItem(storageKey(userId, market)) || '{}');
@@ -27,11 +30,24 @@ export default function AbaAsinView({ market, userId }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [revision, setRevision] = useState(0);
+  const [hideCodes, setHideCodes] = useState(() => {
+    try { return sessionStorage.getItem(displayKey(userId, market)) === '1'; } catch { return false; }
+  });
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState('');
   const searchRef = useRef(null);
-  const change = (patch) => setFilters((f) => ({ ...f, ...patch, page: patch.page ?? 1 }));
+  const exportControllerRef = useRef(null);
+  const change = (patch) => {
+    setExportError('');
+    setFilters((f) => ({ ...f, ...patch, page: patch.page ?? 1 }));
+  };
   useEffect(() => {
     try { sessionStorage.setItem(storageKey(userId, market), JSON.stringify(filters)); } catch { /* Optional filter persistence. */ }
   }, [filters, userId, market]);
+  useEffect(() => {
+    try { sessionStorage.setItem(displayKey(userId, market), hideCodes ? '1' : '0'); } catch { /* Optional display preference. */ }
+  }, [hideCodes, userId, market]);
+  useEffect(() => () => exportControllerRef.current?.abort(), []);
   useEffect(() => {
     if (composing || search === filters.q) return;
     const timer = setTimeout(() => setFilters((f) => ({ ...f, q: search, page: 1 })), search ? 300 : 0);
@@ -55,6 +71,37 @@ export default function AbaAsinView({ market, userId }) {
     const weeks = [...new Set(result.reports.map((r) => r.week_end))].sort().reverse();
     change({ year: '', month: '', model: '', brand: '', asin: '', skuId: '', weeks: weeks.join(',') });
     setRevision((n) => n + 1);
+  }
+  async function exportGroups() {
+    if (exporting) return;
+    exportControllerRef.current?.abort();
+    const controller = new AbortController();
+    exportControllerRef.current = controller;
+    setExporting(true); setExportError('');
+    try {
+      const exported = await api.abaAsin({ ...filters, marketplace: market, view: 'printers', export: '1', page: 1 }, controller.signal);
+      const { columns, rows } = buildAsinGroupExport(exported, filters);
+      const worksheet = XLSX.utils.aoa_to_sheet([columns.map((column) => column.label), ...rows]);
+      columns.forEach((column, columnIndex) => {
+        if (!column.rate) return;
+        rows.forEach((_, rowIndex) => {
+          const cell = worksheet[XLSX.utils.encode_cell({ r: rowIndex + 1, c: columnIndex })];
+          if (cell) cell.z = '0.00%';
+        });
+      });
+      worksheet['!cols'] = columns.map((column) => ({ wch: column.key === 'sku' ? 28 : column.key === 'recognition' ? 26 : column.key === 'query' ? 42 : column.key === 'asin' ? 16 : 14 }));
+      worksheet['!autofilter'] = { ref: `A1:${XLSX.utils.encode_col(columns.length - 1)}${rows.length + 1}` };
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, '机型分类汇总');
+      XLSX.writeFile(workbook, `ASIN机型分类汇总_${market}_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    } catch (err) {
+      if (!controller.signal.aborted) setExportError(err.message || '导出失败，请重试');
+    } finally {
+      if (exportControllerRef.current === controller) {
+        exportControllerRef.current = null;
+        setExporting(false);
+      }
+    }
   }
   return <div className="aba-asin-view">
     <AbaReportUpload market={market} kind="asin" onSaved={saved} />
@@ -83,9 +130,10 @@ export default function AbaAsinView({ market, userId }) {
     <div className="aba-load-status" role="status">{loading ? '正在加载筛选结果…' : error ? <span className="aba-error-text">{error} <button className="btn" onClick={() => setRevision((n) => n + 1)}>重新加载</button></span> : `${number.format(data?.total ?? 0)} ${data?.view === 'printers' ? '个分类' : '条明细'} · ${data?.selectedReportCount ?? 0} 份报告 · ${number.format(data?.recordCount ?? 0)} 条周记录`}</div>
     <div className="aba-results" aria-busy={loading}>
       {!loading && !error && data ? <section className="aba-table-panel">
-        <div className="aba-table-heading"><div><h2>{data.view === 'printers' ? 'ASIN 机型分类汇总' : 'ASIN 搜索查询明细'}</h2><p className="hint">{data.aggregation === 'average' ? '按搜索词实际出现周数计算周平均，可展开分类核对明细。' : data.view === 'printers' ? '按 ASIN 和机型分类汇总全部所选周，展开查看搜索词；未识别到机型的词归为墨盒 KW 词。' : data.merged ? '同 ASIN、同搜索词跨周合并，百分比按合计次数重算。' : '每行一个 ASIN 的一条搜索词周记录。'} {data.seriesMerged ? '当前型号跨套组合并：同词同周市场数据只计一次，ASIN 指标相加；市场数值冲突时显示待核对。' : '不同 ASIN 的市场数据有重叠，分别展示。'}</p></div></div>
+        <div className="aba-table-heading"><div><h2>{data.view === 'printers' ? 'ASIN 机型分类汇总' : 'ASIN 搜索查询明细'}</h2><p className="hint">{data.aggregation === 'average' ? '按搜索词实际出现周数计算周平均，可展开分类核对明细。' : data.view === 'printers' ? '按 ASIN 和机型分类汇总全部所选周，展开查看搜索词；未识别到机型的词归为墨盒 KW 词。' : data.merged ? '同 ASIN、同搜索词跨周合并，百分比按合计次数重算。' : '每行一个 ASIN 的一条搜索词周记录。'} {data.seriesMerged ? '当前型号跨套组合并：同词同周市场数据只计一次，ASIN 指标相加；市场数值冲突时显示待核对。' : '不同 ASIN 的市场数据有重叠，分别展示。'}</p></div>{data.view === 'printers' && <div className="aba-table-actions"><label className="aba-model-toggle"><input type="checkbox" checked={hideCodes} onChange={(event) => setHideCodes(event.target.checked)} />隐藏 ASIN / SKU</label><button className="btn" disabled={exporting || !data.items.length} aria-busy={exporting} onClick={exportGroups}>{exporting ? '正在导出…' : '导出 Excel'}</button></div>}</div>
+        {exportError && <p className="aba-export-feedback aba-error-text" role="alert">{exportError}</p>}
         {data.aggregation === 'average' && <p className="hint aba-model-note">周平均：每个搜索词的数量按实际出现周数平均，未出现的周不计入；同词跨套组先合并再平均。机型分类汇总为各词周平均之和，百分比按当前显示的数量重算。</p>}
-        <AbaAsinTable data={data} params={tableParams} key={JSON.stringify(tableParams)} onSort={(sort) => change({ sort, direction: data.sort === sort && data.direction === 'desc' ? 'asc' : 'desc' })}
+        <AbaAsinTable data={data} params={tableParams} key={JSON.stringify(tableParams)} hideIdentity={data.view === 'printers' && hideCodes} onSort={(sort) => change({ sort, direction: data.sort === sort && data.direction === 'desc' ? 'asc' : 'desc' })}
           empty={<div className="aba-table-empty"><h3>{!data.reports.length ? '还没有 ASIN 报告' : !selected.length ? '请选择至少一周' : data.selectedReportCount && !data.recordCount && !filters.q && filters.wordType === 'all' ? '所选报告没有搜索词数据' : '没有匹配的搜索查询'}</h3><p className="hint">可上传 CSV 或合并 XLSX，或调整日期、ASIN、SKU 和搜索条件。</p>{search && <button className="btn" onClick={clearSearch}>清除搜索</button>}</div>} />
         <AbaPagination data={data} onChange={change} />
         <p className="hint aba-table-note">市场 CVR = 市场购买 ÷ 市场点击；ASIN CVR = ASIN 购买 ÷ ASIN 点击；品牌占有率 = ASIN 购买 ÷ 市场购买。均以百分比显示，分母为 0 显示「—」。仅统计所选报告收录的搜索词。</p>

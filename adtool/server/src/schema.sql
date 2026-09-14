@@ -186,6 +186,60 @@ CREATE TABLE IF NOT EXISTS sku_items (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_sku_unique ON sku_items (user_id, dedupe);
 CREATE INDEX IF NOT EXISTS idx_sku_user ON sku_items (user_id, country);
 
+-- ---------- 船长 BI 店铺绑定与库存快照 ----------
+-- API 凭证只放环境变量；这里仅保存店铺与网站账号/品牌/站点的对应关系。
+-- 欧洲站点在同步时按 user_id + brand 汇总，再写回该品牌的全部欧洲 SKU 行。
+CREATE TABLE IF NOT EXISTS captain_channel_bindings (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  brand           TEXT    NOT NULL,
+  brand_key       TEXT    NOT NULL,
+  country         TEXT    NOT NULL,
+  open_channel_id TEXT    NOT NULL UNIQUE,
+  channel_name    TEXT    NOT NULL,
+  site_id         INTEGER,
+  enabled         INTEGER NOT NULL DEFAULT 1,
+  last_sync_at    INTEGER,
+  last_sync_status TEXT,
+  last_sync_detail TEXT,
+  created_at      TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  updated_at      TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_captain_binding_user
+  ON captain_channel_bindings (user_id, brand_key, country, enabled);
+
+-- inventory_list 是按修改时间增量返回；保存每家店最后一次看到的完整数量，
+-- 才能在多店铺之间稳定汇总，而不会因某个 SKU 本轮没变化就少算库存。
+CREATE TABLE IF NOT EXISTS captain_inventory_snapshots (
+  binding_id INTEGER NOT NULL REFERENCES captain_channel_bindings(id) ON DELETE CASCADE,
+  sku_key    TEXT    NOT NULL,
+  sku        TEXT    NOT NULL,
+  asin       TEXT,
+  stock      INTEGER NOT NULL DEFAULT 0,
+  transit    INTEGER NOT NULL DEFAULT 0,
+  is_deleted INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  PRIMARY KEY (binding_id, sku_key)
+);
+
+-- ---------- 广告组合库 ----------
+-- 广告组合编号由亚马逊账号和站点共同决定，因此按用户 + 站点隔离。
+-- 名称用于从“540 Series”“混投”等业务写法自动匹配投放 SKU。
+CREATE TABLE IF NOT EXISTS portfolio_items (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  marketplace  TEXT    NOT NULL,
+  portfolio_id TEXT    NOT NULL,
+  name         TEXT    NOT NULL,
+  created_at   TEXT    NOT NULL DEFAULT (datetime('now', 'localtime')),
+  updated_at   TEXT    NOT NULL DEFAULT (datetime('now', 'localtime')),
+  UNIQUE (user_id, marketplace, portfolio_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_portfolio_user_market
+  ON portfolio_items (user_id, marketplace, name);
+
 -- ---------- 分市场产品库 ----------
 -- 完整卖家精灵记录以 JSON 保存；高频筛选字段单独建列并建索引。
 CREATE TABLE IF NOT EXISTS products (

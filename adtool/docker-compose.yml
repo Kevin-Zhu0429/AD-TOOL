@@ -26,6 +26,10 @@ services:
       DATA_DIR: /data
       SESSION_SECRET: ${SESSION_SECRET:?请先在 adtool/.env 里设置 SESSION_SECRET}
       TZ: ${TZ:-Asia/Shanghai}
+      CAPTAIN_API_BASE: ${CAPTAIN_API_BASE:-https://openapi.captainbi.com}
+      CAPTAIN_CLIENT_ID: ${CAPTAIN_CLIENT_ID:-}
+      CAPTAIN_CLIENT_SECRET: ${CAPTAIN_CLIENT_SECRET:-}
+      CAPTAIN_INITIAL_LOOKBACK_DAYS: ${CAPTAIN_INITIAL_LOOKBACK_DAYS:-365}
 
     volumes:
       # 数据库 + session 全在这。备份就是打包这一个目录

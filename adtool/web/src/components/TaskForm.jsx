@@ -5,13 +5,14 @@ import {
 import { Chips, Sec } from './FormBits.jsx';
 import { LibraryNegatives, ExtraNegatives } from './NegPanels.jsx';
 import SkuPicker from './SkuPicker.jsx';
+import PortfolioField from './PortfolioField.jsx';
 
 /* 一个任务 = 一整页表单,所有区块同时可见,不再分标签页 */
 
 const tiersOf = (text) =>
   String(text ?? '').split(',').map((x) => parseInt(x.trim(), 10)).filter((n) => !isNaN(n));
 
-export default function TaskForm({ task, plan, index, libCount, lib, market, onChange }) {
+export default function TaskForm({ task, plan, index, libCount, lib, market, skuItems, portfolios, portfolioError, onChange }) {
   const set = (patch) => onChange(patch);
   const [pick, setPick] = useState(false);
   const [pickNote, setPickNote] = useState('');
@@ -38,7 +39,7 @@ export default function TaskForm({ task, plan, index, libCount, lib, market, onC
             onChange={(e) => set({ title: e.target.value })}
           />
           <textarea
-            className="inp"
+            className="inp resize-none"
             rows={12}
             placeholder="填这个任务要投的 SKU"
             value={task.skus}
@@ -168,7 +169,7 @@ export default function TaskForm({ task, plan, index, libCount, lib, market, onC
                   <span className="c-faint">(留空 = 不加溢价)</span>
                 </span>
                 <textarea
-                  className="inp" rows={6} placeholder={'留空 = 不加溢价,直接开\nTOS:100 ROS:50\nTOS:200 ROS:100'}
+                  className="inp resize-none" rows={6} placeholder={'留空 = 不加溢价,直接开\nTOS:100 ROS:50\nTOS:200 ROS:100'}
                   value={task.combos} onChange={(e) => set({ combos: e.target.value })}
                 />
               </label>
@@ -266,11 +267,10 @@ export default function TaskForm({ task, plan, index, libCount, lib, market, onC
 
         <Sec n="6" title="参数与出价">
           <div className="g2">
-            <label className="field">
-              <span>广告组合编号</span>
-              <input className="inp mono" value={task.portfolio}
-                onChange={(e) => set({ portfolio: e.target.value })} />
-            </label>
+            <PortfolioField
+              task={task} skuItems={skuItems} portfolios={portfolios}
+              loading={skuItems === null || portfolios === null} error={portfolioError} onChange={set}
+            />
             <label className="field">
               <span>开始日期</span>
               <input className="inp mono" value={task.date}

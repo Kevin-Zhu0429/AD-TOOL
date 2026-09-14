@@ -72,9 +72,10 @@
 .tabstrip {
   display: flex; align-items: center; gap: 6px;
   overflow-x: auto; padding-bottom: 1px;
-  scrollbar-width: none;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scroll-thumb) transparent;
 }
-.tabstrip::-webkit-scrollbar { display: none; }
+.tabstrip::-webkit-scrollbar { display: block; height: 8px; }
 
 .taskpill {
   display: inline-flex; align-items: center;

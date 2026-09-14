@@ -60,6 +60,10 @@ export function mergeTask(base, saved) {
       out[k] = v;
     }
   }
+  // 老草稿没有组合模式；已经手填过编号的视为手动，避免新版本自动匹配覆盖原值。
+  if (Object.hasOwn(base, 'portfolioMode') && saved.portfolioMode === undefined && saved.portfolio) {
+    out.portfolioMode = 'manual';
+  }
   if (typeof saved.id === 'string' && saved.id) out.id = saved.id;
   return out;
 }

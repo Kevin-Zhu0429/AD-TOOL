@@ -420,7 +420,7 @@ function parseSearchTermReport(arrayBuffer, model) {
 }
 
 /* ---------- 建索引：活动 → 广告组 / 广告位 / SKU / 投放 / 否定 ---------- */
-function buildModel(rows, c) {
+function createModelAssembler(c) {
   var campaigns = [], byCamp = {};
 
   function ensure(id) {
@@ -435,7 +435,7 @@ function buildModel(rows, c) {
     return byCamp[id];
   }
 
-  rows.forEach(function (r) {
+  function add(r) {
     var d = r.d, id = String(d[c.campaignId] || '');
     if (!id) return;
     var cp = ensure(id);
@@ -479,17 +479,26 @@ function buildModel(rows, c) {
         scope: r.kind === 'campNegKw' ? 'campaign' : 'adgroup'
       });
     }
-  });
+  }
 
-  campaigns.forEach(function (cp) {
-    // 活动行缺失时用广告组汇总兜底
-    if (!cp.row && cp.adGroups.length) {
-      cp.m = sumMetrics(cp.adGroups.map(function (g) { return g.m; }));
-      cp.name = cp.name || cp.adGroups[0].name;
-    }
-  });
+  function finish() {
+    campaigns.forEach(function (cp) {
+      // 活动行缺失时用广告组汇总兜底
+      if (!cp.row && cp.adGroups.length) {
+        cp.m = sumMetrics(cp.adGroups.map(function (g) { return g.m; }));
+        cp.name = cp.name || cp.adGroups[0].name;
+      }
+    });
+    return { campaigns: campaigns, byCamp: byCamp };
+  }
 
-  return { campaigns: campaigns, byCamp: byCamp };
+  return { add: add, finish: finish };
+}
+
+function buildModel(rows, c) {
+  var assembler = createModelAssembler(c);
+  rows.forEach(assembler.add);
+  return assembler.finish();
 }
 
 /* ---------- 全店汇总 ---------- */
@@ -818,7 +827,7 @@ export function retainExportSheets(wb, campaignSheet) {
 
 export {
   H, ENT, VOCAB, DEFAULT_CFG, PLACEMENT_LABEL,
-  parse, parseSearchTermReport, buildColIndex, detectLang, entityKindOf,
+  parse, parseSearchTermReport, buildColIndex, detectLang, entityKindOf, createModelAssembler,
   metricsOf, rowMetrics, sumMetrics, totals,
   flagsFor, worstLevel, normState, normPlacement,
   num, ChangeSet, cur, validate, buildExportRows, changeList,

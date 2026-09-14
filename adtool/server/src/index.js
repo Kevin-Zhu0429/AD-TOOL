@@ -10,8 +10,10 @@ import { db } from './db.js';
 import { authRouter } from './auth.js';
 import { negRouter } from './keywords.js';
 import { skuRouter } from './skus.js';
+import { portfolioRouter } from './portfolios.js';
 import { productRouter } from './products.js';
 import { abaRouter } from './aba.js';
+import { captainRouter } from './captain.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -38,8 +40,10 @@ app.use(
 app.use('/api/auth', authRouter);
 app.use('/api/neg', negRouter);
 app.use('/api/sku', skuRouter);
+app.use('/api/portfolio', portfolioRouter);
 app.use('/api/products', productRouter);
 app.use('/api/aba', abaRouter);
+app.use('/api/captain', captainRouter);
 
 app.get('/api/health', (req, res) => {
   res.json({ ok: true, time: new Date().toISOString() });

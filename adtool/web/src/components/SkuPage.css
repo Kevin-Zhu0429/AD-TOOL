@@ -1,2 +1,16 @@
 /* SKU 库:布局沿用 LibraryPage.css,这里只加行内编辑的输入框 */
 .cellinp { padding: 3px 6px; font-size: 12px; width: 100%; min-width: 64px; }
+
+.captain-sync-card { display: flex; flex-direction: column; gap: 10px; }
+.captain-sync-card .card-title { margin-bottom: 0; }
+.captain-binding-list { display: grid; gap: 6px; }
+.captain-binding-list > div { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; }
+.captain-binding-list span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.captain-sync-button { width: 100%; min-height: 34px; }
+.captain-sync-empty { padding: 7px 0; }
+.captain-sync-card .note { margin-top: 1px; }
+
+.sku-search { position: relative; width: 190px; }
+.sku-search .inp { padding-right: 34px; }
+.sku-search-clear { position: absolute; right: 3px; top: 50%; transform: translateY(-50%); width: 28px; height: 28px; }
+.sku-search-clear:active:not(:disabled) { transform: translateY(calc(-50% + .5px)); }

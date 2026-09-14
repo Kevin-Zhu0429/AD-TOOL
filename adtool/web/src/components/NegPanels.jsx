@@ -216,12 +216,12 @@ export function ExtraNegatives({ task, negCount, asinCount, lib, market, onChang
       <div className="g2">
         <label className="field">
           <span>否定精准匹配</span>
-          <textarea className="inp" rows={3} value={task.extraNeg.negExact}
+          <textarea className="inp resize-none" rows={3} value={task.extraNeg.negExact}
             onChange={(e) => setNeg({ negExact: e.target.value })} />
         </label>
         <label className="field">
           <span>否定词组</span>
-          <textarea className="inp" rows={3} value={task.extraNeg.negPhrase}
+          <textarea className="inp resize-none" rows={3} value={task.extraNeg.negPhrase}
             onChange={(e) => setNeg({ negPhrase: e.target.value })} />
         </label>
       </div>
@@ -230,19 +230,19 @@ export function ExtraNegatives({ task, negCount, asinCount, lib, market, onChang
       <div className="g2">
         <label className="field">
           <span>否定精准匹配</span>
-          <textarea className="inp" rows={3} value={task.extraNeg.cnegExact}
+          <textarea className="inp resize-none" rows={3} value={task.extraNeg.cnegExact}
             onChange={(e) => setNeg({ cnegExact: e.target.value })} />
         </label>
         <label className="field">
           <span>否定词组</span>
-          <textarea className="inp" rows={3} value={task.extraNeg.cnegPhrase}
+          <textarea className="inp resize-none" rows={3} value={task.extraNeg.cnegPhrase}
             onChange={(e) => setNeg({ cnegPhrase: e.target.value })} />
         </label>
       </div>
 
       <div className="negsec">否定商品定向(ASIN)</div>
       <textarea
-        className="inp" rows={3} placeholder={'B08T1HR5CS\nB087DH9GT3'}
+        className="inp resize-none" rows={3} placeholder={'B08T1HR5CS\nB087DH9GT3'}
         value={task.extraNeg.negAsin}
         onChange={(e) => setNeg({ negAsin: e.target.value })}
       />

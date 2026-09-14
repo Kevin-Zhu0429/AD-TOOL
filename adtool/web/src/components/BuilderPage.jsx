@@ -28,6 +28,7 @@ export function newTask(overrides = {}) {
     autoLang: 'en',
     tokens: NAME_TOKENS.map((t) => ({ ...t, on: t.id !== 'bid' })),
     portfolio: '',
+    portfolioMode: 'auto',
     date: todayStamp(),
     budget: 1.2,
     defBid: 0.02,
@@ -83,6 +84,9 @@ export default function BuilderPage({ market }) {
   });
   const [lib, setLib] = useState(null);
   const [libError, setLibError] = useState('');
+  const [skuItems, setSkuItems] = useState(null);
+  const [portfolios, setPortfolios] = useState(null);
+  const [portfolioError, setPortfolioError] = useState('');
   const [tasks, setTasks] = useState(() => restored?.tasks ?? [newTask()]);
   const [activeId, setActiveId] = useState(() => restored?.activeId ?? null);
   const [fromDraft, setFromDraft] = useState(!!restored);
@@ -90,7 +94,10 @@ export default function BuilderPage({ market }) {
 
   useEffect(() => {
     setResult(null);
+    setPortfolioError('');
     api.library(market).then(setLib).catch((e) => setLibError(e.message));
+    api.skus({ marketplace: market }).then((response) => setSkuItems(response.items ?? [])).catch((e) => { setSkuItems([]); setPortfolioError((old) => [old, `SKU 库读取失败：${e.message}`].filter(Boolean).join('；')); });
+    api.portfolios(market).then((response) => setPortfolios(response.items ?? [])).catch((e) => { setPortfolios([]); setPortfolioError((old) => [old, `广告组合库读取失败：${e.message}`].filter(Boolean).join('；')); });
   }, [market]);
 
   useEffect(() => {
@@ -127,7 +134,7 @@ export default function BuilderPage({ market }) {
     return { campaigns, problems, rows, skus };
   }, [plans]);
 
-  const blocked = totals.problems > 0 || totals.campaigns === 0;
+  const blocked = totals.problems > 0 || totals.campaigns === 0 || skuItems === null || portfolios === null;
 
   function updateTask(id, patch) {
     setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)));
@@ -304,6 +311,9 @@ export default function BuilderPage({ market }) {
           libCount={libCount}
           lib={libData}
           market={market}
+          skuItems={skuItems}
+          portfolios={portfolios}
+          portfolioError={portfolioError}
           onChange={(patch) => updateTask(active.id, patch)}
         />
       )}
