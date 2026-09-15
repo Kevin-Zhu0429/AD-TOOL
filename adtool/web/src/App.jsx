@@ -66,6 +66,9 @@ export default function App() {
 
   function navigate(nextPage) {
     if (nextPage === 'optimizer') setOptimizerOpened(true);
+    if (nextPage !== page) {
+      api.recordActivity(nextPage, 'open', market).catch(() => {});
+    }
     setPage(nextPage);
   }
 

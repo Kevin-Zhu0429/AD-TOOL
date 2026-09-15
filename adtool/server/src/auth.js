@@ -166,6 +166,8 @@ authRouter.post('/login', (req, res) => {
 });
 
 authRouter.post('/logout', (req, res) => {
+  const id = req.session?.user?.id;
+  if (id) audit(id, null, 'logout', 'user', id, null);
   req.session.destroy(() => res.json({ ok: true }));
 });
 
@@ -400,25 +402,70 @@ authRouter.post('/users/:id/reset-password', requireRole('owner'), (req, res) =>
   res.json({ ok: true });
 });
 
-/** 最近的操作留痕,owner 看全部,其他人看自己站点 */
-authRouter.get('/audit', requireLogin, (req, res) => {
-  const u = req.session.user;
-  const rows =
-    u.role === 'owner'
-      ? db
-          .prepare(
-            `SELECT a.*, us.display_name AS who FROM audit_log a
-               LEFT JOIN users us ON us.id = a.user_id
-              ORDER BY a.id DESC LIMIT 200`
-          )
-          .all()
-      : db
-          .prepare(
-            `SELECT a.*, us.display_name AS who FROM audit_log a
-               LEFT JOIN users us ON us.id = a.user_id
-              WHERE a.marketplace IN (${u.markets.map(() => '?').join(',') || 'NULL'})
-              ORDER BY a.id DESC LIMIT 200`
-          )
-          .all(...u.markets);
-  res.json({ logs: rows });
+/**
+ * 浏览器本机完成的关键操作没有对应业务写接口，在这里补一条受控留痕。
+ * 模块、动作和详情都使用白名单，避免把表格内容、关键词或文件内容写进日志。
+ */
+const AUDIT_MODULES = new Set([
+  'home', 'builder', 'manual', 'optimizer', 'library', 'skus', 'portfolios',
+  'aba', 'products', 'tools', 'admin', 'profile',
+]);
+const CLIENT_AUDIT_ACTIONS = new Set(['open', 'import_local', 'export', 'clear_local']);
+
+function safeAuditDetail(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
+  const out = {};
+  for (const [key, value] of Object.entries(input).slice(0, 12)) {
+    if (!/^[a-zA-Z][a-zA-Z0-9_]{0,31}$/.test(key)) continue;
+    if (typeof value === 'number' && Number.isFinite(value)) out[key] = value;
+    else if (typeof value === 'boolean') out[key] = value;
+    else if (typeof value === 'string') out[key] = value.slice(0, 100);
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+authRouter.post('/audit/events', requireLogin, (req, res) => {
+  const module = String(req.body?.module ?? '');
+  const action = String(req.body?.action ?? '');
+  const marketplace = String(req.body?.marketplace ?? '').trim().toUpperCase();
+  if (!AUDIT_MODULES.has(module) || !CLIENT_AUDIT_ACTIONS.has(action)) {
+    return res.status(400).json({ error: '操作日志类型不合法' });
+  }
+  if (marketplace && !canRead(req.session.user, marketplace)) {
+    return res.status(403).json({ error: '没有这个站点的权限' });
+  }
+  audit(
+    req.session.user.id,
+    marketplace || null,
+    action,
+    `module_${module}`,
+    null,
+    safeAuditDetail(req.body?.detail)
+  );
+  res.json({ ok: true });
+});
+
+/** 操作统计和明细只允许超级管理员读取。 */
+authRouter.get('/audit', requireRole('owner'), (req, res) => {
+  const stats = db.prepare(
+    `SELECT u.id, u.username, u.display_name, u.role, u.is_active,
+            SUM(CASE WHEN a.created_at >= datetime('now', 'localtime', '-7 days') THEN 1 ELSE 0 END) AS seven_day,
+            SUM(CASE WHEN a.created_at >= datetime('now', 'localtime', '-30 days') THEN 1 ELSE 0 END) AS thirty_day,
+            MAX(a.created_at) AS last_action_at
+       FROM users u
+       LEFT JOIN audit_log a ON a.user_id = u.id
+      GROUP BY u.id
+      ORDER BY seven_day DESC, thirty_day DESC, u.id`
+  ).all();
+  const logs = db.prepare(
+    `SELECT a.*, us.display_name AS who, us.username
+       FROM audit_log a
+       LEFT JOIN users us ON us.id = a.user_id
+      ORDER BY a.id DESC LIMIT 500`
+  ).all();
+  const totals = stats.reduce((sum, row) => ({
+    sevenDay: sum.sevenDay + Number(row.seven_day || 0),
+    thirtyDay: sum.thirtyDay + Number(row.thirty_day || 0),
+  }), { sevenDay: 0, thirtyDay: 0 });
+  res.json({ stats, totals, logs });
 });

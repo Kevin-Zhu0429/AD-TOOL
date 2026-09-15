@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api.js';
 import CaptainAdmin from './CaptainAdmin.jsx';
 import './AdminPage.css';
@@ -8,6 +8,40 @@ const ROLES = [
   { id: 'admin', label: '国家管理员', desc: '负责站点的词库可编辑 · 可开自动广告' },
   { id: 'owner', label: '超级管理员', desc: '所有站点 + 账号管理 + 全部试用功能' },
 ];
+
+const ROLE_LABELS = Object.fromEntries(ROLES.map((role) => [role.id, role.label]));
+const ACTION_LABELS = {
+  login: '登录', logout: '退出登录', open: '打开板块', create: '新建', update: '更新',
+  delete: '删除', import: '导入', replace: '覆盖导入', import_local: '本机读取', export: '导出',
+  sync: '同步', sync_partial: '部分同步', enable: '启用', disable: '停用', clear_local: '本机清空',
+};
+const ENTITY_LABELS = {
+  user: '账号', lib_items: '否定词库', neg_cat_config: '词库设置', sku_items: 'SKU 库',
+  portfolio_items: '广告组合库', products: '产品库', product: '产品', product_month: '产品月份',
+  product_settings: '产品设置', aba_reports: 'ABA 品牌报告', aba_asin_reports: 'ABA ASIN 报告',
+  captain_inventory: '船长库存', captain_channel: '船长店铺', captain_channel_group: '船长店铺组',
+  module_home: '首页', module_builder: '自动广告', module_manual: '手动广告',
+  module_optimizer: '广告优化', module_library: '否定词库', module_skus: 'SKU 库',
+  module_portfolios: '广告组合库', module_aba: 'ABA 报告', module_products: '产品情报',
+  module_tools: '小工具', module_admin: '账号管理', module_profile: '个人资料',
+};
+const DETAIL_LABELS = {
+  added: '新增', updated: '更新', removed: '移除', count: '数量', reports: '报告',
+  campaigns: '活动', tasks: '任务', rows: '行数', targets: '关键词/定向', files: '文件',
+  sheets: '工作表', groups: '分类', field: '字段', role: '角色', markets: '站点',
+};
+
+function detailText(raw) {
+  if (!raw) return '—';
+  try {
+    const value = JSON.parse(raw);
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return String(raw);
+    return Object.entries(value).slice(0, 6).map(([key, item]) => {
+      const shown = Array.isArray(item) ? `${item.length} 项` : typeof item === 'object' ? '详情已记录' : String(item);
+      return `${DETAIL_LABELS[key] ?? key}：${shown}`;
+    }).join(' · ');
+  } catch { return String(raw); }
+}
 
 /** 站点多选:创建表单和账号列表共用 */
 function MarketChips({ markets, value, onChange }) {
@@ -32,6 +66,16 @@ function MarketChips({ markets, value, onChange }) {
 export default function AdminPage({ user, markets }) {
   const [users, setUsers] = useState([]);
   const [logs, setLogs] = useState([]);
+  const [auditStats, setAuditStats] = useState([]);
+  const [auditTotals, setAuditTotals] = useState({ sevenDay: 0, thirtyDay: 0 });
+  const [logUser, setLogUser] = useState('all');
+  const [logPeriod, setLogPeriod] = useState('30');
+  const [resetUser, setResetUser] = useState(null);
+  const [resetPassword, setResetPassword] = useState('');
+  const [resetShown, setResetShown] = useState(false);
+  const [resetError, setResetError] = useState('');
+  const [resetBusy, setResetBusy] = useState(false);
+  const resetDialogRef = useRef(null);
   const [msg, setMsg] = useState(null);
   const [tab, setTab] = useState('users');
   const [form, setForm] = useState({
@@ -47,11 +91,25 @@ export default function AdminPage({ user, markets }) {
       const [u, a] = await Promise.all([api.listUsers(), api.audit()]);
       setUsers(u.users);
       setLogs(a.logs);
+      setAuditStats(a.stats ?? []);
+      setAuditTotals(a.totals ?? { sevenDay: 0, thirtyDay: 0 });
     } catch (e) {
       setMsg({ kind: 'err', text: e.message });
     }
   }
   useEffect(() => { load(); }, []);
+  useEffect(() => {
+    if (resetUser && !resetDialogRef.current?.open) resetDialogRef.current?.showModal();
+  }, [resetUser]);
+
+  const visibleLogs = useMemo(() => {
+    const cutoff = logPeriod === 'all' ? 0 : Date.now() - Number(logPeriod) * 24 * 60 * 60 * 1000;
+    return logs.filter((log) => {
+      if (logUser !== 'all' && String(log.user_id) !== logUser) return false;
+      if (!cutoff) return true;
+      return new Date(String(log.created_at).replace(' ', 'T')).getTime() >= cutoff;
+    });
+  }, [logs, logUser, logPeriod]);
 
   async function act(fn, okText) {
     setMsg(null);
@@ -83,10 +141,37 @@ export default function AdminPage({ user, markets }) {
     );
   }
 
-  function resetPwd(u) {
-    const p = prompt(`给 ${u.display_name} 设置新密码(至少 6 位)`);
-    if (!p) return;
-    act(() => api.resetPassword(u.id, p), `${u.display_name} 的密码已重置`);
+  function openReset(u) {
+    setResetUser(u);
+    setResetPassword('');
+    setResetShown(false);
+    setResetError('');
+  }
+
+  function closeReset() {
+    if (resetBusy) return;
+    setResetUser(null);
+    setResetPassword('');
+    setResetShown(false);
+    setResetError('');
+  }
+
+  async function submitReset(event) {
+    event.preventDefault();
+    if (resetPassword.length < 6) return setResetError('新密码至少 6 位');
+    setResetBusy(true); setResetError('');
+    try {
+      await api.resetPassword(resetUser.id, resetPassword);
+      const name = resetUser.display_name;
+      resetDialogRef.current?.close();
+      setResetUser(null); setResetPassword('');
+      await load();
+      setMsg({ kind: 'ok', text: `${name} 的密码已重置` });
+    } catch (error) {
+      setResetError(error.message);
+    } finally {
+      setResetBusy(false);
+    }
   }
 
   return (
@@ -104,7 +189,7 @@ export default function AdminPage({ user, markets }) {
           账号 <span className="tag gray">{users.length}</span>
         </button>
         <button className={`lib-tab${tab === 'audit' ? ' on' : ''}`} onClick={() => setTab('audit')}>
-          操作留痕
+          操作日志
         </button>
         <button className={`lib-tab${tab === 'captain' ? ' on' : ''}`} onClick={() => setTab('captain')}>
           船长库存
@@ -344,7 +429,7 @@ export default function AdminPage({ user, markets }) {
                       </td>
                       <td>
                         <div className="row" style={{ gap: 5 }}>
-                          <button className="btn sm" onClick={() => resetPwd(u)}>重置密码</button>
+                          <button className="btn sm" onClick={() => openReset(u)}>重置密码</button>
                           {u.id !== user.id && (
                             <button
                               className={`btn sm${u.is_active ? ' danger' : ''}`}
@@ -370,34 +455,84 @@ export default function AdminPage({ user, markets }) {
       )}
 
       {tab === 'audit' && (
-        <div className="card">
-          <p className="hint" style={{ marginBottom: 11 }}>最近 200 条操作,谁改了词库、谁登录过都在这。</p>
-          <div className="scroll" style={{ maxHeight: '66vh' }}>
+        <div className="audit-page">
+          <section className="audit-overview" aria-labelledby="audit-heading">
+            <div>
+              <h2 id="audit-heading">账号操作统计</h2>
+              <p className="hint">仅超级管理员可见。统计登录、数据维护、同步，以及本机生成和导出。</p>
+            </div>
+            <div className="audit-totals" aria-label="操作总数">
+              <div><b>{auditTotals.sevenDay}</b><span>近 7 天</span></div>
+              <div><b>{auditTotals.thirtyDay}</b><span>近 30 天</span></div>
+            </div>
+          </section>
+
+          <div className="card audit-stats-card">
+            <div className="scroll audit-stats-scroll">
+              <table className="tbl audit-stats-table">
+                <thead><tr><th>账号</th><th>角色</th><th>近 7 天</th><th>近 30 天</th><th>最近操作</th></tr></thead>
+                <tbody>
+                  {auditStats.map((item) => (
+                    <tr key={item.id}>
+                      <td><b>{item.display_name}</b><small className="audit-username mono">{item.username}</small></td>
+                      <td><span className={`tag ${item.is_active ? 'gray' : 'red'}`}>{item.is_active ? ROLE_LABELS[item.role] : '已停用'}</span></td>
+                      <td><strong className="audit-count seven">{item.seven_day}</strong></td>
+                      <td><strong className="audit-count thirty">{item.thirty_day}</strong></td>
+                      <td className="audit-time">{item.last_action_at ?? '暂无操作'}</td>
+                    </tr>
+                  ))}
+                  {!auditStats.length && <tr><td colSpan={5} className="empty">还没有账号统计</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="card audit-log-card">
+            <div className="audit-log-head">
+              <div><h2>操作明细</h2><p className="hint">最多保留展示最近 500 条，可按账号和时间查看。</p></div>
+              <div className="audit-filters">
+                <label>账号<select className="inp" value={logUser} onChange={(event) => setLogUser(event.target.value)}><option value="all">全部账号</option>{auditStats.map((item) => <option key={item.id} value={item.id}>{item.display_name}</option>)}</select></label>
+                <label>时间<select className="inp" value={logPeriod} onChange={(event) => setLogPeriod(event.target.value)}><option value="7">近 7 天</option><option value="30">近 30 天</option><option value="all">全部明细</option></select></label>
+              </div>
+            </div>
+            <div className="scroll audit-log-scroll">
             <table className="tbl">
               <thead>
                 <tr><th>时间</th><th>人</th><th>站点</th><th>动作</th><th>对象</th><th>详情</th></tr>
               </thead>
               <tbody>
-                {logs.map((l) => (
+                {visibleLogs.map((l) => (
                   <tr key={l.id}>
-                    <td style={{ color: 'var(--text-faint)' }}>{l.created_at}</td>
-                    <td>{l.who ?? '—'}</td>
+                    <td className="audit-time">{l.created_at}</td>
+                    <td><b>{l.who ?? '已删除账号'}</b><small className="audit-username mono">{l.username ?? ''}</small></td>
                     <td>{l.marketplace ?? '—'}</td>
-                    <td><span className="tag gray">{l.action}</span></td>
-                    <td style={{ color: 'var(--text-dim)' }}>{l.entity}</td>
-                    <td className="mono" style={{ color: 'var(--text-faint)', maxWidth: 340, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                      {l.detail ?? ''}
-                    </td>
+                    <td><span className="tag gray">{ACTION_LABELS[l.action] ?? l.action}</span></td>
+                    <td className="audit-entity">{ENTITY_LABELS[l.entity] ?? l.entity}</td>
+                    <td className="audit-detail">{detailText(l.detail)}</td>
                   </tr>
                 ))}
-                {!logs.length && <tr><td colSpan={6} className="empty">还没有记录</td></tr>}
+                {!visibleLogs.length && <tr><td colSpan={6} className="empty">这个条件下还没有操作</td></tr>}
               </tbody>
             </table>
+          </div>
           </div>
         </div>
       )}
 
       {tab === 'captain' && <CaptainAdmin users={users} />}
+
+      {resetUser && (
+        <dialog ref={resetDialogRef} className="admin-dialog" onClose={closeReset}>
+          <form noValidate onSubmit={submitReset}>
+            <header><div><h2>重置密码</h2><p className="hint">为 {resetUser.display_name} 设置至少 6 位的新密码。</p></div></header>
+            <div className="admin-dialog-body">
+              <label className="field"><span>新密码</span><span className="admin-password-field"><input className="inp" type={resetShown ? 'text' : 'password'} autoComplete="new-password" autoFocus value={resetPassword} aria-invalid={!!resetError} aria-describedby={resetError ? 'reset-password-error' : undefined} onChange={(event) => { setResetPassword(event.target.value); setResetError(''); }} /><button type="button" className="btn sm" aria-pressed={resetShown} aria-label={resetShown ? '隐藏新密码' : '显示新密码'} onClick={() => setResetShown((shown) => !shown)}>{resetShown ? '隐藏' : '显示'}</button></span></label>
+              {resetError && <div id="reset-password-error" className="note err" role="alert">{resetError}</div>}
+            </div>
+            <footer><button className="btn" type="button" disabled={resetBusy} onClick={() => resetDialogRef.current?.close()}>取消</button><button className="btn primary" type="submit" disabled={resetBusy} aria-busy={resetBusy}>{resetBusy ? '正在重置…' : '重置密码'}</button></footer>
+          </form>
+        </dialog>
+      )}
     </div>
   );
 }

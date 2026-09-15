@@ -1233,6 +1233,10 @@ export function mountOptimizer(root, host, options) {
   function download(blob,name){
     var a=document.createElement('a'), url=URL.createObjectURL(blob);
     a.href=url; a.download=name; document.body.appendChild(a); a.click();
+    if(typeof options.onAudit==='function'){
+      var ext=String(name||'').split('.').pop().toLowerCase();
+      options.onAudit('export',{marketplace:S.market,fileType:ext,changes:S.changes.count()});
+    }
     setTimeout(function(){URL.revokeObjectURL(url);a.remove()},400);
   }
   $('#btnExport').onclick=$('#btnExport2').onclick=$('#chgExport').onclick=function(){

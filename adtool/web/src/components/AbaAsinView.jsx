@@ -94,6 +94,7 @@ export default function AbaAsinView({ market, userId }) {
       const workbook = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(workbook, worksheet, '机型分类汇总');
       XLSX.writeFile(workbook, `ASIN机型分类汇总_${market}_${new Date().toISOString().slice(0, 10)}.xlsx`);
+      api.recordActivity('aba', 'export', market, { groups: exported.total, rows: rows.length }).catch(() => {});
     } catch (err) {
       if (!controller.signal.aborted) setExportError(err.message || '导出失败，请重试');
     } finally {

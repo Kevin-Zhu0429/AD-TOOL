@@ -133,6 +133,7 @@ CREATE TABLE IF NOT EXISTS audit_log (
 );
 
 CREATE INDEX IF NOT EXISTS idx_audit_time ON audit_log (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_user_time ON audit_log (user_id, created_at DESC);
 
 -- 注意:sessions 表故意不在这里建。
 -- better-sqlite3-session-store 会自己建,列顺序必须由它决定,

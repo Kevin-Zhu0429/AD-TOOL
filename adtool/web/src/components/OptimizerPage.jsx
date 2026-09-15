@@ -23,7 +23,11 @@ export default function OptimizerPage({ theme, market }) {
 
     const mount = document.createElement('div');
     shadow.append(mount);
-    appRef.current = mountOptimizer(mount, host);
+    appRef.current = mountOptimizer(mount, host, {
+      onAudit: (action, detail) => api.recordActivity(
+        'optimizer', action, detail?.marketplace, detail,
+      ).catch(() => {}),
+    });
     return () => {
       appRef.current?.unmount();
       appRef.current = null;

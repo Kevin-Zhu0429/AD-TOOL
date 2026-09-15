@@ -176,6 +176,7 @@ export default function BuilderPage({ market }) {
   /** 清空这个站点的全部任务,连本地草稿一起删 */
   function resetAll() {
     if (!confirm('清空这个站点的全部任务?浏览器里存的草稿也会一起删掉。')) return;
+    api.recordActivity('builder', 'clear_local', market, { tasks: tasks.length }).catch(() => {});
     dropDraft(key);
     const t = newTask();
     setTasks([t]);
@@ -196,6 +197,9 @@ export default function BuilderPage({ market }) {
       }
       const file = `批量开广告-${market}-${todayStamp()}.xlsx`;
       downloadWorkbook(wb.aoa, file);
+      api.recordActivity('builder', 'export', market, {
+        campaigns: wb.placed.length, tasks: tasks.length, rows: wb.aoa.length,
+      }).catch(() => {});
       setResult({
         kind: 'ok',
         text: `已生成 ${wb.placed.length} 条广告活动,来自 ${tasks.length} 个任务,共 ${wb.aoa.length} 行,三道自检全部通过。文件:${file}`,

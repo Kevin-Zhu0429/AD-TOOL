@@ -34,6 +34,10 @@ export const api = {
   resetPassword: (id, newPassword) =>
     request(`/auth/users/${id}/reset-password`, { method: 'POST', body: { newPassword } }),
   audit: () => request('/auth/audit'),
+  recordActivity: (module, action, marketplace, detail) =>
+    request('/auth/audit/events', {
+      method: 'POST', body: { module, action, marketplace: marketplace || '', detail },
+    }),
 
   library: (marketplace) => request(`/neg?marketplace=${encodeURIComponent(marketplace)}`),
   // 整段文本批量加(单列词库一行一个词,多列词库从 Excel 复制过来,列之间是 Tab)

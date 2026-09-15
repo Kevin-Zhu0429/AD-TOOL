@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState } from 'react';
 import * as XLSX from 'xlsx';
+import { api } from '../api.js';
 import Icon from './Icon.jsx';
 import './ToolsPage.css';
 
@@ -52,6 +53,10 @@ export default function ToolsPage() {
       const usable = parsed.filter((book) => book.sheets.length);
       if (!usable.length) throw new Error('没有读到可合并的数据,请确认表格第一行是表头。');
       setBooks((old) => [...old.filter((book) => !usable.some((next) => next.id === book.id)), ...usable]);
+      api.recordActivity('tools', 'import_local', '', {
+        files: usable.length,
+        sheets: usable.reduce((sum, book) => sum + book.sheets.length, 0),
+      }).catch(() => {});
     } catch (e) {
       setError(`读取失败:${e.message || '请检查文件格式'}`);
     } finally {
@@ -71,6 +76,12 @@ export default function ToolsPage() {
     const output = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(output, sheet, safeName('合并结果'));
     XLSX.writeFile(output, `Excel合并结果_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    api.recordActivity('tools', 'export', '', { files: books.length, rows: rows.length }).catch(() => {});
+  }
+
+  function clearFiles() {
+    api.recordActivity('tools', 'clear_local', '', { files: books.length }).catch(() => {});
+    setBooks([]);
   }
 
   return (
@@ -101,7 +112,7 @@ export default function ToolsPage() {
             <b>{books.length}</b> 个文件 · <b>{books.reduce((n, b) => n + b.sheets.length, 0)}</b> 张工作表 · <b>{totalRows}</b> 行数据
             <div className="spacer" />
             <label><input type="checkbox" checked={withSource} onChange={(e) => setWithSource(e.target.checked)} /> 保留来源文件和工作表</label>
-            <button className="btn sm ghost" onClick={() => setBooks([])}>清空</button>
+            <button className="btn sm ghost" onClick={clearFiles}>清空</button>
             <button className="btn primary" onClick={download}><Icon name="download" />下载合并结果</button>
           </div>
           <div className="tool-files">

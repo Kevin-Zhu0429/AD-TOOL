@@ -11,6 +11,49 @@
 }
 .admin-new { position: sticky; top: 14px; }
 
+.audit-page { display: flex; flex-direction: column; gap: 14px; }
+.audit-overview {
+  display: flex; align-items: flex-end; gap: 18px;
+  padding: 17px 18px;
+  border: 1px solid var(--accent-line); border-radius: var(--radius-lg);
+  background: linear-gradient(105deg, var(--accent-soft), var(--panel) 58%);
+}
+.audit-overview h2, .audit-log-head h2 { font-size: 15px; margin-bottom: 3px; }
+.audit-totals { display: flex; gap: 8px; margin-left: auto; }
+.audit-totals > div {
+  min-width: 94px; padding: 8px 12px;
+  border-left: 2px solid var(--accent); background: var(--bg-2);
+}
+.audit-totals b { display: block; font: 600 20px/1.1 var(--mono); }
+.audit-totals span { color: var(--text-faint); font-size: 10.5px; }
+.audit-stats-card, .audit-log-card { padding: 0; overflow: hidden; }
+.audit-stats-scroll { max-height: 310px; border: 0; border-radius: 0; }
+.audit-log-scroll { max-height: 54vh; border-width: 1px 0 0; border-radius: 0; }
+.audit-username { display: block; color: var(--text-faint); font-size: 10.5px; font-weight: 400; }
+.audit-count { display: inline-block; min-width: 42px; font: 600 14px/1.7 var(--mono); }
+.audit-count.seven { color: var(--accent-text); }
+.audit-count.thirty { color: var(--text); }
+.audit-time { color: var(--text-faint); font-family: var(--mono); font-size: 11px; }
+.audit-log-head { display: flex; align-items: flex-end; gap: 16px; padding: 14px 16px; }
+.audit-filters { display: flex; gap: 9px; margin-left: auto; }
+.audit-filters label { color: var(--text-faint); font-size: 10.5px; }
+.audit-filters .inp { min-width: 130px; margin-top: 4px; padding: 5px 8px; }
+.audit-entity { color: var(--text-dim); }
+.audit-detail { max-width: 360px; color: var(--text-faint); white-space: normal !important; line-height: 1.45; }
+.admin-dialog {
+  width: min(430px, calc(100vw - 28px)); padding: 0;
+  color: var(--text); background: var(--panel);
+  border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow);
+}
+.admin-dialog::backdrop { background: rgba(7, 10, 15, .62); }
+.admin-dialog header, .admin-dialog footer { padding: 14px 16px; }
+.admin-dialog header { border-bottom: 1px solid var(--border-soft); }
+.admin-dialog header h2 { font-size: 15px; margin-bottom: 3px; }
+.admin-dialog-body { display: flex; flex-direction: column; gap: 10px; padding: 16px; }
+.admin-password-field { display: flex; gap: 7px; }
+.admin-password-field .inp { min-width: 0; }
+.admin-dialog footer { display: flex; justify-content: flex-end; gap: 8px; border-top: 1px solid var(--border-soft); }
+
 .sel-inline {
   width: auto;
   padding: 3px 6px;
@@ -21,6 +64,11 @@
 @media (max-width: 900px) {
   .admin-body { grid-template-columns: 1fr; }
   .admin-new { position: static; }
+  .audit-overview, .audit-log-head { align-items: stretch; flex-direction: column; }
+  .audit-totals, .audit-filters { margin-left: 0; }
+  .audit-filters { flex-wrap: wrap; }
+  .audit-filters label { flex: 1; min-width: 130px; }
+  .audit-filters .inp { width: 100%; }
 }
 
 /* ---------- 个人资料 ---------- */

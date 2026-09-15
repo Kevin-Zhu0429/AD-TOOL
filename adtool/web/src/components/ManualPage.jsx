@@ -161,6 +161,7 @@ export default function ManualPage({ market }) {
   /** 清空这个站点的全部活动,连本地草稿一起删 */
   function resetAll() {
     if (!confirm('清空这个站点的全部活动?浏览器里存的草稿也会一起删掉。')) return;
+    api.recordActivity('manual', 'clear_local', market, { campaigns: tasks.length }).catch(() => {});
     dropDraft(key);
     const t = newManualTask();
     setTasks([t]);
@@ -182,6 +183,9 @@ export default function ManualPage({ market }) {
       const file = `手动广告-${market}-${todayStamp()}.xlsx`;
       downloadWorkbook(wb.aoa, file);
       const kw = wb.placed.reduce((a, x) => a + x.plan.targets, 0);
+      api.recordActivity('manual', 'export', market, {
+        campaigns: wb.placed.length, targets: kw, rows: wb.aoa.length,
+      }).catch(() => {});
       setResult({
         kind: 'ok',
         text: `已生成 ${wb.placed.length} 条广告活动、${kw} 条关键词/商品定向,共 ${wb.aoa.length} 行,自检全部通过。文件:${file}`,
