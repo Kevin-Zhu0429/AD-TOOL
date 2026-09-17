@@ -39,11 +39,28 @@ export default function OptimizerPage({ theme, market }) {
   // 切站点要换一份词库;工作台是常驻的,不重挂载,只把新词库送进去
   useEffect(() => {
     let alive = true;
-    appRef.current?.setLibrary(market, null, '');
-    Promise.all([api.library(market), api.skus({ marketplace: market })])
-      .then(([library, skus]) => alive && appRef.current?.setLibrary(market, library, '', skus.items ?? []))
-      .catch((e) => alive && appRef.current?.setLibrary(market, null, e.message));
-    return () => { alive = false; };
+    let requestId = 0;
+    const refreshLinkedData = (showLoading = false) => {
+      const currentRequest = ++requestId;
+      if (showLoading) appRef.current?.setLibrary(market, null, '');
+      Promise.all([api.library(market), api.skus({ marketplace: market })])
+        .then(([library, skus]) => {
+          if (alive && currentRequest === requestId) {
+            appRef.current?.setLibrary(market, library, '', skus.items ?? []);
+          }
+        })
+        .catch((e) => {
+          if (alive && currentRequest === requestId) appRef.current?.setLibrary(market, null, e.message);
+        });
+    };
+    const onInventoryUpdated = () => refreshLinkedData();
+
+    refreshLinkedData(true);
+    window.addEventListener('adtool:sku-inventory-updated', onInventoryUpdated);
+    return () => {
+      alive = false;
+      window.removeEventListener('adtool:sku-inventory-updated', onInventoryUpdated);
+    };
   }, [market]);
 
   // 主题切换要传进 Shadow 里,深色条的底色跟着换

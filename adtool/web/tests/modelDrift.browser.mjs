@@ -68,7 +68,7 @@ try {
  await page.locator('#fileAName').filter({hasText:'drift-fixture.xlsx'}).waitFor();
  await page.locator('#btnSet').click();
  assert.equal(await page.locator('#s_scope option[value="all"]').isDisabled(),true,'streamed workbook only exports changed rows');
- await page.locator('#maskSet [data-close]').click();
+ await page.locator('#maskSet').getByRole('button',{name:'关闭',exact:true}).click();
  await analysis();
  assert.equal(await page.locator('#anbody tbody tr').count(),6);
  for (const [term,label] of [['hp305xl','疑似跑偏'],[terms[2],'需核对品牌'],['hp 4310','需人工判断'],['hp 9999','需核对词库'],[terms[6],'部分匹配']]) assert.ok((await termRow(term).innerText()).includes(label),term);

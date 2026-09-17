@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api.js';
-import { searchSkus, isOutOfStock, mergeSkuText } from '../skuMatch.js';
+import { searchSkus, isOutOfStock, isZeroStock, mergeSkuText } from '../skuMatch.js';
 import './SkuPicker.css';
 
 /**
@@ -30,7 +30,7 @@ export default function SkuPicker({ market, current, onApply, onClose }) {
   const hits = useMemo(() => {
     let list = searchSkus(items ?? [], query);
     if (brand) list = list.filter((it) => it.brand === brand);
-    if (inStockOnly) list = list.filter((it) => !isOutOfStock(it));
+    if (inStockOnly) list = list.filter((it) => Number(it.stock) > 0);
     return list;
   }, [items, query, brand, inStockOnly]);
 
@@ -107,8 +107,12 @@ export default function SkuPicker({ market, current, onApply, onClose }) {
                     {[it.brand, it.model, it.setGroup].filter(Boolean).join(' · ')}
                   </span>
                   <div className="spacer" />
-                  {isOutOfStock(it)
-                    ? <span className="tag amber">缺货</span>
+                  {isZeroStock(it)
+                    ? (
+                      <span className="tag red">
+                        {isOutOfStock(it) ? '已断货' : `在库 0 · 在途 ${it.transit}`}
+                      </span>
+                    )
                     : (
                       <span className="hint">
                         {Number(it.stock) ? `在库 ${it.stock}` : ''}

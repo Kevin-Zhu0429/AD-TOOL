@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import * as XLSX from 'xlsx';
 import { api } from '../api.js';
+import { isOutOfStock, isZeroStock } from '../skuMatch.js';
 import './LibraryPage.css';
 import './SkuPage.css';
 
@@ -75,6 +76,7 @@ export default function SkuPage({ market }) {
 
   const cols = useMemo(() => data?.cols ?? [], [data]);
   const items = useMemo(() => data?.items ?? [], [data]);
+  const zeroStockItems = useMemo(() => items.filter(isZeroStock), [items]);
 
   const facetValues = useMemo(() => {
     const countries = new Set();
@@ -104,6 +106,7 @@ export default function SkuPage({ market }) {
     try {
       const r = await fn();
       await load();
+      window.dispatchEvent(new CustomEvent('adtool:sku-inventory-updated'));
       const out = typeof okMsg === 'function' ? okMsg(r) : okMsg;
       setMsg(typeof out === 'string' ? { kind: 'ok', text: out } : out);
     } catch (e) {
@@ -158,6 +161,7 @@ export default function SkuPage({ market }) {
     try {
       const result = await api.syncCaptainInventory();
       await Promise.all([load(scope), loadCaptain()]);
+      window.dispatchEvent(new CustomEvent('adtool:sku-inventory-updated'));
       const text = `已更新 ${result.updated} 行，读取 ${result.fetched} 个库存 SKU` +
         (result.unmatched ? `，${result.unmatched} 个 SKU 在网站库里未匹配` : '') +
         (result.failed ? `，${result.failed} 家店铺失败` : '');
@@ -403,6 +407,16 @@ export default function SkuPage({ market }) {
           </div>
 
             {msg && <div id="sku-feedback" className={`note ${msg.kind}`} role={msg.kind === 'err' ? 'alert' : 'status'} style={{ marginBottom: 11 }}>{msg.text}</div>}
+            {zeroStockItems.length > 0 && (
+              <div className="note err sku-zero-summary" role="status">
+                <b>{zeroStockItems.length} 个 SKU 在库为 0</b>
+                <span>
+                  {mine
+                    ? '这些 SKU 会同步到广告优化的 SKU 矩阵并高亮；有在途库存也会继续提醒。'
+                    : '这是全部账号的只读汇总；各账号会在自己的广告优化 SKU 矩阵中收到提醒。'}
+                </span>
+              </div>
+            )}
 
           <div className="scroll">
             <table className="tbl">
@@ -428,9 +442,10 @@ export default function SkuPage({ market }) {
               <tbody>
                 {shown.slice(0, 2000).map((it) => {
                   const editing = edit?.id === it.id;
-                  const dead = !Number(it.stock) && !Number(it.transit);
+                  const zeroStock = isZeroStock(it);
+                  const outOfStock = isOutOfStock(it);
                   return (
-                    <tr key={it.id}>
+                    <tr key={it.id} className={zeroStock ? 'sku-zero-row' : undefined}>
                       {mine && (
                         <td>
                           <input
@@ -458,8 +473,10 @@ export default function SkuPage({ market }) {
                           ) : (
                             <>
                               {val(it, c.key) === '' ? '—' : val(it, c.key)}
-                              {c.key === 'transit' && dead && (
-                                <span className="tag amber" style={{ marginLeft: 6 }}>缺货</span>
+                              {c.key === 'stock' && zeroStock && (
+                                <span className="tag red sku-zero-tag">
+                                  {outOfStock ? '已断货' : '在库 0'}
+                                </span>
                               )}
                             </>
                           )}

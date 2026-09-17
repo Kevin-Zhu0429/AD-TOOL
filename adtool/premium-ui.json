@@ -4,7 +4,7 @@
   "locale": "zh-CN",
   "canonicalMap": "UX-CONTRACT.md",
   "ownership": { "Select/Listbox": "native", "Date": "native" },
-  "requiredCommands": ["unit", "api", "asinApi", "portfolioApi", "captainApi", "auditApi", "portfolioBrowser", "captainBrowser", "build", "lint", "abaBrowser", "asinBrowser"],
+  "requiredCommands": ["unit", "api", "asinApi", "portfolioApi", "captainApi", "auditApi", "portfolioBrowser", "captainBrowser", "inventoryBrowser", "build", "lint", "abaBrowser", "asinBrowser"],
   "commands": {
     "unit": "npm --prefix web test",
     "api": "node --test server/tests/aba.test.js",
@@ -17,6 +17,7 @@
     "auditApi": "node --test server/tests/audit.test.js",
     "portfolioBrowser": "node web/tests/portfolio.browser.mjs",
     "captainBrowser": "node web/tests/captain.browser.mjs",
+    "inventoryBrowser": "node web/tests/inventoryLink.browser.mjs",
     "asinBrowser": "node web/tests/abaAsin.browser.mjs"
   },
   "evidence": { "crudFullFlow": "web/tests/aba.browser.mjs", "failurePaths": "server/tests/aba.test.js" }

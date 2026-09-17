@@ -14,3 +14,10 @@
 .sku-search .inp { padding-right: 34px; }
 .sku-search-clear { position: absolute; right: 3px; top: 50%; transform: translateY(-50%); width: 28px; height: 28px; }
 .sku-search-clear:active:not(:disabled) { transform: translateY(calc(-50% + .5px)); }
+
+.sku-zero-summary { display: flex; align-items: baseline; gap: 8px 12px; flex-wrap: wrap; margin-bottom: 11px; }
+.sku-zero-summary b { color: var(--red-text); }
+.sku-zero-row td { background: var(--red-soft); }
+.sku-zero-row td:first-child { box-shadow: inset 3px 0 0 var(--red); }
+.sku-zero-row:hover td { background: var(--red-soft); }
+.sku-zero-tag { margin-left: 6px; }

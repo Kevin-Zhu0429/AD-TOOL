@@ -24,6 +24,11 @@ const insertSku = backend.db.prepare(
 insertSku.run(users['aba-test'], 'ES', 'ES|browser-sku');
 insertSku.run(users['aba-de'], 'DE', 'DE|browser-sku');
 insertSku.run(users['aba-other'], 'FR', 'FR|browser-sku');
+backend.db.prepare(
+  `INSERT INTO sku_items
+     (user_id, country, brand, model, set_group, sku, stock, transit, dedupe)
+   VALUES (?, 'ES', 'HP', '302', 'BK', 'ZERO-SKU-BROWSER', 0, 0, 'ES|zero-sku-browser')`
+).run(users['aba-test']);
 
 global.fetch = async (input, options = {}) => {
   const url = new URL(String(input));
@@ -106,11 +111,14 @@ try {
   await page.locator('.topnav').getByRole('button', { name: 'SKU 库', exact: true }).click();
   await page.getByText('HP · ES').waitFor();
   assert.equal(await page.getByText('HP · DE').count(), 0);
+  assert.match(await page.locator('.sku-zero-summary').innerText(), /1 个 SKU 在库为 0/);
+  assert.match(await page.locator('tbody tr').filter({ hasText: 'ZERO-SKU-BROWSER' }).innerText(), /已断货/);
   await page.getByRole('button', { name: '同步船长库存', exact: true }).click();
   await page.getByText(/已更新 1 行，读取 3 个库存 SKU/).waitFor();
   const skuRow = page.locator('tbody tr').filter({ hasText: 'BROWSER-SKU' });
   assert.match(await skuRow.innerText(), /20/);
   assert.match(await skuRow.innerText(), /1/);
+  assert.match(await page.locator('.sku-zero-summary').innerText(), /1 个 SKU 在库为 0/);
 
   await page.setViewportSize({ width: 390, height: 844 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);

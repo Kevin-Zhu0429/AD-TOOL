@@ -29,9 +29,70 @@ export function searchSkus(items, query) {
   );
 }
 
-/** 在库 + 在途都没有 = 缺货 */
+/** 库存接口明确返回在库为 0；空值表示尚未提供库存，不能当作 0。 */
+export function isZeroStock(it) {
+  const value = it?.stock;
+  return value !== null && value !== undefined && value !== '' && Number(value) === 0;
+}
+
+/** 在库明确为 0，且在途也没有可用数量 = 已断货。 */
 export function isOutOfStock(it) {
-  return !Number(it.stock) && !Number(it.transit);
+  return isZeroStock(it) && !Number(it?.transit);
+}
+
+/** SKU 比对忽略首尾空格和大小写，和后端判重口径一致。 */
+export function skuKey(value) {
+  return String(value ?? '').trim().toLowerCase();
+}
+
+/** 为广告优化矩阵建立当前站点的库存索引。 */
+export function buildSkuInventoryIndex(items) {
+  const index = Object.create(null);
+  for (const item of items ?? []) {
+    const key = skuKey(item?.sku);
+    if (key) index[key] = item;
+  }
+  return index;
+}
+
+/**
+ * 汇总一个广告矩阵项关联的 SKU 库库存。
+ * `zeroStockCount` 只统计明确返回 0 的在库值；未填写库存会落在 unknownCount。
+ */
+export function summarizeSkuInventory(index, skus) {
+  const keys = [...new Set((skus ?? []).map(skuKey).filter(Boolean))];
+  const matched = [];
+  let missingCount = 0;
+  let unknownCount = 0;
+  let zeroStockCount = 0;
+  let stock = 0;
+  let transit = 0;
+
+  for (const key of keys) {
+    const item = index?.[key];
+    if (!item) {
+      missingCount++;
+      continue;
+    }
+    matched.push(item);
+    if (item.stock === null || item.stock === undefined || item.stock === '') unknownCount++;
+    else {
+      stock += Number(item.stock) || 0;
+      if (isZeroStock(item)) zeroStockCount++;
+    }
+    transit += Number(item.transit) || 0;
+  }
+
+  return {
+    totalCount: keys.length,
+    matchedCount: matched.length,
+    missingCount,
+    unknownCount,
+    zeroStockCount,
+    stock,
+    transit,
+    matched,
+  };
 }
 
 /** 把挑好的 SKU 合进文本框:追加时按大小写不敏感去重 */

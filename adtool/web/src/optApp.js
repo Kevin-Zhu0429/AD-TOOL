@@ -7,6 +7,7 @@ import * as XLSX from 'xlsx';
 import * as C from './optCore.js';
 import * as NL from './negLib.js';
 import * as MD from './modelDrift.js';
+import { buildSkuInventoryIndex, summarizeSkuInventory } from './skuMatch.js';
 import { parseBulkWorkbookFile } from './largeWorkbook.js';
 
 const MARKUP = `
@@ -205,7 +206,7 @@ export function mountOptimizer(root, host, options) {
     terms:[], periodTouched:false,
     checked:{}, stAll:false, stTgt:'', expT:{}, stRptName:'', bnSel:{}, bnQ:'', bnPf:'',
     // 否定词库(站点级,页面挂载后由 setLibrary 送进来)和批量否定里的选词状态
-    lib:null, libErr:'', market:'', skuItems:[], driftIndex:null, driftContexts:{},
+    lib:null, libErr:'', market:'', skuItems:[], skuInventoryIndex:Object.create(null), driftIndex:null, driftContexts:{},
     bnLib:{on:{},follow:true,q:'',off:{},models:[],only:'both',mq:'',ver:0,_sig:'',_all:[]},
     view:'work', an:{tab:'sku',byAsin:false,q:'',pf:'',minClicks:0,mark:'',tf:'',kf:'',driftFilter:'',exp:{},stSel:{},
       skuSub:{},skuExcl:{},sku:'',skuOnlyEx:false,_skuStList:[],adSel:{},_skuAds:[],
@@ -1156,7 +1157,8 @@ export function mountOptimizer(root, host, options) {
     S.market=market||'';
     S.lib=raw?NL.normLibData(raw):null;
     S.libErr=err||'';
-    S.skuItems=skuItems||[]; S.driftIndex=S.lib?MD.buildDModelIndex(S.lib):null; S.driftContexts={};
+    S.skuItems=skuItems||[]; S.skuInventoryIndex=buildSkuInventoryIndex(S.skuItems);
+    S.driftIndex=S.lib?MD.buildDModelIndex(S.lib):null; S.driftContexts={};
     S.bnLib.on={}; S.bnLib.off={}; S.bnLib.models=[]; S.bnLib.q=''; S.bnLib.mq='';
     S.bnLib.ver++; S.bnLib._sig=''; S.bnLib._all=[];
     if($('#maskBneg').classList.contains('on'))renderBnLib();
@@ -1436,6 +1438,21 @@ export function mountOptimizer(root, host, options) {
   }
 
   /* ---------- 面板一：SKU / ASIN 矩阵 ---------- */
+  function inventoryText(o){
+    var inv=o.inventory;
+    if(!inv.totalCount)return '<span class="muted">—</span>';
+    if(!inv.matchedCount)return '<span class="inventory-unknown">未关联 SKU 库</span>';
+    if(inv.zeroStockCount){
+      var label=inv.totalCount===1?'在库 0':inv.zeroStockCount+'/'+inv.totalCount+' SKU 在库 0';
+      var detail=inv.transit>0?'在途 '+fi(inv.transit):'无在途';
+      return '<span class="inventory-zero">'+label+'</span><small>'+detail+'</small>';
+    }
+    if(inv.unknownCount===inv.matchedCount)return '<span class="inventory-unknown">库存未填写</span>';
+    var extra=[];
+    if(inv.transit>0)extra.push('在途 '+fi(inv.transit));
+    if(inv.missingCount)extra.push(inv.missingCount+' 个未关联');
+    return '<span class="inventory-ok">在库 '+fi(inv.stock)+'</span>'+(extra.length?'<small>'+extra.join(' · ')+'</small>':'');
+  }
   function anSkuData(){
     var byAsin=S.an.byAsin,map={};
     S.model.campaigns.forEach(function(cp){
@@ -1449,6 +1466,7 @@ export function mountOptimizer(root, host, options) {
     var list=Object.keys(map).map(function(k){
       var o=map[k];o.m=C.sumMetrics(o.items.map(function(x){return x.ad.m}));o.nc=Object.keys(o.camps).length;
       o.skuSet={};o.items.forEach(function(x){o.skuSet[x.ad.sku]=1});
+      o.inventory=summarizeSkuInventory(S.skuInventoryIndex,Object.keys(o.skuSet));
       o.stAll=skuTerms(o,false).length;o.stEx=skuTerms(o,true).length;
       return o;
     });
@@ -1467,10 +1485,13 @@ export function mountOptimizer(root, host, options) {
   }
   function anSku(){
     var data=anSkuData(),q=S.an.q.toLowerCase();
+    var inventoryRisks=data.list.filter(function(o){return o.inventory.zeroStockCount>0});
+    var inventoryRiskMetrics=C.sumMetrics(inventoryRisks.map(function(o){return o.m}));
     var list=data.list.filter(function(o){
       if(S.an.minClicks&&o.m.clicks<S.an.minClicks)return false;
       if(S.an.mark==='red'&&skuMark(o.m)!=='red')return false;
       if(S.an.mark==='blue'&&skuMark(o.m)!=='blue')return false;
+      if(S.an.mark==='stock'&&!o.inventory.zeroStockCount)return false;
       if(q&&(String(o.sku)+' '+String(o.asin)).toLowerCase().indexOf(q)<0)return false;
       return true;
     });
@@ -1483,36 +1504,41 @@ export function mountOptimizer(root, host, options) {
       return anMetricGet(o,k);
     });
     var sum=C.sumMetrics(list.map(function(o){return o.m}));
-    var bar='<div class="anbar">'+
-      '<div class="seg"><span class="sgb'+(S.an.byAsin?'':' on')+'" data-anby="sku">按 SKU</span><span class="sgb'+(S.an.byAsin?' on':'')+'" data-anby="asin">按 ASIN</span></div>'+
+    var alert=inventoryRisks.length?'<div class="inventory-alert" role="status">'+
+      '<span class="inventory-alert-icon" aria-hidden="true">!</span><div><b>发现 '+inventoryRisks.length+' 项包含在库为 0 的广告 SKU</b>'+
+      '<span>本周期已产生 '+fi(inventoryRiskMetrics.clicks)+' 次点击、'+fm(inventoryRiskMetrics.spend)+' 花费。库存来自当前站点 SKU 库，建议先检查这些投放。</span></div></div>':'';
+    var bar=alert+'<div class="anbar">'+
+      '<div class="seg"><button type="button" class="sgb'+(S.an.byAsin?'':' on')+'" data-anby="sku" aria-pressed="'+(!S.an.byAsin)+'">按 SKU</button><button type="button" class="sgb'+(S.an.byAsin?' on':'')+'" data-anby="asin" aria-pressed="'+S.an.byAsin+'">按 ASIN</button></div>'+
       anPfOptions()+
       '<input type="text" id="anQ" placeholder="搜 SKU / ASIN" value="'+esc(S.an.q)+'">'+
       '<label>最小点击 <input type="number" id="anMin" value="'+(S.an.minClicks||0)+'" min="0" style="width:64px"></label>'+
-      '<div class="seg"><span class="sgb'+(!S.an.mark?' on':'')+'" data-anmark="">全部</span>'+
-        '<span class="sgb mk-red'+(S.an.mark==='red'?' on':'')+'" data-anmark="red">低转化高 ACOS</span>'+
-        '<span class="sgb mk-blue'+(S.an.mark==='blue'?' on':'')+'" data-anmark="blue">点击无转化</span></div>'+
+      '<div class="seg"><button type="button" class="sgb'+(!S.an.mark?' on':'')+'" data-anmark="" aria-pressed="'+(!S.an.mark)+'">全部</button>'+
+        '<button type="button" class="sgb mk-stock'+(S.an.mark==='stock'?' on':'')+'" data-anmark="stock" aria-pressed="'+(S.an.mark==='stock')+'">在库 0 <b>'+inventoryRisks.length+'</b></button>'+
+        '<button type="button" class="sgb mk-red'+(S.an.mark==='red'?' on':'')+'" data-anmark="red" aria-pressed="'+(S.an.mark==='red')+'">低转化高 ACOS</button>'+
+        '<button type="button" class="sgb mk-blue'+(S.an.mark==='blue'?' on':'')+'" data-anmark="blue" aria-pressed="'+(S.an.mark==='blue')+'">点击无转化</button></div>'+
       '<div style="flex:1"></div><button class="btn sm" id="anCsv">导出本面板 CSV</button></div>'+
-      '<div class="anhint">红色＝转化率低于 '+fp(S.cfg.skuCvrMin,0)+' 且 ACOS ≥ '+fp(S.cfg.skuAcosMax,1)+'；蓝色＝点击 ≥ '+S.cfg.skuDeadClicks+' 次零转化。阈值在「规则设置」里改。点任意一行展开，可以切「在各活动的表现」和「跑出的搜索词」。</div>';
+      '<div class="anhint"><b>库存联动：</b>SKU 库明确返回在库 0 时整行标红；有在途也会继续提醒，库存空白不会误判。红色指标＝转化率低于 '+fp(S.cfg.skuCvrMin,0)+' 且 ACOS ≥ '+fp(S.cfg.skuAcosMax,1)+'；蓝色指标＝点击 ≥ '+S.cfg.skuDeadClicks+' 次零转化。点任意一行展开查看活动和搜索词。</div>';
     if(!list.length)return bar+'<div class="empty">没有符合条件的 SKU</div>';
     return bar+'<table class="tbl antbl"><thead><tr>'+
-      anTh('key',S.an.byAsin?'ASIN':'广告 SKU')+(S.an.byAsin?'':'<th>ASIN</th>')+anTh('nc','活动数',1)+
+      anTh('key',S.an.byAsin?'ASIN':'广告 SKU')+(S.an.byAsin?'':'<th>ASIN</th>')+'<th>库存</th>'+anTh('nc','活动数',1)+
       anTh('stAll','搜索词 独占/全部',1)+anTh('pClick','点击占比',1)+anTh('pOrder','订单占比',1)+mHeads()+'</tr></thead><tbody>'+
       list.map(function(o){
         var mk=skuMark(o.m);
-        return '<tr class="anrow'+(mk?' mk-'+mk:'')+(isExp(o.key)?' expd':'')+'" data-anexp="'+esc(o.key)+'">'+
+        return '<tr class="anrow'+(o.inventory.zeroStockCount?' stock-zero':'')+(mk?' mk-'+mk:'')+(isExp(o.key)?' expd':'')+'" data-anexp="'+esc(o.key)+'">'+
           '<td class="anname">'+esc(o.key)+'</td>'+(S.an.byAsin?'':'<td class="muted mono" style="font-size:12px">'+esc(o.asin)+'</td>')+
+          '<td class="inventory-cell">'+inventoryText(o)+'</td>'+
           '<td class="num">'+o.nc+'</td>'+
           '<td class="num">'+(o.stAll?('<b'+(o.stEx?' style="color:var(--gd)"':'')+'>'+o.stEx+'</b> / '+o.stAll):'<span class="muted">—</span>')+'</td>'+
           '<td class="num">'+fp(o.pClick,2)+'</td><td class="num">'+fp(o.pOrder,2)+'</td>'+
           mCells(o.m)+'</tr>'+(isExp(o.key)?anSkuSub(o):'');
       }).join('')+
-      '</tbody><tfoot><tr><td>合计 '+list.length+' 项</td>'+(S.an.byAsin?'':'<td></td>')+'<td></td><td></td><td class="num">100%</td><td class="num">100%</td>'+mCells(sum)+'</tr></tfoot></table>';
+      '</tbody><tfoot><tr><td>合计 '+list.length+' 项</td>'+(S.an.byAsin?'':'<td></td>')+'<td></td><td></td><td></td><td class="num">100%</td><td class="num">100%</td>'+mCells(sum)+'</tr></tfoot></table>';
   }
   function anSkuSub(o){
     var mode=S.an.skuSub[o.key]||'camp';
     var seg='<span class="subseg"><span class="sgb'+(mode==='camp'?' on':'')+'" data-skusub="camp|'+esc(o.key)+'">在各活动的表现 '+o.nc+'</span>'+
       '<span class="sgb'+(mode==='st'?' on':'')+'" data-skusub="st|'+esc(o.key)+'">跑出的搜索词 '+o.stAll+'</span></span>';
-    return '<tr class="subrow"><td colspan="'+(S.an.byAsin?14:15)+'" class="subcell"><div class="subwrap">'+
+    return '<tr class="subrow"><td colspan="'+(S.an.byAsin?15:16)+'" class="subcell"><div class="subwrap">'+
       (mode==='st'?anSkuStBody(o,seg):anSkuCampBody(o,seg))+'</div></td></tr>';
   }
   function anSkuStBody(o,seg){
