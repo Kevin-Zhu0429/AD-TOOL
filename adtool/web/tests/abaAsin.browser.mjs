@@ -259,6 +259,19 @@ try {
   assert.match(await rows().first().innerText(), /合并 2 个 ASIN/);
   await view.getByLabel('显示方式', { exact: true }).selectOption('printers');
   await idle();
+  const seriesDownloadPromise = page.waitForEvent('download');
+  await view.getByRole('button', { name: '导出 Excel', exact: true }).click();
+  const seriesDownload = await seriesDownloadPromise;
+  const seriesWorkbook = XLSX.read(await readFile(await seriesDownload.path()), { type: 'buffer' });
+  const seriesExportRows = XLSX.utils.sheet_to_json(seriesWorkbook.Sheets['机型分类汇总'], { header: 1, defval: '' })
+    .filter((row) => row[2] === 'hp deskjet 2820e' && [one, two].includes(row[3]));
+  const oneExportRows = seriesExportRows.filter((row) => row[3] === one);
+  const twoExportRows = seriesExportRows.filter((row) => row[3] === two);
+  assert.equal(seriesExportRows.length, 3);
+  assert.equal(oneExportRows.length, 2);
+  assert.equal(twoExportRows.length, 1);
+  assert.ok(oneExportRows.every((row) => row[8] === 200 && row[9] === 10 && row[10] === 5));
+  assert.ok(twoExportRows.every((row) => row[8] === 100 && row[9] === 20 && row[10] === 2));
   await view.getByRole('button', { name: '展开 305 HP DESKJET2820', exact: true }).click();
   const seriesChildren = view.getByRole('region', { name: '305 HP DESKJET2820 下的搜索词', exact: true });
   await seriesChildren.locator('.aba-table').waitFor();

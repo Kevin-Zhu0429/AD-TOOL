@@ -84,7 +84,7 @@ export function aggregateAsinSeries(rows, { view = 'queries', mergeWeeks = true,
 }
 
 /** Average each query over its observed weeks; grouped values sum those query averages. */
-export function aggregateAsinView(rows, { series = false, view = 'queries', mergeWeeks = true, average = false, modelLabel = '', includeQueries = false } = {}) {
+function aggregateAsinQueries(rows, { series, mergeWeeks, average, modelLabel }) {
   const queries = series ? aggregateAsinSeries(rows, { mergeWeeks: mergeWeeks || average, modelLabel })
     : mergeWeeks || average ? mergeAsinRows(rows)
       : rows.map((r) => ({ ...r, key: `${r.report_id}:${r.query}`, periods: [{ week_start: r.week_start, week_end: r.week_end, week_number: r.week_number }] }));
@@ -92,6 +92,11 @@ export function aggregateAsinView(rows, { series = false, view = 'queries', merg
     row.average_weeks = row.periods.length;
     for (const key of ASIN_COUNT_KEYS) if (row[key] != null) row[key] /= row.average_weeks;
   }
+  return queries;
+}
+
+export function aggregateAsinView(rows, { series = false, view = 'queries', mergeWeeks = true, average = false, modelLabel = '', includeQueries = false } = {}) {
+  const queries = aggregateAsinQueries(rows, { series, mergeWeeks, average, modelLabel });
   if (view !== 'printers') return queries.map(asinRates);
   const groupKey = (row) => JSON.stringify([series ? '' : row.asin, row.group.key]);
   const groups = series ? aggregateAsinSeries(rows, { view, modelLabel }) : groupAsinRows(rows);
@@ -107,13 +112,17 @@ export function aggregateAsinView(rows, { series = false, view = 'queries', merg
   }
   if (includeQueries) {
     const queryRows = new Map();
-    for (const row of queries.map(asinRates)) {
+    const exportQueries = series
+      ? aggregateAsinQueries(rows, { series: false, mergeWeeks, average, modelLabel }).map(asinRates)
+      : queries.map(asinRates);
+    for (const row of exportQueries) {
       const key = groupKey(row);
       if (!queryRows.has(key)) queryRows.set(key, []);
       queryRows.get(key).push(row);
     }
     for (const group of groups) group.query_rows = (queryRows.get(groupKey(group)) ?? [])
-      .sort((a, b) => a.query.localeCompare(b.query, 'zh-CN', { numeric: true }));
+      .sort((a, b) => a.query.localeCompare(b.query, 'zh-CN', { numeric: true })
+        || a.asin.localeCompare(b.asin, 'zh-CN', { numeric: true }));
   }
   return groups.map(asinRates);
 }

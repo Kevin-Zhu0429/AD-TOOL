@@ -108,8 +108,8 @@ abaAsinRouter.get('/', (req, res) => {
     }
   }
   const average = req.query.aggregation === 'average' && selectedWeeks.length > 1;
-  const merged = average || req.query.merge !== '0';
   const view = req.query.view === 'printers' ? 'printers' : 'queries';
+  const merged = average || view === 'printers' || req.query.merge !== '0';
   const exportAll = req.query.export === '1' && view === 'printers';
   const items = aggregateAsinView(rows, { series: !!model, view, mergeWeeks: merged, average, modelLabel: selectedModel?.label, includeQueries: exportAll });
   const sort = ASIN_COLUMNS.some((c) => c.key === req.query.sort) || (view === 'printers' && req.query.sort === 'query_count') ? req.query.sort : 'market_impressions';

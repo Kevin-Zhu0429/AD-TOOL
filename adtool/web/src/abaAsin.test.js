@@ -103,6 +103,13 @@ test('weekly averages use each query observed weeks, preserve decimals and add u
   assert.equal(series.market_clicks, 100);
   assert.equal(series.asin_clicks, 15.5);
   assert.equal(series.average_weeks, 2);
+  const seriesExport = aggregateAsinView([...rows, { ...base, asin: 'B000008888' }], { average: true, series: true, view: 'printers', includeQueries: true })[0];
+  const original = seriesExport.query_rows.find((row) => row.asin === base.asin && row.query === base.query);
+  const otherAsin = seriesExport.query_rows.find((row) => row.asin === 'B000008888' && row.query === base.query);
+  assert.equal(seriesExport.query_rows.length, 3);
+  assert.equal(original.asin_clicks, 10.5);
+  assert.equal(otherAsin.asin_clicks, 10);
+  assert.notEqual(original, otherAsin);
   const conflict = aggregateAsinView([base, { ...base, asin: 'B000008888', market_clicks: 101 }, next], { average: true, series: true })[0];
   assert.equal(conflict.market_clicks, null);
   assert.equal(conflict.market_cvr, null);

@@ -152,6 +152,10 @@ test('ASIN reports: authenticated storage, raw metrics, SKU linkage and filter b
     const group = (await get(scope + '&view=printers')).items[0];
     assert.equal(group.asin_purchases, 7);
     assert.equal((await get(scope + '&group=' + encodeURIComponent(group.group.key))).items[0].asin_purchases, 7);
+    const exportedGroup = (await get(scope + '&view=printers&export=1')).items[0];
+    assert.equal(exportedGroup.query_rows.length, 2);
+    assert.equal(exportedGroup.query_rows.find((row) => row.asin === one).asin_clicks, 10);
+    assert.equal(exportedGroup.query_rows.find((row) => row.asin === two).asin_clicks, 20);
     assert.equal((await get(scope + '&asin=' + two)).items[0].asin_clicks, 20);
     assert.equal((await get(scope, b)).total, 0);
     assert.equal((await get('&model=unknown')).total, 0);
