@@ -151,6 +151,17 @@ try {
   await idle();
   assert.doesNotMatch(await printer().innerText(), /TEST-305-BKC/);
   assert.deepEqual(errors, []);
+  await page.locator('.topnav').getByRole('button', { name: 'SKU 库', exact: true }).click();
+  const restoredSkuRow = page.locator('.tbl tbody tr').filter({ hasText: 'TEST-305-BKC' })
+    .or(page.locator('.tbl tbody tr').filter({ has: page.getByLabel('ASIN TEST-305-BKC', { exact: true }) }));
+  await restoredSkuRow.getByRole('button', { name: '编辑', exact: true }).click();
+  await restoredSkuRow.getByLabel('ASIN TEST-305-BKC', { exact: true }).fill('B000000305');
+  await restoredSkuRow.getByRole('button', { name: '保存', exact: true }).click();
+  await page.getByRole('status').getByText('已保存', { exact: true }).waitFor();
+  await page.locator('.topnav').getByRole('button', { name: 'ABA 报告', exact: true }).click();
+  await page.getByRole('button', { name: 'ASIN 视图', exact: true }).click();
+  await idle();
+  assert.match(await printer().innerText(), /TEST-305-BKC/);
   const manyRows = [...Array.from({ length: 30 }, (_, i) => [`hp deskjet 2820e pack ${i}`, 100, 1000, 100, 20, 200, 10, 5]), ['generic ink', 20, 100, 10, 2, 40, 5, 1]];
   const combined = mergedFixture([{ name: 'a.csv', text: asinFixture({ rows: manyRows }) }, { name: 'b.csv', text: asinFixture({ rows: manyRows, week: 36, start: '2026-08-30', end: '2026-09-05' }) }]);
   const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(combined.sheets[0].rows), 'B999999999_wrong_week');
@@ -181,12 +192,12 @@ try {
   assert.deepEqual(exportedRows[0].slice(0, 4), ['SKU', '机型分类', '搜索词', 'ASIN']);
   assert.equal(exportedRows[0].includes('搜索词数量'), false);
   const exportedPrinters = exportedRows.filter((row) => String(row[1]).includes('HP DESKJET2820'));
-  assert.equal(exportedPrinters.length, 30);
-  assert.ok(exportedPrinters.every((row) => !String(row[2]).includes('\n')));
-  const exportedPrinter = exportedPrinters.find((row) => row[2] === 'hp deskjet 2820e pack 0');
-  assert.match(exportedPrinter[0], /TEST-305-BK/);
-  assert.equal(exportedPrinter[3], 'B000000305');
-  assert.equal(exportedPrinter[4], 2000);
+  assert.equal(exportedPrinters.length, 60);
+  assert.ok(exportedPrinters.every((row) => !String(row[0]).includes('\n') && !String(row[2]).includes('\n') && !String(row[3]).includes('\n')));
+  const exportedPrinterRows = exportedPrinters.filter((row) => row[2] === 'hp deskjet 2820e pack 0');
+  assert.equal(exportedPrinterRows.length, 2);
+  assert.deepEqual(new Set(exportedPrinterRows.map((row) => row[0])), new Set(['TEST-305-BK', 'TEST-305-BKC']));
+  assert.ok(exportedPrinterRows.every((row) => row[3] === 'B000000305' && row[4] === 2000));
   await view.getByRole('button', { name: '展开 B000000305 HP DESKJET2820', exact: true }).click();
   const children = view.getByRole('region', { name: 'B000000305 HP DESKJET2820 下的搜索词', exact: true });
   await children.locator('.aba-table').waitFor();
