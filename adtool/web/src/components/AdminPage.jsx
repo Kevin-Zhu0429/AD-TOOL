@@ -281,9 +281,9 @@ export default function AdminPage({ user, markets }) {
                 </select>
               </label>
               <p className="hint" style={{ marginTop: -4 }}>
-                {isPet ? (form.role === 'owner' ? '美国站账号管理及全部功能' : '美国站运营，按下方设置功能权限') : ROLES.find((r) => r.id === form.role)?.desc}
+                {isPet ? (form.role === 'owner' ? '美国站账号管理及全部功能' : '美国站共享运营，所有业务功能均可使用') : ROLES.find((r) => r.id === form.role)?.desc}
               </p>
-              {form.role !== 'owner' && (
+              {!isPet && form.role !== 'owner' && (
                 <>
                   {!isPet && <><label className="row">
                     <input
@@ -363,7 +363,7 @@ export default function AdminPage({ user, markets }) {
                         </select>
                       </td>
                       {!isPet && <td>
-                        {u.role === 'owner' ? (
+                        {(isPet || u.role === 'owner') ? (
                           <span className="tag blue">天然有</span>
                         ) : (
                           <label className="row" title="B/C/D/E 四类词库的维护权">
@@ -382,7 +382,7 @@ export default function AdminPage({ user, markets }) {
                         )}
                       </td>}
                       <td>
-                        {u.role === 'owner' ? (
+                        {(isPet || u.role === 'owner') ? (
                           <span className="tag blue">天然有</span>
                         ) : (
                           <label className="row" title="能不能看到产品库、竞品分析及对应更新日志">
@@ -401,7 +401,7 @@ export default function AdminPage({ user, markets }) {
                         )}
                       </td>
                       <td>
-                        {u.role === 'owner' ? (
+                        {(isPet || u.role === 'owner') ? (
                           <span className="tag blue">天然有</span>
                         ) : (
                           <label className="row" title="能不能看到「手动广告」这一页">
@@ -420,7 +420,7 @@ export default function AdminPage({ user, markets }) {
                         )}
                       </td>
                       <td>
-                        {u.role === 'owner' ? (
+                        {(isPet || u.role === 'owner') ? (
                           <span className="tag blue">天然有</span>
                         ) : (
                           <label className="row" title="能不能看到「广告优化」这一页">

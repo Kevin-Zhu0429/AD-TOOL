@@ -1,3 +1,4 @@
+import { migratePetShared } from './petShared.js';
 import { profile, isPet } from './profile.js';
 import Database from 'better-sqlite3';
 import fs from 'node:fs';
@@ -32,6 +33,7 @@ db.prepare("INSERT OR IGNORE INTO app_metadata (key, value) VALUES ('profile', ?
 const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
 db.exec(schema);
 migrate();
+if (isPet) migratePetShared(db);
 
 /**
  * 老库升级 —— 每次启动跑一遍,已经改过的自动跳过。

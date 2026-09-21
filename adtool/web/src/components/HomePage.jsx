@@ -76,7 +76,7 @@ export default function HomePage({ user, market, onNav, theme, onOpenChangelog }
       <div className="home-grid">
         <EntryCard
           tone="blue" icon="chart" title="ABA 报告"
-          desc={isPet ? "上传美国站品牌或 ASIN 搜索查询周报，查看搜索词的曝光、点击和购买表现，并关联自己的 SKU。" : "上传品牌搜索查询周报，按搜索词、墨盒系列和对应机型筛选，查看每周查询量、曝光、点击和购买表现。"}
+          desc={isPet ? "上传美国站品牌或 ASIN 搜索查询周报，查看搜索词的曝光、点击和购买表现，并关联店铺共享 SKU。" : "上传品牌搜索查询周报，按搜索词、墨盒系列和对应机型筛选，查看每周查询量、曝光、点击和购买表现。"}
           meta="品牌视图 · 数据仅自己可见 · 服务器保存"
           onClick={() => onNav('aba')}
         />
@@ -111,13 +111,13 @@ export default function HomePage({ user, market, onNav, theme, onOpenChangelog }
         <EntryCard
           tone="amber" icon="file" title="我的 SKU 库"
           desc={isPet ? "按款式、尺码、颜色和面料外观管理美国站 SKU，维护在库、在途库存与 ASIN 关联。" : "按国家 / 品牌 / 型号 / 套组存自己负责的 SKU 和库存。每个账号一份自己的,开广告时在「投放 SKU」那里一键挑进去。"}
-          meta="模板导入 · 只有自己看得到"
+          meta={isPet ? '模板导入 · 全部账号共享' : '模板导入 · 只有自己看得到'}
           onClick={() => onNav('skus')}
         />
         <EntryCard
           tone="violet" icon="layers" title={`${market} 站广告组合库`}
           desc={isPet ? "维护美国站广告组合编号和名称，开广告时手动选择已有组合或填写编号。" : "导入广告组合编号和名称。开自动或手动广告时，会按投放 SKU 的型号自动选择对应 Series；多个系列自动选择混投，也可手动覆盖。"}
-          meta="两列模板 · 每个账号独立"
+          meta={isPet ? '两列模板 · 全部账号共享' : '两列模板 · 每个账号独立'}
           onClick={() => onNav('portfolios')}
         />
         {user.productIntel && (

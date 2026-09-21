@@ -1,3 +1,4 @@
+import { businessUserId } from './profile.js';
 import { isPet } from './profile.js';
 import express from 'express';
 import { createHash } from 'node:crypto';
@@ -36,7 +37,7 @@ abaRouter.post('/import', (req, res) => {
       } catch (err) { throw new Error(`${String(file?.name ?? '未命名文件').slice(0, 255)}：${err.message}`); }
     });
   } catch (err) { return res.status(400).json({ error: err.message }); }
-  const userId = req.session.user.id;
+  const userId = businessUserId(req.session.user.id);
   const result = db.transaction(() => {
     const results = [];
     for (const report of reports) {
@@ -59,14 +60,14 @@ abaRouter.post('/import', (req, res) => {
       for (const row of report.rows) insert.run({ ...row, report_id: id });
       results.push({ source_file: report.source_file, brand: report.brand, week_end: report.week_end, status: previous ? 'updated' : 'added', count: report.rows.length });
     }
-    audit(userId, req.abaMarket, 'import', 'aba_reports', null, { reports: results });
+    audit(req.session.user.id, req.abaMarket, 'import', 'aba_reports', null, { reports: results });
     return results;
   })();
   res.json({ reports: result });
 });
 
 abaRouter.get('/', (req, res) => {
-  const userId = req.session.user.id;
+  const userId = businessUserId(req.session.user.id);
   // No owner/scope override: every query starts with the current account.
   const reports = db.prepare(`SELECT r.id, r.brand, r.week_start, r.week_end, r.week_number, r.source_file, r.updated_at,
     (SELECT count(*) FROM aba_queries q WHERE q.report_id=r.id) AS row_count

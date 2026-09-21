@@ -119,7 +119,7 @@ export default function PortfolioPage({ market }) {
       <div className="lib-head">
         <div>
           <h1>广告组合库</h1>
-          <p className="hint">{isPet ? '美国站广告组合库。开广告时手动选择组合，每个账号只使用自己的组合库。' : `${market} 站独立保存，自动和手动广告会按投放 SKU 的型号选择对应 Series；多个系列选择“混投”。每个账号只使用自己的组合库。`}</p>
+          <p className="hint">{isPet ? '美国站广告组合库。开广告时手动选择组合，所有账号共享并可维护组合库。' : `${market} 站独立保存，自动和手动广告会按投放 SKU 的型号选择对应 Series；多个系列选择“混投”。每个账号只使用自己的组合库。`}</p>
         </div>
         <div className="spacer" />
         <button className="btn" onClick={exportXlsx}>导出 Excel</button>

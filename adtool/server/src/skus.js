@@ -1,3 +1,4 @@
+import { businessUserId } from './profile.js';
 import { isPet } from './profile.js';
 import express from 'express';
 import { db, audit } from './db.js';
@@ -18,7 +19,7 @@ const SELECT = `SELECT s.id, s.user_id, s.country, s.brand, s.model,
 function ownRow(req, id) {
   const row = db.prepare('SELECT * FROM sku_items WHERE id = ?').get(id);
   if (!row) return { error: 404 };
-  if (row.user_id !== req.session.user.id) return { error: 403 };
+  if (row.user_id !== businessUserId(req.session.user.id)) return { error: 403 };
   return { row };
 }
 
@@ -28,12 +29,12 @@ function ownRow(req, id) {
  */
 skuRouter.get('/', (req, res) => {
   const me = req.session.user;
-  const all = String(req.query.scope ?? '') === 'all' && me.role === 'owner';
+  const all = !isPet && String(req.query.scope ?? '') === 'all' && me.role === 'owner';
   const mk = String(req.query.marketplace ?? (isPet ? 'US' : '')).toUpperCase();
 
   const where = [];
   const args = [];
-  if (!all) { where.push('s.user_id = ?'); args.push(me.id); }
+  if (!all) { where.push('s.user_id = ?'); args.push(businessUserId(me.id)); }
   if (mk) {
     if (!MARKETPLACES.includes(mk)) return res.status(400).json({ error: '站点不合法' });
     where.push('s.country = ?');
@@ -46,7 +47,7 @@ skuRouter.get('/', (req, res) => {
     cols: SKU_COLS,
     marketplaces: MARKETPLACES,
     scope: all ? 'all' : 'mine',
-    canViewAll: me.role === 'owner',
+    canViewAll: !isPet && me.role === 'owner',
     items: db.prepare(sql).all(...args),
   });
 });
@@ -98,12 +99,12 @@ function saveRows(user, rows, replace) {
     if (replace) {
       for (const c of countries) {
         removed += db.prepare('DELETE FROM sku_items WHERE user_id = ? AND country = ?')
-          .run(user.id, c).changes;
+          .run(businessUserId(user.id), c).changes;
       }
     }
     for (const { row, dedupe, hasAsin } of ok) {
-      const had = !replace && exists.get(user.id, dedupe);
-      ins.run({ ...row, user_id: user.id, dedupe, hasAsin });
+      const had = !replace && exists.get(businessUserId(user.id), dedupe);
+      ins.run({ ...row, user_id: businessUserId(user.id), dedupe, hasAsin });
       if (had) updated++;
       else added++;
     }
@@ -166,7 +167,7 @@ skuRouter.patch('/:id', (req, res) => {
   const dedupe = dedupeKey(r.row);
   const clash = db
     .prepare('SELECT id FROM sku_items WHERE user_id = ? AND dedupe = ? AND id != ?')
-    .get(req.session.user.id, dedupe, cur.id);
+    .get(businessUserId(req.session.user.id), dedupe, cur.id);
   if (clash) return res.status(409).json({ error: '同一个国家里已经有这个 SKU 了' });
 
   db.prepare(
@@ -191,7 +192,7 @@ skuRouter.post('/delete', (req, res) => {
   const del = db.prepare('DELETE FROM sku_items WHERE id = ? AND user_id = ?');
   let deleted = 0;
   db.transaction(() => {
-    for (const id of ids) deleted += del.run(id, req.session.user.id).changes;
+    for (const id of ids) deleted += del.run(id, businessUserId(req.session.user.id)).changes;
   })();
 
   if (deleted) audit(req.session.user.id, null, 'delete', 'sku_items', null, { count: deleted });

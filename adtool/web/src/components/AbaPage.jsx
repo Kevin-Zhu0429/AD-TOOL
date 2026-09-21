@@ -100,7 +100,7 @@ export default function AbaPage({ market, userId }) {
 
   return <div className={`aba-page${focused && tab === 'brand' ? ' aba-focused' : ''}`}>
     <header className="aba-heading">
-      <div><h1>ABA 报告 <span className="tag blue">{market} 站</span></h1><p className="hint">搜索查询绩效 · 报告保存在服务器，仅当前账号可见</p></div>
+      <div><h1>ABA 报告 <span className="tag blue">{market} 站</span></h1><p className="hint">{isPet ? '搜索查询绩效 · 报告保存在服务器，所有账号共享' : '搜索查询绩效 · 报告保存在服务器，仅当前账号可见'}</p></div>
     </header>
     <div className="aba-tabs" aria-label="报告视图">
       <button className={`btn ${tab === 'brand' ? 'primary' : 'ghost'}`} aria-pressed={tab === 'brand'} onClick={() => setTab('brand')}>品牌视图</button>

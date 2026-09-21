@@ -57,7 +57,7 @@ export default function CaptainAdmin({ users }) {
     const ids = new Set(coverage
       .filter((row) => row.country === country && brandKey(row.brand) === key)
       .map((row) => String(row.userId)));
-    return activeUsers.filter((user) => ids.has(String(user.id)));
+    return isPet ? (ids.has('-1') ? [{ id: -1, displayName: '店铺共享库存', username: '共享', is_active: 1 }] : []) : activeUsers.filter((user) => ids.has(String(user.id)));
   }
 
   function availableBrands(group) {

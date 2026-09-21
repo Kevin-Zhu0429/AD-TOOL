@@ -1,3 +1,4 @@
+import { businessUserId } from './profile.js';
 import { isPet } from './profile.js';
 import express from 'express';
 import { createHash } from 'node:crypto';
@@ -27,7 +28,7 @@ abaAsinRouter.post('/import', (req, res) => {
     });
     if (reports.length > 500) throw new Error('每批最多导入 500 份 ASIN 周报');
   } catch (e) { return res.status(400).json({ error: e.message }); }
-  const userId = req.session.user.id;
+  const userId = businessUserId(req.session.user.id);
   const result = db.transaction(() => {
     const result = [];
     const insert = db.prepare(`INSERT INTO aba_asin_queries (report_id, query, ${ASIN_COUNT_KEYS.join(',')})
@@ -49,14 +50,14 @@ abaAsinRouter.post('/import', (req, res) => {
       result.push({ asin: report.asin, week_end: report.week_end, count: report.rows.length,
         status: previous?.content_hash === report.content_hash ? 'unchanged' : previous ? 'updated' : 'added' });
     }
-    audit(userId, req.abaMarket, 'import', 'aba_asin_reports', null, { reports: result });
+    audit(req.session.user.id, req.abaMarket, 'import', 'aba_asin_reports', null, { reports: result });
     return result;
   })();
   res.json({ reports: result });
 });
 
 abaAsinRouter.get('/', (req, res) => {
-  const userId = req.session.user.id;
+  const userId = businessUserId(req.session.user.id);
   const reports = db.prepare(`SELECT r.id, r.asin, r.week_start, r.week_end, r.week_number, r.updated_at,
     (SELECT count(*) FROM aba_asin_queries q WHERE q.report_id=r.id) AS row_count
     FROM aba_asin_reports r WHERE r.user_id=? AND r.marketplace=? ORDER BY r.week_end DESC, r.asin`).all(userId, req.abaMarket);

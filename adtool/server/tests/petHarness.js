@@ -18,7 +18,7 @@ export async function startPetTestServer() {
   const { captainRouter } = await import('../src/captain.js');
   for (const [username, role] of [['pet-owner', 'owner'], ['pet-user', 'operator']]) {
     db.prepare(`INSERT INTO users (username, display_name, password_hash, role, marketplace, manual_ads, ad_opt, product_intel, seen_version)
-      VALUES (?, ?, ?, ?, ?, 1, 1, 1, '999.0.0')`).run(username, username, bcrypt.hashSync('pet-test-password', 4), role, role === 'owner' ? 'ALL' : 'US');
+      VALUES (?, ?, ?, ?, ?, 0, 0, 0, '999.0.0')`).run(username, username, bcrypt.hashSync('pet-test-password', 4), role, role === 'owner' ? 'ALL' : 'US');
   }
   const app = express();
   app.use(express.json({ limit: '50mb' }));

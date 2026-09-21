@@ -1,3 +1,4 @@
+import { isPet, businessUserId } from './profile.js';
 import express from 'express';
 import { db, audit } from './db.js';
 import { requireLogin, requireRole } from './auth.js';
@@ -534,7 +535,7 @@ function legacyAdminBindings(userId = null) {
 }
 
 captainRouter.get('/status', (req, res) => {
-  const userId = req.session.user.id;
+  const userId = businessUserId(req.session.user.id);
   const assignments = assignmentSummaries(userId).map((row) => ({ ...row, id: `assignment-${row.id}` }));
   const legacy = legacyAdminBindings(userId).map((row) => ({ ...row, id: `legacy-${row.id}` }));
   res.json({ configured: isConfigured(), bindings: [...assignments, ...legacy] });
@@ -608,7 +609,7 @@ captainRouter.post('/bindings', requireRole('owner'), (req, res) => {
 
   const rawAssignments = Array.isArray(req.body?.assignments) ? req.body.assignments : [];
   const assignments = rawAssignments.map((item) => ({
-    country: countryOf(item?.country), userId: Number(item?.userId),
+    country: countryOf(item?.country), userId: businessUserId(Number(item?.userId)),
   }));
   if (!assignments.length || assignments.length > countries.length
       || new Set(assignments.map((item) => item.country)).size !== assignments.length
@@ -617,7 +618,7 @@ captainRouter.post('/bindings', requireRole('owner'), (req, res) => {
   }
   let brand = requestedBrand;
   for (const assignment of assignments) {
-    if (!db.prepare('SELECT id FROM users WHERE id = ? AND is_active = 1').get(assignment.userId)) {
+    if (!isPet && !db.prepare('SELECT id FROM users WHERE id = ? AND is_active = 1').get(assignment.userId)) {
       return res.status(400).json({ error: `${assignment.country} 请选择有效的网站账号` });
     }
     const row = db.prepare(
@@ -726,7 +727,7 @@ captainRouter.patch('/bindings/:id', requireRole('owner'), (req, res) => {
 captainRouter.post('/sync', async (req, res, next) => {
   try {
     requireConfigured();
-    res.json(await syncUser(req.session.user.id));
+    res.json(await syncUser(businessUserId(req.session.user.id), req.session.user.id));
   } catch (error) {
     if (error.status) return res.status(error.status).json({ error: error.message });
     next(error);

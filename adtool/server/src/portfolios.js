@@ -1,3 +1,4 @@
+import { businessUserId } from './profile.js';
 import express from 'express';
 import { db, audit } from './db.js';
 import { canRead, requireLogin } from './auth.js';
@@ -42,7 +43,7 @@ portfolioRouter.get('/', (req, res) => {
        FROM portfolio_items
       WHERE user_id = ? AND marketplace = ?
       ORDER BY name COLLATE NOCASE, portfolio_id`
-  ).all(req.session.user.id, mk);
+  ).all(businessUserId(req.session.user.id), mk);
   res.json({ cols: COLS, marketplace: mk, items });
 });
 
@@ -77,11 +78,11 @@ portfolioRouter.post('/rows', (req, res) => {
   db.transaction(() => {
     if (req.body?.replace) {
       removed = db.prepare('DELETE FROM portfolio_items WHERE user_id = ? AND marketplace = ?')
-        .run(req.session.user.id, mk).changes;
+        .run(businessUserId(req.session.user.id), mk).changes;
     }
     for (const row of rows.values()) {
-      const had = !req.body?.replace && exists.get(req.session.user.id, mk, row.portfolioId);
-      upsert.run({ ...row, userId: req.session.user.id, marketplace: mk });
+      const had = !req.body?.replace && exists.get(businessUserId(req.session.user.id), mk, row.portfolioId);
+      upsert.run({ ...row, userId: businessUserId(req.session.user.id), marketplace: mk });
       if (had) updated += 1;
       else added += 1;
     }
@@ -93,7 +94,7 @@ portfolioRouter.post('/rows', (req, res) => {
 portfolioRouter.patch('/:id', (req, res) => {
   const id = Number(req.params.id);
   const current = db.prepare('SELECT * FROM portfolio_items WHERE id = ? AND user_id = ?')
-    .get(id, req.session.user.id);
+    .get(id, businessUserId(req.session.user.id));
   if (!current) return res.status(404).json({ error: '这一行不存在' });
   const result = normRow({
     portfolioId: req.body?.portfolioId ?? current.portfolio_id,
@@ -104,7 +105,7 @@ portfolioRouter.patch('/:id', (req, res) => {
     db.prepare(
       `UPDATE portfolio_items SET portfolio_id = ?, name = ?, updated_at = datetime('now', 'localtime')
         WHERE id = ? AND user_id = ?`
-    ).run(result.row.portfolioId, result.row.name, id, req.session.user.id);
+    ).run(result.row.portfolioId, result.row.name, id, businessUserId(req.session.user.id));
   } catch (error) {
     if (String(error.message).includes('UNIQUE')) return res.status(409).json({ error: '这个广告组合编号已经存在' });
     throw error;
@@ -118,7 +119,7 @@ portfolioRouter.post('/delete', (req, res) => {
   if (!ids.length) return res.status(400).json({ error: '没有要删除的行' });
   const remove = db.prepare('DELETE FROM portfolio_items WHERE id = ? AND user_id = ?');
   let deleted = 0;
-  db.transaction(() => { for (const id of ids) deleted += remove.run(id, req.session.user.id).changes; })();
+  db.transaction(() => { for (const id of ids) deleted += remove.run(id, businessUserId(req.session.user.id)).changes; })();
   if (deleted) audit(req.session.user.id, null, 'delete', 'portfolio_items', null, { count: deleted });
   res.json({ deleted, skipped: ids.length - deleted });
 });

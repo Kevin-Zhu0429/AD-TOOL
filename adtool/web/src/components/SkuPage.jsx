@@ -141,7 +141,7 @@ export default function SkuPage({ market }) {
   async function addDraft() {
     if (!draft.trim()) return;
     const rep = replace;
-    if (rep && !await confirmAction('整表替换将清空本次站点中你自己的 SKU，再写入粘贴内容。此操作无法撤销。', '确认替换')) return;
+    if (rep && !await confirmAction('整表替换将清空本次站点中的 SKU（宠物版为店铺共享库），再写入粘贴内容。此操作无法撤销。', '确认替换')) return;
     act(() => api.addSkuText(draft, rep), (r) => {
       if (!r.errorCount) { setDraft(''); setReplace(false); }
       return resultText(r);
@@ -249,7 +249,7 @@ export default function SkuPage({ market }) {
       const countries = [...new Set(rows.map((r) => String(r.country ?? '').trim().toUpperCase()))]
         .filter(Boolean);
       if (asReplace && !await confirmAction(
-        `整表替换:你自己库里 ${countries.join(' / ')} 的 SKU 会先清空,再写入文件里的 ${rows.length} 行。` +
+        `整表替换:当前库里 ${countries.join(' / ')} 的 SKU 会先清空,再写入文件里的 ${rows.length} 行。` +
         '别的国家和别人的库不受影响。继续?'
       )) return;
 
@@ -269,7 +269,7 @@ export default function SkuPage({ market }) {
         <div>
           <h1>我的 SKU 库</h1>
           <p className="hint">
-            {isPet ? '美国站 SKU 库。按款式、尺码、颜色和面料外观筛选，开广告时一键选择。填写 ASIN 后可关联自己的 ABA 报告。' : '每个账号一份自己的库，开广告时按站点和型号挑选。填写 ASIN 后，ABA ASIN 视图会关联该 SKU 的型号、品牌和套组。'}
+            {isPet ? '美国站 SKU 库。按款式、尺码、颜色和面料外观筛选，开广告时一键选择。所有账号共享并可维护这份 SKU 库，填写 ASIN 后关联共享 ABA 报告。' : '每个账号一份自己的库，开广告时按站点和型号挑选。填写 ASIN 后，ABA ASIN 视图会关联该 SKU 的型号、品牌和套组。'}
           </p>
         </div>
         <div className="spacer" />
@@ -352,7 +352,7 @@ export default function SkuPage({ market }) {
             />
             <label className="row" style={{ marginTop: 9 }}>
               <input type="checkbox" checked={replace} onChange={(e) => setReplace(e.target.checked)} />
-              <span className="hint">{isPet ? '先清空自己的美国站 SKU 再写入' : '先清空这批数据里出现的国家再写(月度整表更新用)'}</span>
+              <span className="hint">{isPet ? '先清空店铺共享的美国站 SKU 再写入' : '先清空这批数据里出现的国家再写(月度整表更新用)'}</span>
             </label>
             <div className="row" style={{ marginTop: 9 }}>
               <span className="hint">{draft.split('\n').filter((s) => s.trim()).length} 行待添加</span>

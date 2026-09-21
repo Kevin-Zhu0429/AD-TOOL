@@ -34,8 +34,8 @@ test('pet US-only workflow, SKU variants, product imports, ABA ownership and dat
     const result = await call('/sku/rows', owner, { replace: true, rows: [{ ...sku, stock: 10 }, { ...sku, sku: 'WRONG', country: 'DE' }] });
     assert.equal(result.data.errorCount, 1); assert.equal(result.data.removed, 0);
     rows = (await call('/sku', owner)).data.items; assert.equal(rows.find((s) => s.size === 'L').stock, 0);
-    assert.equal((await call('/sku', user)).data.items.length, 0);
-    assert.equal((await call('/sku/' + rows[0].id, user, { color: '红色' }, 'PATCH')).status, 403);
+    assert.equal((await call('/sku', user)).data.items.length, 2);
+    assert.equal((await call('/sku/' + rows[0].id, user, { color: '红色' }, 'PATCH')).status, 200);
     assert.equal((await call('/sku/' + rows[0].id, owner, { fabric: '细绒', stock: '' }, 'PATCH')).status, 200);
     assert.equal((await call('/sku', owner)).data.items[0].fabric, '细绒');
   });
@@ -59,13 +59,36 @@ test('pet US-only workflow, SKU variants, product imports, ABA ownership and dat
     data = (await call('/aba/asin?marketplace=US&size=XL', owner)).data;
     assert.equal(data.total, 1); assert.equal(data.items[0].asin, 'B000000002'); assert.equal(data.items[0].market_impressions, 1000);
     assert.equal((await call('/aba/asin?marketplace=US&size=M', owner)).data.total, 0);
-    assert.equal((await call('/aba/asin?marketplace=US&scope=all', user)).data.total, 0);
+    assert.equal((await call('/aba/asin?marketplace=US&scope=all', user)).data.total, 2);
     await call('/sku/rows', owner, { rows: [{ ...sku, sku: 'SECOND-L' }] });
     data = (await call('/aba/asin?marketplace=US&size=L', owner)).data;
     assert.equal(data.total, 1); assert.equal(data.items[0].asin_clicks, 10);
     assert.equal((await call('/aba/import', owner, { marketplace: 'US', files: [{ name: 'US_Week.csv', text: brandFixture({ brand: 'Pet Brand', rows: [['dog coat', 100, 1000, 100, 100, 12, 20]] }) }] })).status, 200);
     data = (await call('/aba?marketplace=US&q=dog&view=printers&wordType=printer&export=1', owner)).data;
     assert.equal(data.total, 1); assert.equal(data.items[0].recognition, '');
+    assert.equal((await call('/aba?marketplace=US&export=1', user)).data.total, 1);
+  });
+  await t.test('shop portfolios, feature access and human audit identity', async () => {
+    const me = (await call('/auth/me', user)).data.user;
+    assert.equal(me.manualAds, true); assert.equal(me.adOpt, true); assert.equal(me.productIntel, true);
+    assert.equal((await call('/portfolio/rows', owner, { marketplace:'US', rows:[{portfolioId:'123', name:'Shared'}] })).status,200);
+    const items=(await call('/portfolio?marketplace=US',user)).data.items;
+    assert.equal(items.length,1);
+    assert.equal((await call('/portfolio/'+items[0].id,user,{portfolioId:'123',name:'Edited'},'PATCH')).status,200);
+    assert.equal((await call('/portfolio?marketplace=US',owner)).data.items[0].name,'Edited');
+    assert.equal((await call('/auth/users',owner)).data.users.some(u=>u.id<0),false);
+    assert.equal(backend.db.prepare('SELECT count(*) AS n FROM audit_log WHERE user_id=-1').get().n,0);
+    assert.equal((await call('/portfolio/delete',user,{ids:[items[0].id]})).data.deleted,1);
+    assert.equal((await call('/portfolio?marketplace=US',owner)).data.items.length,0);
+    await call('/sku/rows',owner,{rows:[{...sku,sku:'TEMP-DELETE'}]});
+    const temporary=(await call('/sku',user)).data.items.find(r=>r.sku==='TEMP-DELETE');
+    assert.equal((await call('/sku/delete',user,{ids:[temporary.id]})).data.deleted,1);
+    assert.equal((await call('/auth/users/-1',owner,{displayName:'bad'},'PATCH')).status,404);
+    backend.db.prepare(`INSERT INTO captain_channel_bindings(user_id,brand,brand_key,country,open_channel_id,channel_name) VALUES(-1,'Pet Brand','pet brand','US','shared-channel','Shared')`).run();
+    const inventory=(await call('/captain/status',user)).data;
+    assert.equal(inventory.bindings.length,1);
+    assert.deepEqual(inventory,(await call('/captain/status',owner)).data);
+
   });
   await t.test('database profile marker blocks opening a pet database in ink mode', () => {
     const result = spawnSync(process.execPath, ['--input-type=module', '-e', "await import('./server/src/db.js')"], {
