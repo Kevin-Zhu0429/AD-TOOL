@@ -18,7 +18,9 @@ import { captainRouter } from './captain.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = Number(process.env.PORT) || 8080;
-
+if (process.env.TRUST_PROXY === 'true') {
+  app.set('trust proxy', 1);
+}
 const SqliteStore = SqliteStoreFactory(session);
 
 app.use(express.json({ limit: '50mb' }));
@@ -32,7 +34,7 @@ app.use(
       httpOnly: true,
       maxAge: 12 * 60 * 60 * 1000,
       sameSite: 'lax',
-      secure: false, // 内网 http,开了 cookie 就发不出去
+      secure: process.env.COOKIE_SECURE === 'true',
     },
   })
 );
