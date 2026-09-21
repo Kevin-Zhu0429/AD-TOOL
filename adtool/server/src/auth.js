@@ -350,17 +350,21 @@ authRouter.patch('/users/:id', requireRole('owner'), (req, res) => {
 
   let nextMk = 'ALL';
   if (nextRole !== 'owner') {
+    const isOwnerDowngrade = row.role === 'owner';
     if (given !== undefined) {
       const list = normMarkets(given);
       // 纯商品部账号可以不挂站点
-      if (!list && !nextGoods) {
+      if (!list && (isOwnerDowngrade || !nextGoods)) {
+        if (isOwnerDowngrade) {
+          return res.status(400).json({ error: '改成非超级管理员时要同时指定负责的站点' });
+        }
         return res.status(400).json({ error: '至少选一个站点,且站点必须合法' });
       }
       nextMk = (list ?? []).join(',');
     } else {
       // 从超级管理员降级时库里存的是 ALL,必须同时指定负责哪些站点
       const kept = parseMarkets(row.marketplace);
-      if (!kept.length && !nextGoods) {
+      if (isOwnerDowngrade || (!kept.length && !nextGoods)) {
         return res.status(400).json({ error: '改成非超级管理员时要同时指定负责的站点' });
       }
       nextMk = kept.join(',');
@@ -387,6 +391,92 @@ authRouter.patch('/users/:id', requireRole('owner'), (req, res) => {
     manualAds: !!nextManual, adOpt: !!nextAdOpt,
     productIntel: !!nextProductIntel,
   });
+  res.json({ ok: true });
+});
+
+/**
+ * 永久删除账号。账号私有数据随账号一起删除；共享业务数据只移除创建人/更新人引用，
+ * 操作日志保留且去掉已删除账号的外键，确保历史事件不会被改写或阻止删除。
+ */
+authRouter.delete('/users/:id', requireRole('owner'), (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({ error: '账号不合法' });
+  }
+  if (id === req.session.user.id) {
+    return res.status(400).json({ error: '不能删除当前登录的账号' });
+  }
+
+  const row = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+  if (!row) return res.status(404).json({ error: '账号不存在' });
+
+  db.transaction(() => {
+    const affectedCaptainGroups = db.prepare(
+      `SELECT member.group_key
+         FROM captain_channel_group_members member
+         JOIN captain_channel_bindings binding
+           ON binding.open_channel_id = member.open_channel_id
+        WHERE binding.user_id = ?
+        UNION
+       SELECT assignment.group_key
+         FROM captain_channel_assignments assignment
+        WHERE assignment.user_id = ?`
+    ).all(id, id);
+
+    // 新版店铺组的库存来源是共享的；如果仍有其他国家负责人，把兼容外键转给其中一人，
+    // 避免删除一个账号时连带删掉其他账号仍在使用的库存快照。
+    const sharedCaptainBindings = db.prepare(
+      `SELECT binding.id, member.group_key
+         FROM captain_channel_bindings binding
+         JOIN captain_channel_group_members member
+           ON member.open_channel_id = binding.open_channel_id
+        WHERE binding.user_id = ?`
+    ).all(id);
+    const replacementCaptainUser = db.prepare(
+      `SELECT user_id
+         FROM captain_channel_assignments
+        WHERE group_key = ? AND user_id <> ?
+        ORDER BY enabled DESC, id ASC LIMIT 1`
+    );
+    const reassignCaptainBinding = db.prepare(
+      `UPDATE captain_channel_bindings
+          SET user_id = ?, updated_at = datetime('now', 'localtime')
+        WHERE id = ?`
+    );
+    for (const binding of sharedCaptainBindings) {
+      const replacement = replacementCaptainUser.get(binding.group_key, id);
+      if (replacement) reassignCaptainBinding.run(replacement.user_id, binding.id);
+    }
+
+    // 这些是共享数据：保留内容，只移除已删除账号的归属引用。
+    db.prepare('UPDATE neg_terms SET created_by = NULL WHERE created_by = ?').run(id);
+    db.prepare('UPDATE lib_items SET created_by = NULL WHERE created_by = ?').run(id);
+    db.prepare('UPDATE products SET created_by = NULL WHERE created_by = ?').run(id);
+    db.prepare('UPDATE product_settings SET updated_by = NULL WHERE updated_by = ?').run(id);
+    db.prepare('UPDATE audit_log SET user_id = NULL WHERE user_id = ?').run(id);
+
+    // 旧版 SKU 外键没有 ON DELETE CASCADE，显式清理账号私有 SKU。
+    db.prepare('DELETE FROM sku_items WHERE user_id = ?').run(id);
+
+    // ABA、广告组合、船长绑定及分配由外键级联清理。
+    db.prepare('DELETE FROM users WHERE id = ?').run(id);
+    // 删除账号的旧版库存绑定后，不保留没有任何库存来源的空店铺组。
+    const deleteEmptyCaptainGroup = db.prepare(
+      `DELETE FROM captain_channel_groups
+        WHERE group_key = ?
+          AND NOT EXISTS (
+          SELECT 1 FROM captain_channel_group_members member
+           WHERE member.group_key = captain_channel_groups.group_key
+        )`
+    );
+    for (const group of affectedCaptainGroups) deleteEmptyCaptainGroup.run(group.group_key);
+
+    audit(req.session.user.id, null, 'delete', 'user', id, {
+      role: row.role,
+      markets: row.marketplace,
+    });
+  })();
+
   res.json({ ok: true });
 });
 

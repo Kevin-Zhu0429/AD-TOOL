@@ -31,6 +31,7 @@ export const api = {
   listUsers: () => request('/auth/users'),
   createUser: (body) => request('/auth/users', { method: 'POST', body }),
   updateUser: (id, body) => request(`/auth/users/${id}`, { method: 'PATCH', body }),
+  deleteUser: (id) => request(`/auth/users/${id}`, { method: 'DELETE' }),
   resetPassword: (id, newPassword) =>
     request(`/auth/users/${id}/reset-password`, { method: 'POST', body: { newPassword } }),
   audit: () => request('/auth/audit'),

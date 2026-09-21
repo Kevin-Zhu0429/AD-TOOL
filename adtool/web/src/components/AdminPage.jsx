@@ -76,6 +76,10 @@ export default function AdminPage({ user, markets }) {
   const [resetError, setResetError] = useState('');
   const [resetBusy, setResetBusy] = useState(false);
   const resetDialogRef = useRef(null);
+  const [deleteUser, setDeleteUser] = useState(null);
+  const [deleteError, setDeleteError] = useState('');
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const deleteDialogRef = useRef(null);
   const [msg, setMsg] = useState(null);
   const [tab, setTab] = useState('users');
   const [form, setForm] = useState({
@@ -101,6 +105,9 @@ export default function AdminPage({ user, markets }) {
   useEffect(() => {
     if (resetUser && !resetDialogRef.current?.open) resetDialogRef.current?.showModal();
   }, [resetUser]);
+  useEffect(() => {
+    if (deleteUser && !deleteDialogRef.current?.open) deleteDialogRef.current?.showModal();
+  }, [deleteUser]);
 
   const visibleLogs = useMemo(() => {
     const cutoff = logPeriod === 'all' ? 0 : Date.now() - Number(logPeriod) * 24 * 60 * 60 * 1000;
@@ -172,6 +179,53 @@ export default function AdminPage({ user, markets }) {
     } finally {
       setResetBusy(false);
     }
+  }
+
+  function openDelete(u) {
+    setDeleteUser(u);
+    setDeleteError('');
+  }
+
+  function closeDelete() {
+    if (deleteBusy) return;
+    setDeleteUser(null);
+    setDeleteError('');
+  }
+
+  async function submitDelete(event) {
+    event.preventDefault();
+    setDeleteBusy(true); setDeleteError('');
+    try {
+      const name = deleteUser.display_name;
+      await api.deleteUser(deleteUser.id);
+      deleteDialogRef.current?.close();
+      setDeleteUser(null);
+      if (mkEdit?.id === deleteUser.id) setMkEdit(null);
+      await load();
+      setMsg({ kind: 'ok', text: `${name} 的账号已永久删除` });
+    } catch (error) {
+      setDeleteError(error.message);
+    } finally {
+      setDeleteBusy(false);
+    }
+  }
+
+  function changeRole(u, nextRole) {
+    if (nextRole === u.role) {
+      if (mkEdit?.id === u.id) setMkEdit(null);
+      return;
+    }
+    if (u.role === 'owner' && nextRole !== 'owner') {
+      setMkEdit((current) => ({
+        id: u.id,
+        markets: current?.id === u.id ? current.markets : [],
+        role: nextRole,
+      }));
+      setMsg({ kind: 'info', text: `请为 ${u.display_name} 选择负责站点，再一起保存角色变更` });
+      return;
+    }
+    setMkEdit((current) => current?.id === u.id ? null : current);
+    act(() => api.updateUser(u.id, { role: nextRole }), '角色已更新');
   }
 
   return (
@@ -300,11 +354,9 @@ export default function AdminPage({ user, markets }) {
                       <td className="mono" style={{ color: 'var(--text-dim)' }}>{u.username}</td>
                       <td>
                         <select
-                          className="inp sel-inline" value={u.role}
+                          className="inp sel-inline" value={mkEdit?.id === u.id && mkEdit.role ? mkEdit.role : u.role}
                           disabled={u.id === user.id}
-                          onChange={(e) =>
-                            act(() => api.updateUser(u.id, { role: e.target.value }), '角色已更新')
-                          }
+                          onChange={(e) => changeRole(u, e.target.value)}
                         >
                           {ROLES.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
                         </select>
@@ -386,30 +438,41 @@ export default function AdminPage({ user, markets }) {
                         )}
                       </td>
                       <td>
-                        {u.role === 'owner' ? (
-                          <span className="tag blue">全部</span>
-                        ) : mkEdit?.id === u.id ? (
+                        {mkEdit?.id === u.id ? (
                           <div className="mkedit">
+                            {mkEdit.role && (
+                              <span className="mkedit-hint">
+                                改为{ROLE_LABELS[mkEdit.role]}后负责哪些站点？
+                              </span>
+                            )}
                             <MarketChips
                               markets={markets} value={mkEdit.markets}
-                              onChange={(v) => setMkEdit({ id: u.id, markets: v })}
+                              onChange={(v) => setMkEdit({ ...mkEdit, markets: v })}
                             />
                             <div className="row" style={{ gap: 5 }}>
                               <button
                                 className="btn sm primary"
-                                disabled={!mkEdit.markets.length && !u.goodsAdmin}
+                                disabled={!mkEdit.markets.length && (!u.goodsAdmin || !!mkEdit.role)}
                                 onClick={() => {
                                   const next = mkEdit.markets;
+                                  const nextRole = mkEdit.role;
                                   setMkEdit(null);
                                   act(
-                                    () => api.updateUser(u.id, { markets: next }),
-                                    `${u.display_name} 的站点已改成 ${next.join(' / ')}`
+                                    () => api.updateUser(u.id, {
+                                      markets: next,
+                                      ...(nextRole ? { role: nextRole } : {}),
+                                    }),
+                                    nextRole
+                                      ? `${u.display_name} 已改为${ROLE_LABELS[nextRole]}，负责 ${next.join(' / ')} 站`
+                                      : `${u.display_name} 的站点已改成 ${next.join(' / ')}`
                                   );
                                 }}
                               >保存</button>
                               <button className="btn sm" onClick={() => setMkEdit(null)}>取消</button>
                             </div>
                           </div>
+                        ) : u.role === 'owner' ? (
+                          <span className="tag blue">全部</span>
                         ) : (
                           <button
                             className="mkcell"
@@ -431,17 +494,20 @@ export default function AdminPage({ user, markets }) {
                         <div className="row" style={{ gap: 5 }}>
                           <button className="btn sm" onClick={() => openReset(u)}>重置密码</button>
                           {u.id !== user.id && (
-                            <button
-                              className={`btn sm${u.is_active ? ' danger' : ''}`}
-                              onClick={() =>
-                                act(
-                                  () => api.updateUser(u.id, { isActive: !u.is_active }),
-                                  u.is_active ? '已停用' : '已启用'
-                                )
-                              }
-                            >
-                              {u.is_active ? '停用' : '启用'}
-                            </button>
+                            <>
+                              <button
+                                className={`btn sm${u.is_active ? ' danger' : ''}`}
+                                onClick={() =>
+                                  act(
+                                    () => api.updateUser(u.id, { isActive: !u.is_active }),
+                                    u.is_active ? '已停用' : '已启用'
+                                  )
+                                }
+                              >
+                                {u.is_active ? '停用' : '启用'}
+                              </button>
+                              <button className="btn sm danger" onClick={() => openDelete(u)}>删除</button>
+                            </>
                           )}
                         </div>
                       </td>
@@ -530,6 +596,41 @@ export default function AdminPage({ user, markets }) {
               {resetError && <div id="reset-password-error" className="note err" role="alert">{resetError}</div>}
             </div>
             <footer><button className="btn" type="button" disabled={resetBusy} onClick={() => resetDialogRef.current?.close()}>取消</button><button className="btn primary" type="submit" disabled={resetBusy} aria-busy={resetBusy}>{resetBusy ? '正在重置…' : '重置密码'}</button></footer>
+          </form>
+        </dialog>
+      )}
+
+      {deleteUser && (
+        <dialog
+          ref={deleteDialogRef}
+          className="admin-dialog"
+          aria-labelledby="delete-account-title"
+          onClose={closeDelete}
+          onCancel={(event) => { if (deleteBusy) event.preventDefault(); }}
+        >
+          <form noValidate onSubmit={submitDelete}>
+            <header>
+              <div>
+                <h2 id="delete-account-title">永久删除账号</h2>
+                <p className="hint">删除后无法恢复，请确认账号和数据范围。</p>
+              </div>
+            </header>
+            <div className="admin-dialog-body">
+              <div className="admin-delete-account">
+                <strong>{deleteUser.display_name}</strong>
+                <span className="mono">{deleteUser.username}</span>
+              </div>
+              <div className="note warn">
+                该账号将不能再登录；它的 SKU、ABA 报告、广告组合和店铺分配会永久删除。操作日志与共享词库、产品数据会保留，但不再关联此账号。
+              </div>
+              {deleteError && <div className="note err" role="alert">{deleteError}</div>}
+            </div>
+            <footer>
+              <button className="btn" type="button" disabled={deleteBusy} onClick={() => deleteDialogRef.current?.close()}>取消</button>
+              <button className="btn danger admin-delete-confirm" type="submit" disabled={deleteBusy} aria-busy={deleteBusy}>
+                {deleteBusy ? '正在删除…' : '永久删除账号'}
+              </button>
+            </footer>
           </form>
         </dialog>
       )}
