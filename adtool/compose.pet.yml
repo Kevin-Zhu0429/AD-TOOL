@@ -1,44 +1,35 @@
+# Standalone file: docker compose --env-file .env.pet -f compose.pet.yml up -d --build
+name: adtool-pet
 services:
-  adtool:
+  pet:
     build:
       context: .
       dockerfile: Dockerfile
       args:
-        # Docker Hub 拉不动时在 .env 里换成加速器地址
         NODE_IMAGE: ${NODE_IMAGE:-node:22-bookworm-slim}
         NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org}
         DEBIAN_MIRROR: ${DEBIAN_MIRROR:-}
         NODE_DISTURL: ${NODE_DISTURL:-}
-    image: adtool:latest
-    container_name: adtool
+    image: adtool-pet:latest
+    container_name: adtool-pet
     restart: unless-stopped
-
-    # 容器内进程以宿主机上你自己的 uid/gid 跑,这样 data-prod 归你所有,
-    # 看日志、拷备份都不用 sudo。值由 .env 里的 APP_UID/APP_GID 提供
     user: "${APP_UID:-1000}:${APP_GID:-1000}"
-
     ports:
-      # 左边是服务器对外端口(改 .env 里的 HOST_PORT),右边固定 8080
-      - "${HOST_PORT:-8080}:8080"
-
+      - "127.0.0.1:${PET_HOST_PORT:-8081}:8080"
     environment:
-      # This branch deploys the pet site on novagaming's existing domain/port.
       APP_PROFILE: pet
       PORT: 8080
       DATA_DIR: /data
-      SESSION_SECRET: ${SESSION_SECRET:?请先在 adtool/.env 里设置 SESSION_SECRET}
+      SESSION_SECRET: ${PET_SESSION_SECRET:?请在 .env.pet 设置独立的 PET_SESSION_SECRET}
       TZ: ${TZ:-Asia/Shanghai}
+      TRUST_PROXY: ${TRUST_PROXY:-true}
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
       CAPTAIN_API_BASE: ${CAPTAIN_API_BASE:-https://openapi.captainbi.com}
       CAPTAIN_CLIENT_ID: ${PET_CAPTAIN_CLIENT_ID:-}
       CAPTAIN_CLIENT_SECRET: ${PET_CAPTAIN_CLIENT_SECRET:-}
       CAPTAIN_INITIAL_LOOKBACK_DAYS: ${CAPTAIN_INITIAL_LOOKBACK_DAYS:-365}
-      TRUST_PROXY: ${TRUST_PROXY:-false}
-      COOKIE_SECURE: ${COOKIE_SECURE:-false}
     volumes:
-      # 宠物使用独立数据；原 data-prod 墨盒数据库保留，不迁移或覆盖。
-      # :Z 是给 CentOS 的 SELinux 打标签,不加可能报 permission denied
       - ./data-pet-prod:/data:Z
-
     logging:
       driver: json-file
       options:

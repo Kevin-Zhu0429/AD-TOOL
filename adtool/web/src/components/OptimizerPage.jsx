@@ -1,3 +1,4 @@
+import { isPet } from '../profile.js';
 import { useEffect, useRef } from 'react';
 import { api } from '../api.js';
 import { mountOptimizer } from '../optApp.js';
@@ -24,6 +25,7 @@ export default function OptimizerPage({ theme, market }) {
     const mount = document.createElement('div');
     shadow.append(mount);
     appRef.current = mountOptimizer(mount, host, {
+      pet: isPet,
       onAudit: (action, detail) => api.recordActivity(
         'optimizer', action, detail?.marketplace, detail,
       ).catch(() => {}),

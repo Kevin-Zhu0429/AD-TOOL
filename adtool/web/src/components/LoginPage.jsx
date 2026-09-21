@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { profile, isPet } from '../profile.js';
 import { api } from '../api.js';
 import Icon from './Icon.jsx';
 import CloudShader from './CloudShader.jsx';
@@ -60,8 +61,8 @@ export default function LoginPage({ onLoggedIn, theme, onToggleTheme }) {
         <div className="login-brand">
           <span className="login-glyph">PH</span>
           <div>
-            <div className="login-name">广告工作台</div>
-            <div className="login-tag">批量开发 · 否定词库</div>
+            <div className="login-name">{profile.name}</div>
+            <div className="login-tag">{isPet ? '美国站 · SKU 与广告运营' : '批量开发 · 否定词库'}</div>
           </div>
         </div>
 

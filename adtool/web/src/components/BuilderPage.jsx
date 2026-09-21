@@ -1,3 +1,4 @@
+import { isPet } from '../profile.js';
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api.js';
 import { draftKey, dropDraft, isPristine, restoreTasks, writeDraft } from '../draft.js';
@@ -28,7 +29,7 @@ export function newTask(overrides = {}) {
     autoLang: 'en',
     tokens: NAME_TOKENS.map((t) => ({ ...t, on: t.id !== 'bid' })),
     portfolio: '',
-    portfolioMode: 'auto',
+    portfolioMode: isPet ? 'manual' : 'auto',
     date: todayStamp(),
     budget: 1.2,
     defBid: 0.02,
@@ -227,7 +228,7 @@ export default function BuilderPage({ market }) {
           <p className="hint">
             一页填完:SKU、组合、命名、参数、否定,右边实时预览。填的内容会自动存在这台电脑上,
             切到别的页面再回来、或者刷新都还在。
-            {libError ? ` 词库读取失败:${libError}` : ` 本站点词库共 ${libCount} 条,可在每个任务里选择是否套用。`}
+            {isPet ? ' 美国站 · 支持手动否定关键词和 ASIN。' : libError ? ` 词库读取失败:${libError}` : ` 本站点词库共 ${libCount} 条,可在每个任务里选择是否套用。`}
           </p>
         </div>
         <div className="bhero-stats">

@@ -1,5 +1,7 @@
 # CYES 广告工作台
 
+当前 `codex/pet-adaptation` 分支用于 novagaming 宠物美国站；默认 Docker Compose 直接启用宠物版，沿用现有域名与端口。公司服务器墨盒版继续使用 `main`。详见 [服务器切换步骤](PET-DEPLOY.md)。
+
 公司内网工具:自动广告 / 手动广告批量开发 + 广告优化工作台 + 分站点否定词库 +
 各账号自己的 SKU 库 + 分市场产品库与竞品竞争力分析。
 
@@ -19,15 +21,22 @@
     cd ../web
     npm install
 
-## 开发模式(两个终端)
+## 本地一键启动
 
-    cd server && node src/index.js      # 后端 8080
-    cd web    && npm run dev            # 前端 5173,发这个的 Network 地址给同事
+在 `adtool` 或 `server` 目录执行，前后端一起启动：
 
-## 正式模式(一个进程,推荐给同事用)
+| 模式 | 命令 | 页面地址 |
+|---|---|---|
+| 宠物美国站 | `npm run dev:pet` | http://localhost:5174 |
+| 墨盒版 | `npm run dev:ink` | http://localhost:5173 |
 
-    cd web && npm run build
-    cd ../server && node src/index.js   # 只开 8080,前端由它一起托管
+两版可以同时运行，切换页面地址即可。按 Ctrl+C 或输入 `q` 回车停止本次启动的服务；如果提示端口占用，先停止以前启动的服务。
+
+首次创建账号用 `npm run seed:pet -- 用户名 显示名 密码` 或 `npm run seed:ink -- 用户名 显示名 密码`。已创建的账号无需重复创建。启动和创建账号使用同一品类的数据目录，不用手动设置环境变量。
+
+查看构建版：在 `adtool` 执行 `npm run build`，再运行 `npm run start:pet`（8081）或 `npm run start:ink`（8080）。同一品类的开发服务和构建服务应先停止再切换。
+
+数据库路径及服务器部署见 [宠物版部署说明](PET-DEPLOY.md)。
 
 ## 两种开广告的页面
 

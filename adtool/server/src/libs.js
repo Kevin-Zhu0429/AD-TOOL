@@ -1,3 +1,4 @@
+import { profile } from './profile.js';
 /**
  * 五类否定词库的口径定义 —— 前后端共用这一份。
  * 前端不重复写一遍,开页面时从 /api/neg 里连数据一起拿走。
@@ -18,7 +19,7 @@ export const REGIONS = [
 ];
 
 /** 站点顺序沿用老版本(ES 在前),末尾补上澳洲 */
-export const MARKETPLACES = ['ES', 'DE', 'FR', 'IT', 'UK', 'US', 'CA', 'AU'];
+export const MARKETPLACES = profile.markets;
 
 export function regionOf(marketplace) {
   const mk = String(marketplace ?? '').toUpperCase();

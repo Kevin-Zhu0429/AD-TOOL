@@ -1,5 +1,31 @@
 # CYES 广告工作台 UX 合约
 
+## 宠物版美国站（2026-09-21）
+
+本节仅适用于 APP_PROFILE=pet。用户批准：首期仅美国站；SKU 使用款式、尺码、颜色、面料外观、在库和在途库存；保留产品情报和 ABA；关闭墨盒专用否定词库和跑偏规则。
+
+| Capability | Canonical owner | Source of truth | Allowed variants | Verification |
+|---|---|---|---|---|
+| 品类与站点 | shared/profile.js + server/src/profile.js | 部署配置 APP_PROFILE；服务端 US 校验 | ink / pet，独立数据库 | pet.test.js |
+| SKU 属性 | PET_SKU_FIELDS + skuLib + SkuPage / SkuPicker | 用户填写、仅库存与唯一 ASIN 由船长补充 | pet 保留原始尺码；ink 保持型号匹配 | API + 浏览器 |
+| Select/Listbox | 既有原生 select + .inp | 本文和 DESIGN.md | 接受操作系统弹层 | pet.browser.mjs |
+| Table Selection | SkuPage 的页面选择与 ID 集合 | 当前页面显示行 | 全选当前页，筛选保持可见计数 | 浏览器 |
+| Date | 原生 month 输入 + 服务端 YYYY-MM 校验 | 来源数据月份，由用户确认 | 产品月份 / ABA 来源报告周 | API + 浏览器 |
+| Form | PET_PRODUCT_COLUMNS / normalizePetProduct | 来源字段或人工输入，不猜测 | 导入列映射、单条编辑 | 单元 + API |
+| Dialog | AppDialog + useConfirm | native dialog 模态生命周期 | 编辑、预览、选择、删除确认 | 键盘 + 浏览器 |
+| Feedback | 既有 .note 和 role=alert/status | 服务端结果或完整导入校验 | 保留失败输入，内联重试 | 浏览器 |
+| CRUD | 现有 products / sku 路由 | 现有账号/站点权限与审计 | SKU 私有、产品按站点共享；宠物整批校验 | API + 浏览器 |
+
+- 宠物数据目录独立；新库写入品类标记，禁止两种模式共用数据库。未配置的原站仍为 ink，不迁移原有墨盒语义或值。
+- US 为宠物唯一站点，前端不提供站点切换，服务端拒绝其他站点。货币为 USD。
+- SKU 的 L 与 XL、中文款式和完整编号独立保留。空库存为未知，0 为真实零库存。宠物导入含无效行时整批不写入，尤其整表替换不能先删除再丢弃错误行。未提供 ASIN 的增量导入保留已有 ASIN。
+- SKU 库、选择器、ABA 使用相同属性；对比组只由人工定义。产品标题不自动提取尺码或款式，来源缺失的数值为 null，人工属性及明确清空/否的值在重导时优先保留。
+- ABA 按原查询搜索，不调用机型解释器；禁用机型筛选、机型汇总和墨盒型号合并。属性只筛选当前账号的关联 ASIN，多个 SKU 指向同一 ASIN 不增加报告计数。导出一次最多 100000 行。
+- 自动/手动广告保留手动否定和组合编号，宠物草稿使用独立命名空间；原墨盒草稿键保持兼容。优化工作台只关闭墨盒分类能力，统计、修改导出和库存联动沿用原流程。
+- SKU 和产品页面复用 AbaPagination。产品分页/筛选是本页面临时状态；ABA 筛选继续按账号、站点、品类持久化在 sessionStorage。
+
+设计核对：原有主题变量和紧凑表格保留；墨盒的“型号/色组/机型分类”在 pet 模式有明确业务替代或关闭；新增对话框通过共享 AppDialog 承载。无新增色值或独立通知系统。
+
 ## 操作日志与账号统计（2026-09-15）
 
 - `audit_log` 与 `server/src/auth.js` 是全站操作记录的统一入口。所有服务端数据维护操作继续在成功提交后记录；自动广告、手动广告、广告优化与小工具等本机处理板块通过受控事件接口记录打开、读取和导出摘要，不记录文件内容、搜索词、密码或密钥。

@@ -1,3 +1,4 @@
+import { isPet } from '../profile.js';
 import { Fragment, useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { ASIN_COLUMNS } from '../../../shared/abaAsin.js';
@@ -10,7 +11,7 @@ const percent = new Intl.NumberFormat('zh-CN', { minimumFractionDigits: 2, maxim
 function Identity({ row, data, params, hideCodes = false }) {
   const asins = row.asins ?? [row.asin];
   const skus = skusForAsinRow(row, data, params);
-  return <>{!hideCodes && <><small className="aba-asin-id">{row.series_model ? `${row.series_model} · 合并 ${asins.length} 个 ASIN` : row.asin}</small>{row.series_model && <details className="aba-prices"><summary>查看来源 ASIN</summary>{asins.map((asin) => <span key={asin}>{asin}</span>)}</details>}{skus.length ? skus.map((s) => <small className="aba-asin-sku" key={s.id}>{[s.sku, s.brand, s.model ? `${s.model} 系列` : '', s.setGroup].filter(Boolean).join(' · ')}</small>) : <small className="aba-asin-sku">未关联 SKU · 可在 SKU 库补充 ASIN</small>}</>}
+  return <>{!hideCodes && <><small className="aba-asin-id">{row.series_model ? `${row.series_model} · 合并 ${asins.length} 个 ASIN` : row.asin}</small>{row.series_model && <details className="aba-prices"><summary>查看来源 ASIN</summary>{asins.map((asin) => <span key={asin}>{asin}</span>)}</details>}{skus.length ? skus.map((s) => <small className="aba-asin-sku" key={s.id}>{(isPet ? [s.sku, s.brand, s.style, s.size, s.color, s.fabric] : [s.sku, s.brand, s.model ? `${s.model} 系列` : '', s.setGroup]).filter(Boolean).join(' · ')}</small>) : <small className="aba-asin-sku">未关联 SKU · 可在 SKU 库补充 ASIN</small>}</>}
     {!!row.conflict_count && <details className="aba-prices aba-market-conflict"><summary>市场数据待核对 · {row.conflict_count} 项</summary>{row.market_conflicts.map((c, i) => <span key={i}>{c.week_end} · {c.query} · {c.label}：{c.values.map((v, valueIndex) => `${hideCodes ? `来源 ${valueIndex + 1}` : v.asin} = ${number.format(v.value)}`).join('；')}</span>)}{row.conflict_count > 20 && <span>仅显示前 20 项；展开分类内搜索词可逐词核对。</span>}</details>}
     {!!row.average_weeks && <small className="aba-asin-sku">周平均 · 按实际出现 {row.average_weeks} 周计算</small>}
     {row.averaged_queries && <small className="aba-asin-sku">各搜索词周平均之和</small>}
@@ -45,7 +46,7 @@ function GroupQueries({ group, params, hideCodes }) {
 export default function AbaAsinTable({ data, params, onSort, empty, nested = false, hideIdentity = false }) {
   const [expanded, setExpanded] = useState(null);
   const grouped = data.view === 'printers';
-  const columns = grouped ? [{ key: 'recognition', label: '机型分类', text: true }, { key: 'query_count', label: '搜索词数量' }, ...ASIN_COLUMNS.slice(2)] : ASIN_COLUMNS;
+  const columns = isPet ? ASIN_COLUMNS.slice(1) : grouped ? [{ key: 'recognition', label: '机型分类', text: true }, { key: 'query_count', label: '搜索词数量' }, ...ASIN_COLUMNS.slice(2)] : ASIN_COLUMNS;
   return <div className={`aba-table-scroll${nested ? ' aba-nested-scroll' : ''}`} tabIndex={0} role="region" aria-label={grouped ? 'ASIN 机型分类汇总表，可横向滚动' : 'ASIN 搜索查询明细表，可横向滚动'}>
     <table className="aba-table aba-asin-table"><thead><tr>{columns.map((c) => <th scope="col" key={c.key} aria-sort={data.sort === c.key ? data.direction === 'desc' ? 'descending' : 'ascending' : 'none'}><button onClick={() => onSort(c.key)}>{c.label}<span aria-hidden="true">{data.sort === c.key ? data.direction === 'desc' ? ' ↓' : ' ↑' : ' ↕'}</span></button></th>)}</tr></thead>
       <tbody>{data.items.map((row) => <Fragment key={row.key}><tr className={grouped ? 'aba-group-row' : undefined}>{columns.map((c) => <td key={c.key} className={c.text ? c.key === 'query' ? 'aba-query' : 'aba-recognition' : 'aba-value'}>

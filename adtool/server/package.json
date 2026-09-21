@@ -5,7 +5,13 @@
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
-    "seed": "node src/seed.js"
+    "seed": "node src/seed.js",
+    "dev:pet": "node ../scripts/local.mjs pet dev",
+    "dev:ink": "node ../scripts/local.mjs ink dev",
+    "start:pet": "node ../scripts/local.mjs pet start",
+    "start:ink": "node ../scripts/local.mjs ink start",
+    "seed:pet": "node ../scripts/local.mjs pet seed",
+    "seed:ink": "node ../scripts/local.mjs ink seed"
   },
   "keywords": [],
   "author": "",

@@ -1,3 +1,4 @@
+import { isPet } from './profile.js';
 import express from 'express';
 import { createHash } from 'node:crypto';
 import { db, audit } from './db.js';
@@ -59,7 +60,7 @@ abaAsinRouter.get('/', (req, res) => {
   const reports = db.prepare(`SELECT r.id, r.asin, r.week_start, r.week_end, r.week_number, r.updated_at,
     (SELECT count(*) FROM aba_asin_queries q WHERE q.report_id=r.id) AS row_count
     FROM aba_asin_reports r WHERE r.user_id=? AND r.marketplace=? ORDER BY r.week_end DESC, r.asin`).all(userId, req.abaMarket);
-  const skuItems = db.prepare(`SELECT id, asin, sku, brand, model, set_group AS setGroup FROM sku_items
+  const skuItems = db.prepare(`SELECT id, asin, sku, brand, model, set_group AS setGroup, style, size, color, fabric FROM sku_items
     WHERE user_id=? AND country=? AND asin IS NOT NULL ORDER BY sku`).all(userId, req.abaMarket);
   const years = [...new Set(reports.map((r) => r.week_end.slice(0, 4)))];
   const year = req.query.year === undefined ? years[0] ?? '' : String(req.query.year);
@@ -67,11 +68,15 @@ abaAsinRouter.get('/', (req, res) => {
   const months = [...new Set(inYear.map((r) => r.week_end.slice(5, 7)))].sort();
   const month = String(req.query.month ?? '');
   const dated = inYear.filter((r) => !month || r.week_end.slice(5, 7) === month);
-  const modelOptions = asinModelOptions(skuItems, dated.map((r) => r.asin));
-  const model = String(req.query.model ?? '');
+  const attributes = Object.fromEntries(['style', 'size', 'color'].map((key) => [key,
+    [...new Set(skuItems.filter((s) => dated.some((r) => r.asin === s.asin)).map((s) => s[key]).filter(Boolean))].sort()]));
+  const attributeSkus = isPet ? skuItems.filter((s) => ['style', 'size', 'color'].every((key) => !req.query[key] || s[key] === req.query[key])) : skuItems;
+  const hasAttributeFilter = isPet && ['style', 'size', 'color'].some((key) => req.query[key]);
+  const modelOptions = isPet ? [] : asinModelOptions(skuItems, dated.map((r) => r.asin));
+  const model = isPet ? '' : String(req.query.model ?? '');
   const selectedModel = modelOptions.find((m) => m.key === model) ?? null;
-  const modelReports = dated.filter((r) => !model || selectedModel?.asins.includes(r.asin));
-  const modelSkus = skuItems.filter((s) => modelReports.some((r) => r.asin === s.asin) && (!model || selectedModel?.skuIds.includes(s.id)));
+  const modelReports = dated.filter((r) => (!model || selectedModel?.asins.includes(r.asin)) && (!hasAttributeFilter || attributeSkus.some((s) => s.asin === r.asin)));
+  const modelSkus = attributeSkus.filter((s) => modelReports.some((r) => r.asin === s.asin) && (!model || selectedModel?.skuIds.includes(s.id)));
   const brandKey = (s) => String(s.brand ?? '').trim().toLowerCase();
   const brands = [...new Map(modelSkus.map((s) => [brandKey(s) || '__unassigned__', { key: brandKey(s) || '__unassigned__', label: String(s.brand ?? '').trim() || '未填写品牌' }])).values()].sort((a, b) => a.label.localeCompare(b.label, 'zh-CN'));
   const brand = String(req.query.brand ?? '');
@@ -86,8 +91,8 @@ abaAsinRouter.get('/', (req, res) => {
   const requestedWeeks = req.query.weeks === undefined ? weeks.slice(0, 1).map((w) => w.week_end) : String(req.query.weeks).split(',');
   const selectedWeeks = weeks.filter((w) => requestedWeeks.includes(w.week_end)).map((w) => w.week_end);
   const selected = new Map(available.filter((r) => selectedWeeks.includes(r.week_end)).map((r) => [r.id, r]));
-  const dRows = db.prepare("SELECT brand, term, series, printer FROM lib_items WHERE lib='D' AND scope=?").all(regionOf(req.abaMarket).id);
-  const wordType = ['printer', 'cartridge'].includes(req.query.wordType) ? req.query.wordType : 'all';
+  const dRows = isPet ? [] : db.prepare("SELECT brand, term, series, printer FROM lib_items WHERE lib='D' AND scope=?").all(regionOf(req.abaMarket).id);
+  const wordType = !isPet && ['printer', 'cartridge'].includes(req.query.wordType) ? req.query.wordType : 'all';
   const match = abaMatcher(String(req.query.q ?? '').slice(0, 1000), dRows, true, wordType === 'printer' ? 'printer' : 'all');
   const rows = [];
   if (selected.size) {
@@ -103,14 +108,14 @@ abaAsinRouter.get('/', (req, res) => {
       if (wordType === 'cartridge' && matching.hasPrinter) continue;
       if (req.query.group && matching.group.key !== req.query.group) continue;
       rows.push({ ...row, asin: report.asin, week_start: report.week_start, week_end: report.week_end,
-        week_number: report.week_number, recognition: matching.group.kind === 'other' ? '墨盒 KW 词' : matching.group.label,
+        week_number: report.week_number, recognition: isPet ? '' : matching.group.kind === 'other' ? '墨盒 KW 词' : matching.group.label,
         candidates: matching.candidates, group: matching.group });
     }
   }
   const average = req.query.aggregation === 'average' && selectedWeeks.length > 1;
-  const view = req.query.view === 'printers' ? 'printers' : 'queries';
+  const view = !isPet && req.query.view === 'printers' ? 'printers' : 'queries';
   const merged = average || view === 'printers' || req.query.merge !== '0';
-  const exportAll = req.query.export === '1' && view === 'printers';
+  const exportAll = req.query.export === '1' && (isPet || view === 'printers');
   const items = aggregateAsinView(rows, { series: !!model, view, mergeWeeks: merged, average, modelLabel: selectedModel?.label, includeQueries: exportAll });
   const sort = ASIN_COLUMNS.some((c) => c.key === req.query.sort) || (view === 'printers' && req.query.sort === 'query_count') ? req.query.sort : 'market_impressions';
   const direction = req.query.direction === 'asc' ? 'asc' : 'desc';
@@ -123,8 +128,9 @@ abaAsinRouter.get('/', (req, res) => {
   const pageSize = ABA_PAGE_SIZES.includes(Number(req.query.pageSize)) ? Number(req.query.pageSize) : 100;
   const pageCount = Math.max(1, Math.ceil(items.length / pageSize));
   const page = Math.min(pageCount, Math.max(1, Math.floor(Number(req.query.page) || 1)));
-  res.json({ reports, years, year, months, month, modelOptions, selectedModel, brands, brand, seriesMerged: !!model,
-    unlinkedAsins: [...new Set(dated.filter((r) => !skuItems.some((s) => s.asin === r.asin && String(s.model ?? '').trim())).map((r) => r.asin))],
+  if (exportAll && items.length > 100000) return res.status(400).json({ error: '导出最多 100000 行，请缩小日期或筛选范围' });
+  res.json({ attributes, reports, years, year, months, month, modelOptions, selectedModel, brands, brand, seriesMerged: !!model,
+    unlinkedAsins: [...new Set(dated.filter((r) => !skuItems.some((s) => s.asin === r.asin && (isPet || String(s.model ?? '').trim()))).map((r) => r.asin))],
     asins: [...new Set(brandReports.map((r) => r.asin))], skuItems: filteredSkus, weeks, selectedWeeks,
     selectedReportCount: selected.size, hasModelLibrary: !!dRows.length, total: items.length, recordCount: rows.length,
     items: exportAll ? items : items.slice((page - 1) * pageSize, page * pageSize), sort, direction, page, pageSize, pageCount, merged, view, aggregation: average ? 'average' : 'sum' });

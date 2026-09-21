@@ -1,3 +1,4 @@
+import { isPet } from '../profile.js';
 import { useState } from 'react';
 import { ORDER, PLACEMENTS, parseLines } from '../adEngine.js';
 import {
@@ -285,12 +286,12 @@ export default function ManualForm({ task, plan, libCount, lib, market, skuItems
           )}
         </Sec>
 
-        <Sec
+        {!isPet && (<Sec
           n="3" title="否定词库" tone="green"
           meta={<span className="stat"><b>{libCount}</b> 条</span>}
         >
           <LibraryNegatives task={task} lib={lib} plan={plan} onChange={onChange} />
-        </Sec>
+        </Sec>)}
       </div>
 
       {/* ==================== 中列 ==================== */}

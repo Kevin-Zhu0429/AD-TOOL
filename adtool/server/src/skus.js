@@ -1,3 +1,4 @@
+import { isPet } from './profile.js';
 import express from 'express';
 import { db, audit } from './db.js';
 import { requireLogin } from './auth.js';
@@ -9,7 +10,7 @@ export const skuRouter = express.Router();
 skuRouter.use(requireLogin);
 
 const SELECT = `SELECT s.id, s.user_id, s.country, s.brand, s.model,
-                       s.set_group AS setGroup, s.sku, s.stock, s.transit, s.asin,
+                       s.set_group AS setGroup, s.style, s.size, s.color, s.fabric, s.sku, s.stock, s.transit, s.asin,
                        s.created_at, s.updated_at, u.display_name AS owner_name
                   FROM sku_items s LEFT JOIN users u ON u.id = s.user_id`;
 
@@ -28,7 +29,7 @@ function ownRow(req, id) {
 skuRouter.get('/', (req, res) => {
   const me = req.session.user;
   const all = String(req.query.scope ?? '') === 'all' && me.role === 'owner';
-  const mk = String(req.query.marketplace ?? '').toUpperCase();
+  const mk = String(req.query.marketplace ?? (isPet ? 'US' : '')).toUpperCase();
 
   const where = [];
   const args = [];
@@ -74,10 +75,13 @@ function saveRows(user, rows, replace) {
     ok.push({ row: r.row, dedupe: key, hasAsin: Object.hasOwn(raw, 'asin') ? 1 : 0 });
   });
 
+  if (isPet && errors.length) return { added: 0, updated: 0, removed: 0, errors: errors.slice(0, 20), errorCount: errors.length };
+
   const ins = db.prepare(
-    `INSERT INTO sku_items (user_id, country, brand, model, set_group, sku, stock, transit, asin, dedupe)
-     VALUES (@user_id, @country, @brand, @model, @setGroup, @sku, @stock, @transit, @asin, @dedupe)
+    `INSERT INTO sku_items (user_id, country, brand, model, set_group, sku, stock, transit, asin, style, size, color, fabric, dedupe)
+     VALUES (@user_id, @country, @brand, @model, @setGroup, @sku, @stock, @transit, @asin, @style, @size, @color, @fabric, @dedupe)
      ON CONFLICT (user_id, dedupe) DO UPDATE SET
+       style = excluded.style, size = excluded.size, color = excluded.color, fabric = excluded.fabric,
        brand = excluded.brand, model = excluded.model, set_group = excluded.set_group,
        sku = excluded.sku, stock = excluded.stock, transit = excluded.transit,
        asin = CASE WHEN @hasAsin THEN excluded.asin ELSE sku_items.asin END,
@@ -146,6 +150,7 @@ skuRouter.patch('/:id', (req, res) => {
 
   const cur = found.row;
   const merged = {
+    ...Object.fromEntries(['style', 'size', 'color', 'fabric'].map((key) => [key, req.body?.[key] ?? cur[key]])),
     country: req.body?.country ?? cur.country,
     brand: req.body?.brand ?? cur.brand,
     model: req.body?.model ?? cur.model,
@@ -166,6 +171,7 @@ skuRouter.patch('/:id', (req, res) => {
 
   db.prepare(
     `UPDATE sku_items SET country = @country, brand = @brand, model = @model,
+            style = @style, size = @size, color = @color, fabric = @fabric,
             set_group = @setGroup, sku = @sku, stock = @stock, transit = @transit, asin = @asin,
             dedupe = @dedupe, updated_at = datetime('now', 'localtime')
       WHERE id = @id`

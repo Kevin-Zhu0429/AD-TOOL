@@ -1,3 +1,4 @@
+import { profile, isPet } from './profile.js';
 import 'dotenv/config';
 import express from 'express';
 import session from 'express-session';
@@ -26,6 +27,7 @@ const SqliteStore = SqliteStoreFactory(session);
 app.use(express.json({ limit: '50mb' }));
 app.use(
   session({
+    name: process.env.SESSION_COOKIE_NAME || (isPet ? 'adtool.pet.sid' : 'connect.sid'),
     store: new SqliteStore({ client: db, expired: { clear: true, intervalMs: 900_000 } }),
     secret: process.env.SESSION_SECRET || 'change-me-in-env',
     resave: false,
@@ -39,8 +41,9 @@ app.use(
   })
 );
 
+app.get('/api/config', (req, res) => res.json(profile));
 app.use('/api/auth', authRouter);
-app.use('/api/neg', negRouter);
+app.use('/api/neg', (req, res, next) => isPet ? res.status(404).json({ error: '宠物版未启用共享否定词库' }) : next(), negRouter);
 app.use('/api/sku', skuRouter);
 app.use('/api/portfolio', portfolioRouter);
 app.use('/api/products', productRouter);

@@ -1,3 +1,4 @@
+import { isPet } from '../profile.js';
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { hasUnseen, visibleChangelog, visibleVersion } from '../changelog.js';
@@ -27,7 +28,7 @@ export default function HomePage({ user, market, onNav, theme, onOpenChangelog }
   useEffect(() => {
     let alive = true;
     setLibCount(null);
-    api.library(market)
+    (isPet ? Promise.resolve({ items: {} }) : api.library(market))
       .then((d) => alive && setLibCount(
         Object.values(d.items ?? {}).reduce((a, x) => a + x.length, 0)
       ))
@@ -67,7 +68,7 @@ export default function HomePage({ user, market, onNav, theme, onOpenChangelog }
             {user.markets.length > 1
               ? ' · 右上角可以切换到你负责的其他站点'
               : ' · 你的账号负责这个站点'}
-            {libCount !== null && ` · 词库 ${libCount} 条`}
+            {!isPet && libCount !== null && ` · 词库 ${libCount} 条`}
           </p>
         </div>
       </div>
@@ -75,20 +76,20 @@ export default function HomePage({ user, market, onNav, theme, onOpenChangelog }
       <div className="home-grid">
         <EntryCard
           tone="blue" icon="chart" title="ABA 报告"
-          desc="上传品牌搜索查询周报，按搜索词、墨盒系列和对应机型筛选，查看每周查询量、曝光、点击和购买表现。"
+          desc={isPet ? "上传美国站品牌或 ASIN 搜索查询周报，查看搜索词的曝光、点击和购买表现，并关联自己的 SKU。" : "上传品牌搜索查询周报，按搜索词、墨盒系列和对应机型筛选，查看每周查询量、曝光、点击和购买表现。"}
           meta="品牌视图 · 数据仅自己可见 · 服务器保存"
           onClick={() => onNav('aba')}
         />
         <EntryCard
           tone="blue" icon="layers" title="自动广告"
-          desc="按任务批量配置自动广告,一次生成可直接上传的总表。词库里的否定词会自动带进每一条活动;开系列广告时还会按 D 类反推,把其它墨盒和打印机型号一起否掉。"
+          desc={isPet ? "选择美国站 SKU，配置预算、竞价和广告位溢价，批量生成广告活动。可手动添加本任务的否定词和否定 ASIN。" : "按任务批量配置自动广告,一次生成可直接上传的总表。词库里的否定词会自动带进每一条活动;开系列广告时还会按 D 类反推,把其它墨盒和打印机型号一起否掉。"}
           meta="生成 xlsx 批量表"
           onClick={() => onNav('builder')}
         />
         {user.manualAds && (
           <EntryCard
             tone="violet" icon="sliders" title="手动广告"
-            desc="关键词投放和商品投放(ASIN / 品类定向)。关键词和 ASIN 自己粘贴,不接词表库;否定词照样联动本站词库,精准 / 词组 / 广泛可以分别给出价、也可以各自拆广告组。出价可以自己填,也可以填目标 CPC 按溢价和系数反推。"
+            desc={isPet ? "按款式和尺码选择 SKU，填写关键词或 ASIN 定向、竞价和预算，生成手动广告批量表。" : "关键词投放和商品投放(ASIN / 品类定向)。关键词和 ASIN 自己粘贴,不接词表库;否定词照样联动本站词库,精准 / 词组 / 广泛可以分别给出价、也可以各自拆广告组。出价可以自己填,也可以填目标 CPC 按溢价和系数反推。"}
             meta="试用中 · 生成 xlsx 批量表"
             onClick={() => onNav('manual')}
           />
@@ -96,33 +97,33 @@ export default function HomePage({ user, market, onNav, theme, onOpenChangelog }
         {user.adOpt && (
           <EntryCard
             tone="blue" icon="chart" title="广告优化"
-            desc="把后台下载的批量表拖进来,逐条活动看广告位 / SKU / 投放 / 搜索词的表现,改竞价、调溢价、批量否定,最后导出能直接回传的批量表。批量否定可以直接勾本站词库的 A–E 类,D 类还能按在投的墨盒型号反推该否掉的其它型号。"
+            desc={isPet ? "分析活动、SKU、搜索词和广告位表现，修改竞价、预算、状态或手动否定，并导出批量表。" : "把后台下载的批量表拖进来,逐条活动看广告位 / SKU / 投放 / 搜索词的表现,改竞价、调溢价、批量否定,最后导出能直接回传的批量表。批量否定可以直接勾本站词库的 A–E 类,D 类还能按在投的墨盒型号反推该否掉的其它型号。"}
             meta="试用中 · 数据只在本机浏览器里解析"
             onClick={() => onNav('optimizer')}
           />
         )}
-        <EntryCard
+        {!isPet && (<EntryCard
           tone="green" icon="book" title={`${market} 站否定词库`}
           desc="A 无名词 · B 非售品牌 · C 非售流量干扰墨盒 · D 在售墨盒和打印机 · E 原装竞品 ASIN。改动立即生效。D 类还能当型号库单独用:后台否定助手里一次搜多个墨盒型号,把墨盒或打印机型号复制走,直接粘进后台否定。"
           meta={user.goodsAdmin ? 'A–E 都可编辑' : 'A 类可编辑,B–E 只读'}
           onClick={() => onNav('library')}
-        />
+        />)}
         <EntryCard
           tone="amber" icon="file" title="我的 SKU 库"
-          desc="按国家 / 品牌 / 型号 / 套组存自己负责的 SKU 和库存。每个账号一份自己的,开广告时在「投放 SKU」那里一键挑进去。"
+          desc={isPet ? "按款式、尺码、颜色和面料外观管理美国站 SKU，维护在库、在途库存与 ASIN 关联。" : "按国家 / 品牌 / 型号 / 套组存自己负责的 SKU 和库存。每个账号一份自己的,开广告时在「投放 SKU」那里一键挑进去。"}
           meta="模板导入 · 只有自己看得到"
           onClick={() => onNav('skus')}
         />
         <EntryCard
           tone="violet" icon="layers" title={`${market} 站广告组合库`}
-          desc="导入广告组合编号和名称。开自动或手动广告时，会按投放 SKU 的型号自动选择对应 Series；多个系列自动选择混投，也可手动覆盖。"
+          desc={isPet ? "维护美国站广告组合编号和名称，开广告时手动选择已有组合或填写编号。" : "导入广告组合编号和名称。开自动或手动广告时，会按投放 SKU 的型号自动选择对应 Series；多个系列自动选择混投，也可手动覆盖。"}
           meta="两列模板 · 每个账号独立"
           onClick={() => onNav('portfolios')}
         />
         {user.productIntel && (
           <EntryCard
             tone="amber" icon="chart" title={`${market} 站产品情报`}
-            desc="维护分市场产品库,按品牌、型号和具体色组筛选,查看 ABCD 价格档位、价格阶梯和机会竞品。"
+            desc={isPet ? "维护美国站产品数据，按产品类型、款式和属性筛选；为可比较的产品手动设置对比组。" : "维护分市场产品库,按品牌、型号和具体色组筛选,查看 ABCD 价格档位、价格阶梯和机会竞品。"}
             meta="产品库 · 竞品对比"
             onClick={() => onNav('products')}
           />
@@ -143,7 +144,7 @@ export default function HomePage({ user, market, onNav, theme, onOpenChangelog }
         )}
       </div>
 
-      <section className={`home-log${unseen ? ' unseen' : ''}`}>
+      {!isPet && <section className={`home-log${unseen ? ' unseen' : ''}`}>
         <div className="home-log-head">
           <span className="home-log-label">更新日志</span>
           <span className="tag gray mono">v{version}</span>
@@ -162,7 +163,7 @@ export default function HomePage({ user, market, onNav, theme, onOpenChangelog }
             <Icon name="down" className="ico-sm" />
           </button>
         )}
-      </section>
+      </section>}
     </div>
   );
 }

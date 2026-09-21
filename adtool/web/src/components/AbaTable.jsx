@@ -1,3 +1,4 @@
+import { isPet } from '../profile.js';
 import { Fragment, useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { BRAND_COLUMNS, ABA_PAGE_SIZES } from '../../../shared/aba.js';
@@ -55,7 +56,7 @@ function GroupQueries({ group, params }) {
 export default function AbaTable({ data, params, onSort, empty, nested = false }) {
   const [expanded, setExpanded] = useState(null);
   const grouped = data.view === 'printers';
-  const columns = grouped ? [{ key: 'recognition', label: '机型分类' }, { key: 'query_count', label: '搜索词数量' }, ...BRAND_COLUMNS.slice(2)] : BRAND_COLUMNS;
+  const columns = isPet ? BRAND_COLUMNS.slice(1) : grouped ? [{ key: 'recognition', label: '机型分类' }, { key: 'query_count', label: '搜索词数量' }, ...BRAND_COLUMNS.slice(2)] : BRAND_COLUMNS;
   return <div className={`aba-table-scroll${nested ? ' aba-nested-scroll' : ''}`} tabIndex={0} role="region" aria-label={grouped ? '机型分类汇总表，可横向滚动' : '搜索查询明细表，可横向滚动'}>
     <table className={`aba-table aba-brand-table${grouped ? ' aba-group-table' : ''}`}><thead><tr>{columns.map((column) => <th key={column.key} scope="col" aria-sort={data.sort === column.key ? data.direction === 'desc' ? 'descending' : 'ascending' : 'none'}>
       <button onClick={() => onSort(column.key)}>{column.label}<span aria-hidden="true">{data.sort === column.key ? data.direction === 'desc' ? ' ↓' : ' ↑' : ' ↕'}</span></button>

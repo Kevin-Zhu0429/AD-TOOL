@@ -1,3 +1,4 @@
+import { profile } from './profile.js';
 /**
  * 表单草稿:开广告的两个页面在浏览器本地存一份,切页面 / 刷新 / 关标签页都不丢。
  *
@@ -9,7 +10,7 @@ const PREFIX = 'adtool.draft.';
 const VERSION = 1;
 
 export function draftKey(page, market) {
-  return `${PREFIX}v${VERSION}.${page}.${String(market ?? '').toUpperCase()}`;
+  return `${PREFIX}${profile.id === 'pet' ? 'pet.' : ''}v${VERSION}.${page}.${String(market ?? '').toUpperCase()}`;
 }
 
 export function readDraft(key) {

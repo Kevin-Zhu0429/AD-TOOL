@@ -1,3 +1,4 @@
+import { profile } from '../src/profile.js';
 import express from 'express';
 import session from 'express-session';
 import bcrypt from 'bcryptjs';
@@ -25,6 +26,7 @@ export async function startAbaTestServer() {
   const app = express();
   app.use(express.json({ limit: '50mb' }));
   app.use(session({ secret: 'aba-test-only', resave: false, saveUninitialized: false }));
+  app.get('/api/config', (req, res) => res.json(profile));
   app.use('/api/auth', authRouter);
   app.use('/api/aba', abaRouter);
   app.use('/api/sku', skuRouter);

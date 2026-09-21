@@ -1,3 +1,7 @@
+import { isPet } from '../profile.js';
+import { PET_SKU_FIELDS } from '../../../shared/profile.js';
+import { useConfirm } from './AppDialog.jsx';
+import { AbaPagination } from './AbaTable.jsx';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import * as XLSX from 'xlsx';
 import { api } from '../api.js';
@@ -7,6 +11,7 @@ import './SkuPage.css';
 
 /* 列名兜底:Excel 表头和列标题对不上时,再按这些关键词猜一次 */
 const ALIAS = {
+  style: /款式|style/i, size: /尺码|size/i, color: /^颜色$|^colou?r$/i, fabric: /面料|外观|fabric|material/i,
   country: /国家|站点|market|country/i,
   brand: /品牌|brand/i,
   model: /型号|机型|model/i,
@@ -38,6 +43,9 @@ function mapHeader(cols, head) {
 const val = (it, key) => (it[key] === null || it[key] === undefined || it[key] === '' ? '' : it[key]);
 
 export default function SkuPage({ market }) {
+  const [confirmAction, confirmation] = useConfirm();
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(100);
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [msg, setMsg] = useState(null);
@@ -46,7 +54,7 @@ export default function SkuPage({ market }) {
   const [draft, setDraft] = useState('');
   const [replace, setReplace] = useState(false);
   const [filter, setFilter] = useState('');
-  const [facet, setFacet] = useState({ country: '', brand: '' });
+  const [facet, setFacet] = useState({ country: '', brand: '', style: '', size: '', color: '', fabric: '' });
   const [checked, setChecked] = useState(() => new Set());
   const [edit, setEdit] = useState(null);          // 正在编辑的那一行:{id, ...列}
   const [captain, setCaptain] = useState(null);
@@ -93,11 +101,15 @@ export default function SkuPage({ market }) {
     return items.filter((it) => {
       if (facet.country && it.country !== facet.country) return false;
       if (facet.brand && it.brand !== facet.brand) return false;
+      if (isPet && ['style', 'size', 'color', 'fabric'].some((key) => facet[key] && it[key] !== facet[key])) return false;
       if (!f) return true;
       return cols.some((c) => String(it[c.key] ?? '').toLowerCase().includes(f));
     });
   }, [items, filter, facet, cols]);
 
+  useEffect(() => setPage(1), [items, filter, facet]);
+  const currentPage = Math.min(page, Math.max(1, Math.ceil(shown.length / pageSize)));
+  const pageRows = shown.slice((currentPage - 1) * pageSize, currentPage * pageSize);
   const mine = scope !== 'all';
 
   async function act(fn, okMsg) {
@@ -126,20 +138,20 @@ export default function SkuPage({ market }) {
     return { kind: r.errorCount ? 'warn' : 'ok', text: parts.join(' · ') };
   }
 
-  function addDraft() {
+  async function addDraft() {
     if (!draft.trim()) return;
     const rep = replace;
+    if (rep && !await confirmAction('整表替换将清空本次站点中你自己的 SKU，再写入粘贴内容。此操作无法撤销。', '确认替换')) return;
     act(() => api.addSkuText(draft, rep), (r) => {
-      setDraft('');
-      setReplace(false);
+      if (!r.errorCount) { setDraft(''); setReplace(false); }
       return resultText(r);
     });
   }
 
-  function removeChecked() {
+  async function removeChecked() {
     const ids = [...checked];
     if (!ids.length) return;
-    if (!confirm(`确定删除选中的 ${ids.length} 行?删了就没了。`)) return;
+    if (!await confirmAction(`确定删除选中的 ${ids.length} 行？此操作无法撤销。`, '删除 SKU')) return;
     act(() => api.deleteSkus(ids), (r) => `已删除 ${r.deleted} 行`);
   }
 
@@ -176,9 +188,10 @@ export default function SkuPage({ market }) {
   function downloadTemplate() {
     const rows = [
       cols.map((c) => c.label),
+      ...(isPet ? [['PET-RAIN-YELLOW-L', '雨衣 A 款', 'L', '黄色', '防水涂层 / 纯色', 120, 80, '示例品牌', 'B000000001'], ['PET-RAIN-YELLOW-XL', '雨衣 A 款', 'XL', '黄色', '防水涂层 / 纯色', 0, 60, '示例品牌', 'B000000002']] : [
       ['ES', 'HP', '301', 'BKC', 'CY-ES-HP301XL-BKCL', 120, 300, ''],
       ['ES', 'HP', '302', '2BK', 'CY-ES-HP302XL-2BK', 0, 500, ''],
-      ['DE', 'Canon', 'PG-545', 'BK', 'CY-DE-CA545XL-BK', 80, '', ''],
+      ['DE', 'Canon', 'PG-545', 'BK', 'CY-DE-CA545XL-BK', 80, '', '']]),
     ];
     const ws = XLSX.utils.aoa_to_sheet(rows);
     ws['!cols'] = cols.map((c) => ({ wch: c.width ?? 14 }));
@@ -224,13 +237,18 @@ export default function SkuPage({ market }) {
           if (c.key === 'asin' && (at === undefined || at >= r.length)) return;
           row[c.key] = at === undefined ? '' : r[at] ?? '';
         });
+        if (isPet && idx) {
+          const countryAt = (sheet[0] ?? []).findIndex((h) => /^(国家|站点|country|marketplace)$/i.test(String(h).trim()));
+          if (countryAt >= 0 && r[countryAt] && !/^(US|美国|美国站)$/i.test(String(r[countryAt]).trim())) throw new Error('宠物版仅支持美国站 US');
+        }
         if (cols.some((c) => String(row[c.key] ?? '').trim())) rows.push(row);
       }
       if (!rows.length) return setMsg({ kind: 'err', text: '这份文件里没读到数据行' });
 
+      if (isPet) rows.forEach((row) => { row.country = 'US'; });
       const countries = [...new Set(rows.map((r) => String(r.country ?? '').trim().toUpperCase()))]
         .filter(Boolean);
-      if (asReplace && !confirm(
+      if (asReplace && !await confirmAction(
         `整表替换:你自己库里 ${countries.join(' / ')} 的 SKU 会先清空,再写入文件里的 ${rows.length} 行。` +
         '别的国家和别人的库不受影响。继续?'
       )) return;
@@ -241,18 +259,17 @@ export default function SkuPage({ market }) {
     }
   }
 
-  if (error) return <div className="lib"><div className="note err">{error}</div></div>;
+  if (error) return <div className="lib"><div className="note err" role="alert">{error} <button className="btn" onClick={() => load()}>重新加载</button></div></div>;
   if (!data) return <div className="lib"><div className="empty">加载中…</div></div>;
 
   return (
     <div className="lib">
+      {confirmation}
       <div className="lib-head">
         <div>
           <h1>我的 SKU 库</h1>
           <p className="hint">
-            每个账号一份自己的库,别人看不到,大家只传自己负责的品牌。
-            开广告时在「投放 SKU」那里点「从 SKU 库选」,按站点和型号挑好直接填进去。
-            填写 ASIN 后，ABA ASIN 视图会关联该 SKU 的型号、品牌和套组。
+            {isPet ? '美国站 SKU 库。按款式、尺码、颜色和面料外观筛选，开广告时一键选择。填写 ASIN 后可关联自己的 ABA 报告。' : '每个账号一份自己的库，开广告时按站点和型号挑选。填写 ASIN 后，ABA ASIN 视图会关联该 SKU 的型号、品牌和套组。'}
           </p>
         </div>
         <div className="spacer" />
@@ -296,7 +313,7 @@ export default function SkuPage({ market }) {
             <div className="card captain-sync-card">
               <div className="card-title">船长库存</div>
               <p className="hint">
-                欧洲库存按品牌合并；这里只更新分配给你的国家，其他国家由各自负责人同步。
+                {isPet ? '同步已绑定美国店铺的库存，只更新已有 SKU 的在库、在途库存，保留人工填写的宠物属性。' : '欧洲库存按品牌合并；这里只更新分配给你的国家，其他国家由各自负责人同步。'}
               </p>
               {captain?.bindings?.length ? (
                 <div className="captain-binding-list">
@@ -329,12 +346,13 @@ export default function SkuPage({ market }) {
             <div className="card-title">批量添加</div>
             <textarea
               className="inp resize-none" rows={8} value={draft}
-              placeholder={`从 Excel 直接复制粘贴,一行一个 SKU\n列的顺序:${cols.map((c) => c.label).join(' → ')}\n\nES\tHP\t301\tBKC\tCY-ES-HP301XL-BKCL\t120\t300`}
+              aria-label="批量添加 SKU"
+              placeholder={isPet ? `从 Excel 复制粘贴，一行一个 SKU\n列顺序：${cols.map((c) => c.label).join(' → ')}\n\nPET-RAIN-L\t雨衣 A 款\tL\t黄色\t纯色\t120\t80` : `从 Excel 直接复制粘贴,一行一个 SKU\n列的顺序:${cols.map((c) => c.label).join(' → ')}\n\nES\tHP\t301\tBKC\tCY-ES-HP301XL-BKCL\t120\t300`}
               onChange={(e) => setDraft(e.target.value)}
             />
             <label className="row" style={{ marginTop: 9 }}>
               <input type="checkbox" checked={replace} onChange={(e) => setReplace(e.target.checked)} />
-              <span className="hint">先清空这批数据里出现的国家再写(月度整表更新用)</span>
+              <span className="hint">{isPet ? '先清空自己的美国站 SKU 再写入' : '先清空这批数据里出现的国家再写(月度整表更新用)'}</span>
             </label>
             <div className="row" style={{ marginTop: 9 }}>
               <span className="hint">{draft.split('\n').filter((s) => s.trim()).length} 行待添加</span>
@@ -364,6 +382,7 @@ export default function SkuPage({ market }) {
         </div>
 
         <div className="card lib-main">
+          {isPet && <div className="pet-filters">{PET_SKU_FIELDS.filter((c) => ['style', 'size', 'color', 'fabric'].includes(c.key)).map((c) => <label key={c.key}>{c.label}<select className="inp" aria-label={c.label} value={facet[c.key]} onChange={(e) => setFacet({ ...facet, [c.key]: e.target.value })}><option value="">全部{c.label}</option>{[...new Set(items.map((it) => it[c.key]).filter(Boolean))].sort().map((v) => <option key={v}>{v}</option>)}</select></label>)}</div>}
           <div className="row wrap" style={{ marginBottom: 11 }}>
             <div className="sku-search">
               <input
@@ -426,9 +445,9 @@ export default function SkuPage({ market }) {
                     <th style={{ width: 30 }}>
                       <input
                         type="checkbox"
-                        checked={shown.length > 0 && shown.every((t) => checked.has(t.id))}
+                        checked={shown.length > 0 && pageRows.every((t) => checked.has(t.id))}
                         onChange={(e) =>
-                          setChecked(e.target.checked ? new Set(shown.map((t) => t.id)) : new Set())
+                          setChecked(e.target.checked ? new Set(pageRows.map((t) => t.id)) : new Set())
                         }
                       />
                     </th>
@@ -440,7 +459,7 @@ export default function SkuPage({ market }) {
                 </tr>
               </thead>
               <tbody>
-                {shown.slice(0, 2000).map((it) => {
+                {pageRows.map((it) => {
                   const editing = edit?.id === it.id;
                   const zeroStock = isZeroStock(it);
                   const outOfStock = isOutOfStock(it);
@@ -520,12 +539,8 @@ export default function SkuPage({ market }) {
                 )}
               </tbody>
             </table>
-            {shown.length > 2000 && (
-              <p className="hint" style={{ padding: '8px 2px' }}>
-                只显示前 2000 行,用上面的搜索和筛选缩小范围(导出的是筛选后的全部 {shown.length} 行)。
-              </p>
-            )}
           </div>
+          <AbaPagination data={{ total: shown.length, page: currentPage, pageSize, pageCount: Math.max(1, Math.ceil(shown.length / pageSize)) }} onChange={(patch) => { if (patch.pageSize) setPageSize(patch.pageSize); setPage(patch.page ?? 1); }} />
         </div>
       </div>
     </div>

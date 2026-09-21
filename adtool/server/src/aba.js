@@ -1,3 +1,4 @@
+import { isPet } from './profile.js';
 import express from 'express';
 import { createHash } from 'node:crypto';
 import { db, audit } from './db.js';
@@ -77,9 +78,9 @@ abaRouter.get('/', (req, res) => {
   const weeks = req.query.weeks === undefined ? available.slice(0, 1).map((r) => r.week_end) : String(req.query.weeks).split(',');
   const selected = available.filter((r) => weeks.includes(r.week_end));
   const q = String(req.query.q ?? '').trim().slice(0, 1000);
-  const dRows = db.prepare("SELECT brand, term, series, printer FROM lib_items WHERE lib='D' AND scope=?").all(regionOf(req.abaMarket).id);
-  const view = req.query.view === 'printers' ? 'printers' : 'queries';
-  const wordType = ['printer', 'cartridge'].includes(req.query.wordType) ? req.query.wordType : 'all';
+  const dRows = isPet ? [] : db.prepare("SELECT brand, term, series, printer FROM lib_items WHERE lib='D' AND scope=?").all(regionOf(req.abaMarket).id);
+  const view = !isPet && req.query.view === 'printers' ? 'printers' : 'queries';
+  const wordType = !isPet && ['printer', 'cartridge'].includes(req.query.wordType) ? req.query.wordType : 'all';
   const merged = req.query.merge !== '0' && selected.length > 1;
   const match = abaMatcher(q, dRows, req.query.models !== '0', wordType);
   const selectedIds = new Set(selected.map((r) => r.id));
@@ -97,7 +98,7 @@ abaRouter.get('/', (req, res) => {
       if (req.query.group && matching.group.key !== req.query.group) continue;
       const report = selectedById.get(row.report_id);
       rows.push({ ...row, week_start: report.week_start, week_end: report.week_end, week_number: report.week_number,
-        recognition: matching.group.kind === 'other' ? '墨盒 KW 词' : matching.group.label,
+        recognition: isPet ? '' : matching.group.kind === 'other' ? '墨盒 KW 词' : matching.group.label,
         linked: matching.linked, candidates: matching.candidates, group: matching.group });
     }
   }
@@ -127,7 +128,8 @@ abaRouter.get('/', (req, res) => {
     week.click_rate = week.query_volume ? week.clicks / week.query_volume * 100 : null;
     Object.assign(week, brandRates(week));
   }
-  res.json({ reports, brands, brand, selectedWeeks: selected.map((r) => r.week_end), items: items.slice((page - 1) * pageSize, page * pageSize),
+  if (isPet && req.query.export === '1' && items.length > 100000) return res.status(400).json({ error: '导出最多 100000 行，请缩小日期或筛选范围' });
+  res.json({ reports, brands, brand, selectedWeeks: selected.map((r) => r.week_end), items: isPet && req.query.export === '1' ? items : items.slice((page - 1) * pageSize, page * pageSize),
     total: items.length, recordCount: rows.length, queryCount: new Set(rows.map((r) => r.query)).size,
     linkedCount: items.filter((r) => r.linked).length, page, pageSize, pageCount, sort, direction, trend,
     view, wordType, merged, priceSortable, missingBrandData: rows.some((r) => BRAND_SOURCE_COLUMNS.some(({ key }) => r[key] == null)), hasModelLibrary: !!dRows.length });

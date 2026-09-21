@@ -114,7 +114,7 @@ export function requireRole(...roles) {
 
 /** 能不能看某个站点的数据:owner 通吃,其他人看自己负责的站点 */
 export function canRead(user, marketplace) {
-  return user.role === 'owner' || (user.markets ?? []).includes(marketplace);
+  return MARKETPLACES.includes(marketplace) && (user.role === 'owner' || (user.markets ?? []).includes(marketplace));
 }
 
 /**

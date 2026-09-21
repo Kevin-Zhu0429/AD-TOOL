@@ -1,3 +1,4 @@
+import { isPet } from '../profile.js';
 import { useState } from 'react';
 import {
   AUTO_TYPES, STRATEGIES, PLACEMENTS, AUTO_ZH, parseLines,
@@ -62,14 +63,14 @@ export default function TaskForm({ task, plan, index, libCount, lib, market, sku
           )}
         </Sec>
 
-        <Sec
+        {!isPet && (<Sec
           n="2"
           title="否定词库"
           tone="green"
           meta={<span className="stat"><b>{libCount}</b> 条</span>}
         >
           <LibraryNegatives task={task} lib={lib} plan={plan} onChange={onChange} />
-        </Sec>
+        </Sec>)}
 
         <Sec
           n="3"

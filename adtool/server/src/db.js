@@ -1,3 +1,4 @@
+import { profile, isPet } from './profile.js';
 import Database from 'better-sqlite3';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -9,13 +10,24 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // 所有数据只落在 DATA_DIR 里 —— 将来搬到别的机器就是拷这一个目录
 const DATA_DIR = process.env.DATA_DIR
   ? path.resolve(process.env.DATA_DIR)
-  : path.resolve(__dirname, '..', 'data');
+  : path.resolve(__dirname, '..', isPet ? 'data-pet' : 'data');
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 
 export const DB_PATH = path.join(DATA_DIR, 'adtool.db');
 export const dataDir = DATA_DIR;
 export const db = new Database(DB_PATH);
+
+// Prevent a pet deployment from opening a copied ink database, or vice versa.
+const hasMetadata = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='app_metadata'").get();
+const savedProfile = hasMetadata ? db.prepare("SELECT value FROM app_metadata WHERE key='profile'").get()?.value : null;
+const hasUsers = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='users'").get();
+if ((savedProfile && savedProfile !== profile.id) || (!savedProfile && isPet && hasUsers && db.prepare('SELECT 1 FROM users LIMIT 1').get())) {
+  db.close();
+  throw new Error('数据库品类不匹配，请为宠物版设置独立的 DATA_DIR，并从空库初始化。');
+}
+db.exec('CREATE TABLE IF NOT EXISTS app_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
+db.prepare("INSERT OR IGNORE INTO app_metadata (key, value) VALUES ('profile', ?)").run(profile.id);
 
 const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
 db.exec(schema);
@@ -31,6 +43,10 @@ migrate();
  * 6) 产品库按“站点 + 数据月份 + ASIN”隔离；无法追溯月份的旧数据放进“历史数据”
  */
 function migrate() {
+  const petSkuColumns = new Set(db.prepare('PRAGMA table_info(sku_items)').all().map((c) => c.name));
+  for (const name of ['style', 'size', 'color', 'fabric']) {
+    if (!petSkuColumns.has(name)) db.exec('ALTER TABLE sku_items ADD COLUMN ' + name + ' TEXT');
+  }
   const abaColumns = db.prepare('PRAGMA table_info(aba_queries)').all().map((c) => c.name);
   for (const column of ['brand_impressions', 'brand_clicks', 'brand_purchases']) {
     if (!abaColumns.includes(column)) db.exec(`ALTER TABLE aba_queries ADD COLUMN ${column} INTEGER CHECK(${column} >= 0)`);

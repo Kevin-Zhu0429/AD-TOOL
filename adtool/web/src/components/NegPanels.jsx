@@ -1,3 +1,4 @@
+import { isPet } from '../profile.js';
 import { useMemo, useState } from 'react';
 import { seriesGroups } from '../adEngine.js';
 import { modelKey } from '../skuMatch.js';
@@ -190,13 +191,13 @@ export function ExtraNegatives({ task, negCount, asinCount, lib, market, onChang
 
   return (
     <>
-      <div className="row wrap" style={{ marginBottom: 9 }}>
+      {!isPet && <div className="row wrap" style={{ marginBottom: 9 }}>
         <button className="btn sm" onClick={() => setPick(true)}>从打印机库选</button>
         <span className="hint">
           在 D 类库里搜墨盒型号或打印机机型,勾中的一键写进下面的否定词框
           {printerCount ? `(本区 ${printerCount} 行)` : ''}
         </span>
-      </div>
+      </div>}
       {pickNote && <p className="hint c-ok" style={{ marginBottom: 9 }}>{pickNote}</p>}
       {pick && (
         <PrinterPicker
@@ -209,7 +210,7 @@ export function ExtraNegatives({ task, negCount, asinCount, lib, market, onChang
       )}
 
       <p className="hint" style={{ marginBottom: 11 }}>
-        只对这个任务生效,和词库合并后一起写进每条活动,重复的自动去掉。
+        {isPet ? '只对当前任务生效，写进本任务的每条活动，重复项自动去重。' : '只对这个任务生效,和词库合并后一起写进每条活动,重复的自动去掉。'}
       </p>
 
       <div className="negsec">否定关键词 · 广告组级</div>

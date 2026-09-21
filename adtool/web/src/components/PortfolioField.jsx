@@ -1,10 +1,11 @@
+import { isPet } from '../profile.js';
 import { useEffect, useMemo, useRef } from 'react';
 import { resolvePortfolio } from '../portfolioMatch.js';
 
 export default function PortfolioField({ task, skuItems, portfolios, loading, error, onChange }) {
   const onChangeRef = useRef(onChange);
   useEffect(() => { onChangeRef.current = onChange; }, [onChange]);
-  const mode = task.portfolioMode || (task.portfolio ? 'manual' : 'auto');
+  const mode = isPet ? 'manual' : task.portfolioMode || (task.portfolio ? 'manual' : 'auto');
   const result = useMemo(
     () => resolvePortfolio(task.skus, skuItems ?? [], portfolios ?? []),
     [task.skus, skuItems, portfolios]
@@ -20,14 +21,14 @@ export default function PortfolioField({ task, skuItems, portfolios, loading, er
 
   const known = (portfolios ?? []).some((item) => item.portfolioId === task.portfolio);
   const selectValue = mode === 'auto' ? 'auto' : known ? `portfolio:${task.portfolio}` : 'custom';
-  const message = loading
+  const message = isPet && !loading && !error ? '选择组合库中的广告组合，或手动填写编号；留空表示不加入组合。' : loading
     ? '正在读取广告组合库…'
     : error
       ? error
       : mode === 'manual'
         ? `已手动选择${known ? '库内广告组合' : '自定义编号'}。${result.status !== 'matched' && result.status !== 'empty' ? ` 自动识别提示：${result.message}` : ''}`
         : result.message;
-  const tone = error || (!loading && !['matched', 'empty'].includes(result.status)) ? 'warn' : result.status === 'matched' ? 'ok' : 'info';
+  const tone = isPet ? (error ? 'warn' : 'info') : error || (!loading && !['matched', 'empty'].includes(result.status)) ? 'warn' : result.status === 'matched' ? 'ok' : 'info';
 
   return (
     <div className="portfolio-field">
@@ -44,7 +45,7 @@ export default function PortfolioField({ task, skuItems, portfolios, loading, er
           }}
           aria-describedby="portfolio-match-status"
         >
-          <option value="auto">自动识别投放 SKU</option>
+          {!isPet && <option value="auto">自动识别投放 SKU</option>}
           {(portfolios ?? []).map((item) => (
             <option key={item.id ?? item.portfolioId} value={`portfolio:${item.portfolioId}`}>
               {item.name} · {item.portfolioId}

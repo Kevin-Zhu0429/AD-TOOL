@@ -1,3 +1,5 @@
+import { isPet, profile } from './profile.js';
+import PetProductPage from './components/PetProductPage.jsx';
 import { useEffect, useRef, useState } from 'react';
 import { api } from './api.js';
 import { useTheme } from './theme.js';
@@ -26,7 +28,7 @@ export default function App() {
   const [page, setPage] = useState('home');
   // 广告优化工作台首次打开后保持挂载，避免切到其他页面时原生工作台被卸载、改动丢失。
   const [optimizerOpened, setOptimizerOpened] = useState(false);
-  const [market, setMarket] = useState('ES');
+  const [market, setMarket] = useState(profile.defaultMarket);
   // 更新日志:有没看过的版本就登录后自动弹一次,关掉记成看过
   const [logOpen, setLogOpen] = useState(false);
   const [logAuto, setLogAuto] = useState(false);
@@ -89,7 +91,7 @@ export default function App() {
 
   // 有没看过的更新就自动弹,一次会话只自动弹一次
   useEffect(() => {
-    if (!user || autoShown.current || !hasUnseen(user.seenVersion, user)) return;
+    if (isPet || !user || autoShown.current || !hasUnseen(user.seenVersion, user)) return;
     autoShown.current = true;
     setLogSeen(user.seenVersion ?? '');
     setLogAuto(true);
@@ -116,10 +118,10 @@ export default function App() {
       <PortfolioPage key={market} market={market} />
     ) : page === 'aba' ? (
       <AbaPage key={`${user.id}:${market}`} market={market} userId={user.id} />
-    ) : page === 'library' ? (
+    ) : page === 'library' && !isPet ? (
       <LibraryPage key={market} market={market} />
     ) : page === 'products' && user.productIntel ? (
-      <ProductPage key={market} market={market} />
+      isPet ? <PetProductPage key={market} market={market} /> : <ProductPage key={market} market={market} />
     ) : page === 'tools' ? (
       <ToolsPage />
     ) : page === 'admin' && user.role === 'owner' ? (
@@ -163,7 +165,7 @@ export default function App() {
       </AppShell>
 
       {/* 广告优化那一页底部有它自己的操作条,右下角就不占位了 */}
-      {page !== 'optimizer' && (
+      {!isPet && page !== 'optimizer' && (
         <VersionBadge
           version={visibleVersion(user)}
           unseen={hasUnseen(user.seenVersion, user)}

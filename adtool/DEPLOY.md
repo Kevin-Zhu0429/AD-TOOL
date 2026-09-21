@@ -1,3 +1,5 @@
+> **当前宠物分支：** novagaming 原域名部署请使用 [PET-DEPLOY.md](PET-DEPLOY.md)。本分支默认 Compose 启动宠物版并挂载 `data-pet-prod`。以下为公司服务器墨盒版历史说明，应在 `main` 分支使用。
+
 # AD-TOOL 部署到公司服务器
 
 目标机器:`192.168.53.9`(CentOS 7.5 / Docker 26.1.4 / Compose v2.27.1)

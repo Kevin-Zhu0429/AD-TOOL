@@ -1,3 +1,4 @@
+import { isPet } from '../profile.js';
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api.js';
 import './CaptainAdmin.css';
@@ -213,8 +214,7 @@ export default function CaptainAdmin({ users }) {
         <div>
           <div className="card-title">店铺读取与同步</div>
           <p className="hint">
-            一个库存店铺组先选择 SKU 品牌，再按需要选择一个或多个国家负责人；未上传 SKU 的国家可以留空，
-            不会阻塞已选择的国家。欧洲组使用同一份共享库存，UK 仍单独分配。
+            {isPet ? '选择美国库存店铺的 SKU 品牌和负责人；负责人需先导入该品牌的美国站 SKU。' : '一个库存店铺组先选择 SKU 品牌，再按需要选择一个或多个国家负责人；未上传 SKU 的国家可以留空，不会阻塞已选择的国家。欧洲组使用同一份共享库存，UK 仍单独分配。'}
           </p>
         </div>
         <div className="row wrap captain-actions">

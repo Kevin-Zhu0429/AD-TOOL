@@ -1,3 +1,5 @@
+import { isPet } from './profile.js';
+import { normalizePetProduct, PET_PRODUCT_COLUMNS, PET_MANUAL_FIELDS } from '../../shared/petProducts.js';
 import express from 'express';
 import { db, audit } from './db.js';
 import { canRead, requireLogin } from './auth.js';
@@ -47,6 +49,7 @@ function latestDataMonth(marketplace) {
 
 function cleanProduct(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
+  if (isPet) return normalizePetProduct(input);
   const product = { ...input };
   const asin = cleanText(product.asin, 24).toUpperCase();
   if (!asin) return null;
@@ -106,8 +109,8 @@ function importProductsForMarket(marketplace, rawProducts, dataMonth, sourceFile
     const old = current.get(asin);
     if (old) {
       const manual = new Set(old._manual ?? []);
-      for (const field of ['brand', 'color_grp']) {
-        if (manual.has(field) && cleanText(old[field])) product[field] = old[field];
+      for (const field of (isPet ? PET_MANUAL_FIELDS : ['brand', 'color_grp'])) {
+        if (manual.has(field) && (isPet || cleanText(old[field]))) product[field] = old[field];
       }
       product._manual = [...manual];
       updated += 1;
@@ -140,6 +143,25 @@ function importTotals(results) {
 }
 
 productRouter.use(requireProductIntel);
+// Validate every pet row before a transaction can write anything.
+productRouter.use((req, res, next) => {
+  if (!isPet || !['/import', '/import-all'].includes(req.path)) return next();
+  const groups = req.path === '/import' ? [req.body?.products] : Object.values(req.body?.productsByMarketplace ?? {});
+  try {
+    for (const group of groups) {
+      if (!Array.isArray(group)) throw new Error('产品数据格式不正确');
+      const seen = new Set();
+      group.forEach((row, index) => {
+        try {
+          const product = normalizePetProduct(row);
+          if (seen.has(product.asin)) throw new Error('同一批次 ASIN 重复：' + product.asin);
+          seen.add(product.asin);
+        } catch (e) { throw new Error('第 ' + (index + 1) + ' 行：' + e.message); }
+      });
+    }
+  } catch (e) { return res.status(400).json({ error: e.message }); }
+  next();
+});
 
 productRouter.get('/', (req, res) => {
   const marketplace = authorizeMarket(req, res);
@@ -237,7 +259,7 @@ productRouter.patch('/:asin', (req, res) => {
   if (!row) return res.status(404).json({ error: '产品不存在' });
 
   const current = rowToProduct(row);
-  const allowed = new Set([
+  const allowed = new Set(isPet ? PET_PRODUCT_COLUMNS.map((c) => c.key).filter((key) => key !== 'asin') : [
     'brand', 'model', 'color_grp', 'color', 'price', 'rating', 'reviews',
     'reviews_new', 'child_sales', 'sales', 'bsr_small', 'days', 'ship', 'title',
   ]);
@@ -249,12 +271,13 @@ productRouter.patch('/:asin', (req, res) => {
   for (const [key, value] of Object.entries(changes)) {
     if (!allowed.has(key)) continue;
     current[key] = typeof value === 'string' ? cleanText(value) : value;
-    if (key === 'brand' || key === 'color_grp') {
+    if (isPet ? PET_MANUAL_FIELDS.includes(key) : key === 'brand' || key === 'color_grp') {
       current._manual = [...new Set([...(current._manual ?? []), key])];
     }
     touched.push(key);
   }
-  const product = cleanProduct(current);
+  let product;
+  try { product = cleanProduct(current); } catch (e) { return res.status(400).json({ error: e.message }); }
   db.prepare(
     `UPDATE products SET brand = ?, model = ?, color_group = ?, data_json = ?,
        updated_at = datetime('now', 'localtime')

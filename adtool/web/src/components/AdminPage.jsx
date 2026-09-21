@@ -1,3 +1,4 @@
+import { isPet } from '../profile.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api.js';
 import CaptainAdmin from './CaptainAdmin.jsx';
@@ -280,11 +281,11 @@ export default function AdminPage({ user, markets }) {
                 </select>
               </label>
               <p className="hint" style={{ marginTop: -4 }}>
-                {ROLES.find((r) => r.id === form.role)?.desc}
+                {isPet ? (form.role === 'owner' ? '美国站账号管理及全部功能' : '美国站运营，按下方设置功能权限') : ROLES.find((r) => r.id === form.role)?.desc}
               </p>
               {form.role !== 'owner' && (
                 <>
-                  <label className="row">
+                  {!isPet && <><label className="row">
                     <input
                       type="checkbox" checked={form.goodsAdmin}
                       onChange={(e) => setForm({ ...form, goodsAdmin: e.target.checked })}
@@ -294,7 +295,7 @@ export default function AdminPage({ user, markets }) {
                   <p className="hint" style={{ marginTop: -4 }}>
                     勾上以后可以改所有区域的非售品牌、干扰墨盒、在售墨盒和竞品 ASIN,
                     并且能看到全部站点;纯商品部账号可以不选负责站点。
-                  </p>
+                  </p></>}
                   <label className="row">
                     <input
                       type="checkbox" checked={form.manualAds}
@@ -343,7 +344,7 @@ export default function AdminPage({ user, markets }) {
               <table className="tbl">
                 <thead>
                   <tr>
-                    <th>姓名</th><th>用户名</th><th>角色</th><th>商品部</th><th>产品情报</th><th>手动广告</th><th>广告优化</th>
+                    <th>姓名</th><th>用户名</th><th>角色</th>{!isPet && <th>商品部</th>}<th>产品情报</th><th>手动广告</th><th>广告优化</th>
                     <th>站点</th><th>状态</th><th></th>
                   </tr>
                 </thead>
@@ -361,7 +362,7 @@ export default function AdminPage({ user, markets }) {
                           {ROLES.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
                         </select>
                       </td>
-                      <td>
+                      {!isPet && <td>
                         {u.role === 'owner' ? (
                           <span className="tag blue">天然有</span>
                         ) : (
@@ -379,7 +380,7 @@ export default function AdminPage({ user, markets }) {
                             />
                           </label>
                         )}
-                      </td>
+                      </td>}
                       <td>
                         {u.role === 'owner' ? (
                           <span className="tag blue">天然有</span>

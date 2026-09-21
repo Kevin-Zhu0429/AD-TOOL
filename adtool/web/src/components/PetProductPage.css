@@ -1,0 +1,9 @@
+.pet-products > .card { padding: 18px; }
+.pet-product-search { flex: 1; min-width: 210px; }
+.pet-product-table { max-height: 65vh; overflow: auto; margin-top: 12px; }
+.pet-product-table td { max-width: 320px; min-width: 90px; white-space: normal; overflow-wrap: anywhere; }
+.pet-product-table th { white-space: nowrap; }
+.pet-product-table td:nth-child(3) { min-width: 260px; }
+.pet-product-status { min-height: 26px; padding-top: 8px; }
+.pet-product-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 14px 0; }
+@media (max-width: 700px) { .pet-product-fields { grid-template-columns: 1fr; } .pet-products .lib-head { flex-wrap: wrap; } }

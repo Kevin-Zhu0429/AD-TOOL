@@ -1,3 +1,6 @@
+import { isPet } from '../profile.js';
+import { PET_SKU_FIELDS, searchPetSkus } from '../../../shared/profile.js';
+import AppDialog from './AppDialog.jsx';
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api.js';
 import { searchSkus, isOutOfStock, isZeroStock, mergeSkuText } from '../skuMatch.js';
@@ -12,6 +15,7 @@ export default function SkuPicker({ market, current, onApply, onClose }) {
   const [items, setItems] = useState(null);
   const [error, setError] = useState('');
   const [query, setQuery] = useState('');
+  const [facets, setFacets] = useState({ style: '', size: '', color: '', fabric: '' });
   const [brand, setBrand] = useState('');
   const [inStockOnly, setInStockOnly] = useState(false);
   const [picked, setPicked] = useState(() => new Set());
@@ -28,11 +32,11 @@ export default function SkuPicker({ market, current, onApply, onClose }) {
   );
 
   const hits = useMemo(() => {
-    let list = searchSkus(items ?? [], query);
+    let list = isPet ? searchPetSkus(items ?? [], query, facets) : searchSkus(items ?? [], query);
     if (brand) list = list.filter((it) => it.brand === brand);
     if (inStockOnly) list = list.filter((it) => Number(it.stock) > 0);
     return list;
-  }, [items, query, brand, inStockOnly]);
+  }, [items, query, brand, inStockOnly, facets]);
 
   // 每次筛选结果变了就默认全选 —— 和桌面版一样,查出来的默认都要投
   useEffect(() => { setPicked(new Set(hits.map((it) => it.id))); }, [hits]);
@@ -59,8 +63,8 @@ export default function SkuPicker({ market, current, onApply, onClose }) {
   const total = items?.length ?? 0;
 
   return (
-    <div className="pickmask" onClick={onClose}>
-      <div className="pickbox" onClick={(e) => e.stopPropagation()}>
+    <AppDialog title="从 SKU 库选" wide onClose={onClose}>
+      <div>
         <header className="pickhead">
           <b>从 SKU 库选</b>
           <span className="tag blue">{market} 站</span>
@@ -81,9 +85,11 @@ export default function SkuPicker({ market, current, onApply, onClose }) {
             <div className="row wrap pickbar">
               <input
                 className="inp" style={{ flex: 1, minWidth: 150 }} autoFocus
-                placeholder="型号 / 品牌 / SKU…(输 301 会把 301XL 一起查出来)"
+                aria-label="搜索 SKU"
+                placeholder={isPet ? "款式 / 尺码 / 颜色 / 面料外观 / SKU…" : "型号 / 品牌 / SKU…(输 301 会把 301XL 一起查出来)"}
                 value={query} onChange={(e) => setQuery(e.target.value)}
               />
+              {query && <button className="btn sm" onClick={() => setQuery('')}>清除搜索</button>}
               {brands.length > 1 && (
                 <select className="inp" style={{ width: 120 }} value={brand}
                   onChange={(e) => setBrand(e.target.value)}>
@@ -98,13 +104,14 @@ export default function SkuPicker({ market, current, onApply, onClose }) {
               </label>
             </div>
 
+            {isPet && <div className="pet-filters">{PET_SKU_FIELDS.filter((c) => Object.hasOwn(facets, c.key)).map((c) => <label key={c.key}>{c.label}<select className="inp" aria-label={c.label} value={facets[c.key]} onChange={(e) => setFacets({ ...facets, [c.key]: e.target.value })}><option value="">全部{c.label}</option>{[...new Set(items.map((it) => it[c.key]).filter(Boolean))].sort().map((v) => <option key={v}>{v}</option>)}</select></label>)}</div>}
             <div className="scroll picklist">
               {hits.map((it) => (
                 <label key={it.id} className={`pickrow${picked.has(it.id) ? ' on' : ''}`}>
                   <input type="checkbox" checked={picked.has(it.id)} onChange={() => toggle(it.id)} />
                   <span className="mono picksku">{it.sku}</span>
                   <span className="pickmeta">
-                    {[it.brand, it.model, it.setGroup].filter(Boolean).join(' · ')}
+                    {(isPet ? [it.brand, it.style, it.size, it.color, it.fabric] : [it.brand, it.model, it.setGroup]).filter(Boolean).join(' · ')}
                   </span>
                   <div className="spacer" />
                   {isZeroStock(it)
@@ -124,7 +131,7 @@ export default function SkuPicker({ market, current, onApply, onClose }) {
               ))}
               {!hits.length && (
                 <div className="empty">
-                  没找到 —— 换个型号试试,或者去「SKU 库」把这些 SKU 先导进来
+                  {isPet ? '没有匹配的 SKU，调整属性筛选或先到 SKU 库导入。' : '没找到 —— 换个型号试试,或者去「SKU 库」把这些 SKU 先导进来'}
                 </div>
               )}
             </div>
@@ -141,6 +148,6 @@ export default function SkuPicker({ market, current, onApply, onClose }) {
           </>
         )}
       </div>
-    </div>
+    </AppDialog>
   );
 }

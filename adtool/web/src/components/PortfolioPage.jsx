@@ -1,3 +1,4 @@
+import { isPet } from '../profile.js';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as XLSX from 'xlsx';
 import { api } from '../api.js';
@@ -118,7 +119,7 @@ export default function PortfolioPage({ market }) {
       <div className="lib-head">
         <div>
           <h1>广告组合库</h1>
-          <p className="hint">{market} 站独立保存，自动和手动广告会按投放 SKU 的型号选择对应 Series；多个系列选择“混投”。每个账号只使用自己的组合库。</p>
+          <p className="hint">{isPet ? '美国站广告组合库。开广告时手动选择组合，每个账号只使用自己的组合库。' : `${market} 站独立保存，自动和手动广告会按投放 SKU 的型号选择对应 Series；多个系列选择“混投”。每个账号只使用自己的组合库。`}</p>
         </div>
         <div className="spacer" />
         <button className="btn" onClick={exportXlsx}>导出 Excel</button>
@@ -134,7 +135,7 @@ export default function PortfolioPage({ market }) {
             <div className="card-title">批量添加</div>
             <textarea
               className="inp portfolio-paste resize-none" rows={8} value={draft}
-              placeholder={'从 Excel 直接复制两列到这里\n广告组合编号 → 广告组合名称\n\n101848370296114\tSP-CY 540 Series'}
+              placeholder={isPet ? '从 Excel 直接复制两列到这里\n广告组合编号 → 广告组合名称\n\n101848370296114\t美国站宠物雨衣' : '从 Excel 直接复制两列到这里\n广告组合编号 → 广告组合名称\n\n101848370296114\tSP-CY 540 Series'}
               onChange={(event) => setDraft(event.target.value)}
             />
             <label className="row portfolio-replace">
@@ -147,14 +148,14 @@ export default function PortfolioPage({ market }) {
               <button className="btn primary" disabled={busy || !draft.trim()} onClick={() => queueRows(parsePasted(draft))}>写入组合库</button>
             </div>
           </div>
-          <div className="card">
+          {!isPet && <div className="card">
             <div className="card-title">自动识别口径</div>
             <div className="libmeta">
               <div><span>单系列</span><b>SKU 型号 540 / 540XL → 名称含 540 Series</b></div>
               <div><span>多系列</span><b>投放 SKU 出现两个及以上型号 → 名称含“混投”</b></div>
               <div><span>未匹配</span><b>明确提示缺少的 SKU、型号或组合，不自动猜测</b></div>
             </div>
-          </div>
+          </div>}
         </div>
 
         <div className="card lib-main">
@@ -174,12 +175,12 @@ export default function PortfolioPage({ market }) {
           )}
           <div className="scroll portfolio-table-scroll">
             <table className="tbl">
-              <thead><tr><th>广告组合编号</th><th>广告组合名称</th><th>自动分类</th><th aria-label="操作" /></tr></thead>
+              <thead><tr><th>广告组合编号</th><th>广告组合名称</th><th>{isPet ? '选择方式' : '自动分类'}</th><th aria-label="操作" /></tr></thead>
               <tbody>
                 {shown.map((item) => {
                   const editing = edit?.id === item.id;
                   const series = portfolioSeriesKey(item.name);
-                  const category = isMixedPortfolio(item.name) ? '混投' : series ? `${series} Series` : '不参与自动匹配';
+                  const category = isPet ? '手动选择' : isMixedPortfolio(item.name) ? '混投' : series ? `${series} Series` : '不参与自动匹配';
                   return (
                     <tr key={item.id}>
                       <td className="mono">{editing ? <input className="inp cellinp" aria-label={`广告组合编号 ${item.name}`} aria-invalid={!/^\d{1,30}$/.test(edit.portfolioId.trim())} aria-describedby={message ? 'portfolio-feedback' : undefined} value={edit.portfolioId} onChange={(event) => setEdit({ ...edit, portfolioId: event.target.value })} /> : item.portfolioId}</td>

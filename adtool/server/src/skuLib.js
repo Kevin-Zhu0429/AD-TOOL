@@ -1,3 +1,5 @@
+import { isPet } from './profile.js';
+import { PET_SKU_FIELDS } from '../../shared/profile.js';
 /**
  * SKU 库的口径定义 —— 前后端共用这一份,前端开页面时从 /api/sku 连数据一起拿走。
  *
@@ -11,7 +13,7 @@
  */
 import { MARKETPLACES } from './libs.js';
 
-export const SKU_COLS = [
+export const SKU_COLS = isPet ? PET_SKU_FIELDS : [
   { key: 'country', label: '国家', required: true, width: 8, hint: '站点码,ES / DE / US…,写「西班牙」也行' },
   { key: 'brand', label: '品牌', width: 14, hint: '自己负责的品牌,挑 SKU 时可以按它筛' },
   { key: 'model', label: '型号', width: 14, hint: '填 301 即可,查的时候 301 和 301XL 归到一起' },
@@ -67,7 +69,8 @@ export function modelKey(value) {
 
 /** 校验并规整一行。返回 { row } 或 { error } */
 export function normRow(input) {
-  const country = normCountry(input?.country);
+  const country = normCountry(input?.country || (isPet ? 'US' : ''));
+  if (isPet && country !== 'US') return { error: '宠物版仅支持美国站 US' };
   if (!country) {
     const got = cleanCell(input?.country);
     return { error: got ? `国家「${got.slice(0, 12)}」不认识,填 ES / DE / US 这种站点码` : '国家不能为空' };
@@ -85,6 +88,7 @@ export function normRow(input) {
 
   const row = {
     country,
+    ...Object.fromEntries(['style', 'size', 'color', 'fabric'].map((key) => [key, cleanCell(input?.[key]).slice(0, SKU_MAX_LEN) || null])),
     brand: cleanCell(input?.brand).slice(0, SKU_MAX_LEN) || null,
     model: cleanCell(input?.model).slice(0, SKU_MAX_LEN) || null,
     setGroup: cleanCell(input?.setGroup ?? input?.set_group).slice(0, SKU_MAX_LEN) || null,

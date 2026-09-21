@@ -4,6 +4,14 @@
 # 开发机的库不进镜像,生产数据只走挂载卷
 server/data
 data-prod
+data-pet-prod
+server/data-pet
+server/server
+**/*.db
+**/*.db-shm
+**/*.db-wal
+.env.pet
+.tmp
 **/*.log
 **/.env
 **/.DS_Store

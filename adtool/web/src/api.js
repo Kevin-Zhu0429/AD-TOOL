@@ -1,3 +1,4 @@
+import { isPet, emptyLibrary } from './profile.js';
 async function request(path, options = {}) {
   const res = await fetch(`/api${path}`, {
     method: options.method || 'GET',
@@ -40,7 +41,7 @@ export const api = {
       method: 'POST', body: { module, action, marketplace: marketplace || '', detail },
     }),
 
-  library: (marketplace) => request(`/neg?marketplace=${encodeURIComponent(marketplace)}`),
+  library: (marketplace) => isPet ? Promise.resolve(emptyLibrary()) : request(`/neg?marketplace=${encodeURIComponent(marketplace)}`),
   // 整段文本批量加(单列词库一行一个词,多列词库从 Excel 复制过来,列之间是 Tab)
   addText: (marketplace, lib, text, replace = false) =>
     request('/neg/bulk', { method: 'POST', body: { marketplace, lib, text, replace } }),
@@ -86,10 +87,10 @@ export const api = {
   deletePortfolios: (ids) => request('/portfolio/delete', { method: 'POST', body: { ids } }),
 
   // ---------- 分市场产品库与竞品分析 ----------
-  products: (marketplace, dataMonth = '') => {
+  products: (marketplace, dataMonth = '', signal) => {
     const q = new URLSearchParams({ marketplace });
     if (dataMonth) q.set('dataMonth', dataMonth);
-    return request(`/products?${q}`);
+    return request(`/products?${q}`, { signal });
   },
   importProducts: (marketplace, products, dataMonth, sourceFile = '') =>
     request('/products/import', {

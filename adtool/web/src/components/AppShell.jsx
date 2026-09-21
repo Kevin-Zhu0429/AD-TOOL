@@ -1,3 +1,4 @@
+import { isPet, profile } from '../profile.js';
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
 import Icon from './Icon.jsx';
@@ -28,7 +29,7 @@ export default function AppShell({
     { id: 'builder', label: '自动广告', icon: 'layers' },
     ...(user.manualAds ? [{ id: 'manual', label: '手动广告', icon: 'sliders' }] : []),
     ...(user.adOpt ? [{ id: 'optimizer', label: '广告优化', icon: 'chart' }] : []),
-    { id: 'library', label: '否定词库', icon: 'book' },
+    ...(!isPet ? [{ id: 'library', label: '否定词库', icon: 'book' }] : []),
     { id: 'skus', label: 'SKU 库', icon: 'file' },
     { id: 'portfolios', label: '广告组合库', icon: 'layers' },
     { id: 'aba', label: 'ABA 报告', icon: 'chart' },
@@ -42,7 +43,7 @@ export default function AppShell({
       <header className="topbar">
         <button className="topbar-brand" onClick={() => onNav('home')}>
           <span className="topbar-glyph">PH</span>
-          <span className="topbar-name">广告工作台</span>
+          <span className="topbar-name">{profile.name}</span>
         </button>
 
         <nav className="topnav">
@@ -108,7 +109,7 @@ export default function AppShell({
                 <div className="usermenu-badges">
                   <span className={`tag ${role.cls}`}>{role.label}</span>
                   <span className="tag gray">
-                    {user.role === 'owner' ? '全部站点' : `${user.markets.join(' / ')} 站`}
+                    {isPet ? '美国站 US' : user.role === 'owner' ? '全部站点' : `${user.markets.join(' / ')} 站`}
                   </span>
                 </div>
 

@@ -192,6 +192,7 @@ const MARKUP = `
 export function mountOptimizer(root, host, options) {
   options=options||{};
   root.innerHTML = MARKUP;
+  if (options.pet) root.querySelector("#bnLibBody")?.parentElement?.setAttribute("hidden", "");
 
   // 挂在 window / host 上的监听要能收回,离开这一页时不留东西
   const offs = [];
@@ -200,7 +201,7 @@ export function mountOptimizer(root, host, options) {
   var S = {
     model:null, raw:null, sourceFile:null, largeFile:false, loading:false, loadAbort:null, fileName:'',
     changes:new C.ChangeSet(), cfg:Object.assign({},C.DEFAULT_CFG),
-    cur:'€', vocab:'', scope:'changed',
+    cur:options.pet?'$':'€', vocab:'', scope:'changed',
     sel:null, tab:'placement', filter:'all', pf:'', sort:'spend', q:'',
     // terms 是搜索词原始行(按天下载的报告一个词有很多行),上界面前合并成整期一行
     terms:[], periodTouched:false,
@@ -1158,7 +1159,7 @@ export function mountOptimizer(root, host, options) {
     S.lib=raw?NL.normLibData(raw):null;
     S.libErr=err||'';
     S.skuItems=skuItems||[]; S.skuInventoryIndex=buildSkuInventoryIndex(S.skuItems);
-    S.driftIndex=S.lib?MD.buildDModelIndex(S.lib):null; S.driftContexts={};
+    S.driftIndex=!options.pet&&S.lib?MD.buildDModelIndex(S.lib):null; S.driftContexts={};
     S.bnLib.on={}; S.bnLib.off={}; S.bnLib.models=[]; S.bnLib.q=''; S.bnLib.mq='';
     S.bnLib.ver++; S.bnLib._sig=''; S.bnLib._all=[];
     if($('#maskBneg').classList.contains('on'))renderBnLib();
@@ -1917,7 +1918,7 @@ export function mountOptimizer(root, host, options) {
   }
 
   /* ---------- 渲染与事件 ---------- */
-  var AN_TABS=[['sku','SKU 矩阵'],['drift','跑偏词检测（Beta）'],['term','搜索词分析'],['kw','投放矩阵'],['pl','广告位汇总'],['pf','组合汇总']];
+  var AN_TABS=[['sku','SKU 矩阵'],...(options.pet?[]:[['drift','跑偏词检测（Beta）']]),['term','搜索词分析'],['kw','投放矩阵'],['pl','广告位汇总'],['pf','组合汇总']];
   function anBody(){
     if(S.an.tab==='sku')return anSku();
     if(S.an.tab==='drift')return anDrift();

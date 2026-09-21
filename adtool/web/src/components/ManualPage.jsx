@@ -1,3 +1,4 @@
+import { isPet } from '../profile.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api.js';
 import { draftKey, dropDraft, isPristine, restoreTasks, writeDraft } from '../draft.js';
@@ -27,7 +28,7 @@ function newManualTask(overrides = {}) {
     camp: '',
     group: '',
     portfolio: '',
-    portfolioMode: 'auto',
+    portfolioMode: isPet ? 'manual' : 'auto',
     date: todayStamp(),
     budget: 1.2,
     defBid: 0.3,
@@ -212,7 +213,7 @@ export default function ManualPage({ market }) {
           <p className="hint">
             关键词投放和商品投放(ASIN 定向)。关键词和 ASIN 自己粘贴,不接任何词表库;
             填的内容会自动存在这台电脑上,切到别的页面再回来、或者刷新都还在;
-            {libError ? ` 词库读取失败:${libError}` : ` 否定词仍然联动本站词库(共 ${libCount} 条)。`}
+            {isPet ? ' 美国站 · 支持手动否定关键词和 ASIN。' : libError ? ` 词库读取失败:${libError}` : ` 否定词仍然联动本站词库(共 ${libCount} 条)。`}
           </p>
         </div>
         <div className="bhero-stats">

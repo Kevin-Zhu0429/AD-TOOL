@@ -1,0 +1,13 @@
+.app-dialog { color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 20px; width: min(620px, calc(100vw - 32px)); max-height: calc(100dvh - 40px); overflow: auto; }
+.app-dialog.wide { width: min(1080px, calc(100vw - 32px)); }
+.app-dialog::backdrop { background: rgb(0 0 0 / .5); }
+.app-dialog h2 { font-size: 18px; margin: 0; }
+.app-dialog > header { margin-bottom: 16px; }
+.app-dialog > footer { margin-top: 16px; }
+.pet-filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.pet-filters > label { display: grid; gap: 5px; min-width: 110px; }
+.pet-filters select { max-width: 210px; }
+
+.app-dialog .picklist { max-height: 48vh; overflow: auto; }
+.app-dialog .pickrow { flex-wrap: wrap; }
+.app-dialog .pickhead { display: none; }

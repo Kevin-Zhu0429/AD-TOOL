@@ -4,3 +4,11 @@
 .tmp/ES_Week_*.csv
 .tmp/asin-samples/
 .tmp/captain-*.png
+server/data-pet/
+data-pet-prod/
+.env.pet
+.tmp/pet-*
+server/server/
+**/*.db
+**/*.db-shm
+**/*.db-wal

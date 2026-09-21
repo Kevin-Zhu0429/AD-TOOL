@@ -10,7 +10,7 @@ export default defineConfig({
     proxy: {
       // 前端请求 /api/xxx 时,开发环境下转发给后端的 8080
       '/api': {
-        target: 'http://localhost:8080',
+        target: process.env.ADTOOL_API_TARGET || 'http://localhost:8080',
         changeOrigin: true,
       },
     },
