@@ -43,14 +43,14 @@ npm run start:pet
 
 ## novagaming 服务器（本分支的默认部署）
 
-`codex/pet-adaptation` 分支的 `docker-compose.yml` 已固定 `APP_PROFILE=pet`。沿用现有 `.env`、容器名、宿主机端口与域名反向代理，不需要新增 DNS，也不用 `.env.pet` 或 `compose.pet.yml`。公司服务器继续使用 `main` 墨盒分支。
+`codex-pet-adaptation` 分支的 `docker-compose.yml` 已固定 `APP_PROFILE=pet`。沿用现有 `.env`、容器名、宿主机端口与域名反向代理，不需要新增 DNS，也不用 `.env.pet` 或 `compose.pet.yml`。公司服务器继续使用 `main` 墨盒分支。
 
 在服务器现有项目的 `adtool` 目录执行（工作区应无未提交的代码改动）：
 
 ```bash
 git fetch origin
-git switch codex/pet-adaptation
-git pull --ff-only origin codex/pet-adaptation
+git switch codex-pet-adaptation
+git pull --ff-only origin codex-pet-adaptation
 mkdir -p data-pet-prod
 docker compose up -d --build
 ```
@@ -68,7 +68,7 @@ docker compose exec adtool node src/seed.js 用户名 显示名 密码
 以后在此分支更新：
 
 ```bash
-git pull --ff-only origin codex/pet-adaptation
+git pull --ff-only origin codex-pet-adaptation
 docker compose up -d --build
 ```
 

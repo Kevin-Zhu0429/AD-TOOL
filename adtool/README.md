@@ -1,6 +1,6 @@
 # CYES 广告工作台
 
-当前 `codex/pet-adaptation` 分支用于 novagaming 宠物美国站；默认 Docker Compose 直接启用宠物版，沿用现有域名与端口。公司服务器墨盒版继续使用 `main`。详见 [服务器切换步骤](PET-DEPLOY.md)。
+当前 `codex-pet-adaptation` 分支用于 novagaming 宠物美国站；默认 Docker Compose 直接启用宠物版，沿用现有域名与端口。公司服务器墨盒版继续使用 `main`。详见 [服务器切换步骤](PET-DEPLOY.md)。
 
 公司内网工具:自动广告 / 手动广告批量开发 + 广告优化工作台 + 分站点否定词库 +
 各账号自己的 SKU 库 + 分市场产品库与竞品竞争力分析。
