@@ -11,8 +11,11 @@ const SYNC_OVERLAP_SECONDS = 5 * 60;
 const EU_MARKETS = REGIONS.find((region) => region.id === 'EU')?.markets ?? [];
 const CONTINENTAL_EU_MARKETS = EU_MARKETS.filter((country) => country !== 'UK');
 const runningUsers = new Set();
+const PET_DAILY_CALL_LIMIT = 60;
+const PET_CALL_INTERVAL_MS = 65_000;
 
 let tokenCache = null;
+let captainQueue = Promise.resolve();
 
 export const captainRouter = express.Router();
 captainRouter.use(requireLogin);
@@ -49,6 +52,33 @@ function requireConfigured() {
   }
 }
 
+const shanghaiDay = () => new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Shanghai' });
+export function captainUsageStatus() {
+  if (!isPet) return null;
+  const day = shanghaiDay();
+  return { day, calls: db.prepare('SELECT calls FROM pet_captain_api_usage WHERE day=?').get(day)?.calls ?? 0, limit: PET_DAILY_CALL_LIMIT };
+}
+
+async function reserveCaptainRequest() {
+  if (!isPet) return;
+  const previous = captainQueue;
+  let release;
+  captainQueue = new Promise((resolve) => { release = resolve; });
+  await previous;
+  try {
+    let day = shanghaiDay();
+    let record = db.prepare('SELECT calls,last_request_at FROM pet_captain_api_usage WHERE day=?').get(day);
+    if ((record?.calls ?? 0) >= PET_DAILY_CALL_LIMIT) throw new Error(`本应用今日船长 API 调用已达 ${PET_DAILY_CALL_LIMIT} 次安全上限，请明天再同步`);
+    const wait = Math.max(0, (record?.last_request_at ?? 0) + PET_CALL_INTERVAL_MS - Date.now());
+    if (wait) await new Promise((resolve) => setTimeout(resolve, wait));
+    day = shanghaiDay();
+    record = db.prepare('SELECT calls FROM pet_captain_api_usage WHERE day=?').get(day);
+    if ((record?.calls ?? 0) >= PET_DAILY_CALL_LIMIT) throw new Error(`本应用今日船长 API 调用已达 ${PET_DAILY_CALL_LIMIT} 次安全上限，请明天再同步`);
+    db.prepare(`INSERT INTO pet_captain_api_usage(day,calls,last_request_at) VALUES(?,1,?)
+      ON CONFLICT(day) DO UPDATE SET calls=calls+1,last_request_at=excluded.last_request_at`).run(day, Date.now());
+  } finally { release(); }
+}
+
 function apiError(payload, fallback) {
   return clean(payload?.msg || payload?.message || payload?.error_description || payload?.error) || fallback;
 }
@@ -78,6 +108,7 @@ async function accessToken(force = false) {
     client_secret: clientSecret,
     scope: 'all',
   });
+  await reserveCaptainRequest();
   const response = await fetch(`${base.replace(/\/$/, '')}/oauth2/token`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -101,6 +132,7 @@ async function captainGet(path, query = {}, extraHeaders = {}) {
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const token = await accessToken(attempt > 0);
+    await reserveCaptainRequest();
     const response = await fetch(url, {
       headers: { authorization: `Bearer ${token}`, ...extraHeaders },
       signal: AbortSignal.timeout(30_000),

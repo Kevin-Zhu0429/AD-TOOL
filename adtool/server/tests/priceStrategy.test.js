@@ -77,6 +77,15 @@ test('shared price snapshots validate atomically and Captain metrics preserve ma
     },
   }), /读取广告清单.*start modified time/);
   assert.match((await call('/price-strategy?date=2026-09-21', user)).data.sync.lastError.message, /读取广告清单.*start modified time/);
+  await assert.rejects(syncPriceStrategy('2026-09-21', 1, {
+    ...gateway,
+    paged: async (path) => {
+      if (path.endsWith('/advertise')) throw new Error('请求频率过快，请稍等');
+      return [];
+    },
+  }), /请求频率过快/);
+  assert.equal((await call('/price-strategy?date=2026-09-21', user)).data.sync.rateLimitedToday, true);
+  assert.equal((await call('/price-strategy/sync', user, { date: '2026-09-21' })).status, 429);
   assert.equal((await call('/price-strategy?date=2026-09-21', user)).data.items[0].price, 19.99);
   assert.equal((await call(`/price-strategy/${synced.items[0].id}`, user, {}, 'DELETE')).status, 200);
   assert.equal((await call('/price-strategy?date=2026-09-21', owner)).data.items.length, 0);

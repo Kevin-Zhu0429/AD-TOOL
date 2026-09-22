@@ -1,6 +1,6 @@
 import { db, audit } from './db.js';
 import { isPet } from './profile.js';
-import { discoverChannels, paged } from './captain.js';
+import { captainUsageStatus, discoverChannels, paged } from './captain.js';
 import { normalizePriceRow, dailyDates, dailyIsoDates } from '../../shared/priceStrategy.js';
 
 const daySeconds = 86400;
@@ -12,6 +12,20 @@ const dayOf = (value) => {
 };
 const positive = (value) => value !== null && value !== undefined && value !== '' && Number.isFinite(Number(value)) && Number(value) >= 0 ? Number(value) : null;
 const nextDate = (date, days) => new Date((toStamp(date) + days * daySeconds) * 1000).toISOString().slice(0, 10);
+const shanghaiDay = () => new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Shanghai' });
+const shanghaiDayOf = (value) => new Date(value).toLocaleDateString('sv-SE', { timeZone: 'Asia/Shanghai' });
+const isRateLimitError = (message) => /请求频率过快|调用已达|rate.?limit|too many requests/i.test(String(message ?? ''));
+const savedState = (key) => {
+  const value = db.prepare('SELECT value FROM pet_price_sync_state WHERE key=?').get(key)?.value;
+  return value ? JSON.parse(value) : null;
+};
+function historyWindow(key, date, end) {
+  const previous = savedState(key);
+  const offset = previous?.date === date ? previous.offset : previous?.nextOffset ?? 30;
+  const bounded = offset >= 365 ? 30 : offset;
+  return { start: end - Math.min(365, bounded + 30) * daySeconds,
+    end: end - bounded * daySeconds, offset: bounded, nextOffset: bounded + 30 };
+}
 
 export function withCalculatedPriceMetrics(row) {
   const result = { ...row };
@@ -92,6 +106,8 @@ export async function syncPriceStrategy(date, actorId = null, gateway = { discov
   if (!isPet) throw new Error('只支持宠物版');
   if (!dailyDates(date).length) throw new Error('同步日期不合法');
   if (running) throw new Error('价格策略表正在同步');
+  const pauseReason = priceSyncStatus().pauseReason;
+  if (pauseReason) throw new Error(pauseReason);
   running = true;
   const startedAt = new Date().toISOString();
   const setState = db.prepare(`INSERT INTO pet_price_sync_state(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`);
@@ -107,20 +123,18 @@ export async function syncPriceStrategy(date, actorId = null, gateway = { discov
     const orders = [], ads = [], reports = [], inventoryChanges = [];
     const end = toStamp(nextDate(date, 1));
     const start = Math.min(toStamp(`${date.slice(0, 7)}-01`), toStamp(nextDate(date, -13)));
-    const hasInventoryCache = !!db.prepare('SELECT 1 FROM pet_price_inventory_cache LIMIT 1').get();
-    const initialLookback = Math.min(365, Math.max(30, Number(process.env.CAPTAIN_INITIAL_LOOKBACK_DAYS) || 365));
-    const inventoryStart = end - (hasInventoryCache ? 30 : initialLookback) * daySeconds;
-    const adCacheInitialized = !!db.prepare("SELECT 1 FROM pet_price_sync_state WHERE key='ad_cache_initialized'").get();
-    const adStart = end - (adCacheInitialized ? 30 : initialLookback) * daySeconds;
+    const recentStart = end - 30 * daySeconds;
+    const adHistory = historyWindow('ad_history', date, end);
+    const inventoryHistory = historyWindow('inventory_history', date, end);
     for (const channel of channels) {
       const header = { OpenChannelId: channel.openChannelId };
       const channelId = channel.openChannelId;
       stage = '读取订单';
       for (const order of await gateway.paged('/v1/open_order/get_order_list', { start_modified_time: start, end_modified_time: end }, header)) orders.push({ channel: channelId, order });
-      for (let windowStart = adStart; windowStart < end; windowStart += 30 * daySeconds) {
+      for (const [windowStart, windowEnd] of [[recentStart, end], [adHistory.start, adHistory.end]]) {
         stage = `读取广告清单（${new Date(windowStart * 1000).toISOString().slice(0, 10)} 起）`;
         for (const ad of await gateway.paged('/v1/open_cpc/advertise', {
-          type: 1, start_modified_time: windowStart, end_modified_time: Math.min(end, windowStart + 30 * daySeconds),
+          type: 1, start_modified_time: windowStart, end_modified_time: windowEnd,
         }, header)) ads.push({ channel: channelId, ad });
       }
       for (const day of dailyIsoDates(date)) {
@@ -128,10 +142,10 @@ export async function syncPriceStrategy(date, actorId = null, gateway = { discov
         const reportDate = day.replaceAll('-', '');
         for (const report of await gateway.paged('/v1/open_cpc/advertise_report', { report_date: reportDate }, header)) reports.push({ channel: channelId, report });
       }
-      for (let windowStart = inventoryStart; windowStart < end; windowStart += 30 * daySeconds) {
+      for (const [windowStart, windowEnd] of [[recentStart, end], [inventoryHistory.start, inventoryHistory.end]]) {
         stage = `读取 FBA 库存（${new Date(windowStart * 1000).toISOString().slice(0, 10)} 起）`;
         for (const item of await gateway.paged('/v1/open_fba/inventory_list', {
-          start_modified_time: windowStart, end_modified_time: Math.min(end, windowStart + 30 * daySeconds),
+          start_modified_time: windowStart, end_modified_time: windowEnd,
         }, header)) inventoryChanges.push({ channel: channelId, item });
       }
     }
@@ -168,7 +182,8 @@ export async function syncPriceStrategy(date, actorId = null, gateway = { discov
         upsert.run(date, merged.sku, JSON.stringify(merged), actorId);
       }
       setState.run('last_success', JSON.stringify({ date, startedAt, completedAt: new Date().toISOString(), skus: sourceBySku.size, channels: channels.length, unmappedAds: summary.unmappedAds }));
-      setState.run('ad_cache_initialized', JSON.stringify({ at: new Date().toISOString() }));
+      setState.run('ad_history', JSON.stringify({ date, offset: adHistory.offset, nextOffset: adHistory.nextOffset }));
+      setState.run('inventory_history', JSON.stringify({ date, offset: inventoryHistory.offset, nextOffset: inventoryHistory.nextOffset }));
       db.prepare("DELETE FROM pet_price_sync_state WHERE key='last_error'").run();
     })();
     if (actorId) audit(actorId, 'US', 'sync', 'pet_price_strategy', null, { date, skus: syncSkuCount, channels: channels.length });
@@ -182,8 +197,15 @@ export async function syncPriceStrategy(date, actorId = null, gateway = { discov
 
 export function priceSyncStatus() {
   const states = Object.fromEntries(db.prepare('SELECT key,value FROM pet_price_sync_state').all().map(({ key, value }) => [key, JSON.parse(value)]));
+  const lastError = states.last_error ?? null;
+  const usage = captainUsageStatus();
+  const pauseReason = usage.calls >= usage.limit
+    ? `本应用今天已用完 ${usage.limit} 次安全额度，请明天再同步`
+    : lastError && lastError.at && shanghaiDayOf(lastError.at) === shanghaiDay() && isRateLimitError(lastError.message)
+      ? '船长今天已提示请求过快，为保护免费额度，请明天再同步' : null;
   return { configured: !!(process.env.CAPTAIN_CLIENT_ID && process.env.CAPTAIN_CLIENT_SECRET), running,
-    lastSuccess: states.last_success ?? null, lastAttempt: states.last_attempt ?? null, lastError: states.last_error ?? null };
+    rateLimitedToday: !!pauseReason, pauseReason, usage,
+    lastSuccess: states.last_success ?? null, lastAttempt: states.last_attempt ?? null, lastError };
 }
 
 export function startPriceSyncScheduler() {
@@ -195,7 +217,7 @@ export function startPriceSyncScheduler() {
     const todayShanghai = `${parts.year}-${parts.month}-${parts.day}`;
     const date = nextDate(todayShanghai, -1);
     const status = priceSyncStatus();
-    if (!status.configured || running || status.lastSuccess?.date === date
+    if (!status.configured || status.rateLimitedToday || running || status.lastSuccess?.date === date
       || status.lastAttempt?.date === date && Date.now() - Date.parse(status.lastAttempt.startedAt) < 6 * 60 * 60_000) return;
     try { await syncPriceStrategy(date); } catch (error) { console.error('[price-sync]', error.message); }
   };

@@ -34,13 +34,18 @@ export default function PriceStrategyPage() {
   const [editor, setEditor] = useState(null), [upload, setUpload] = useState(null);
   const [confirmAction, confirmDialog] = useConfirm();
 
-  async function load(selectedDate = date, preserveError = false) {
-    setLoading(true); if (!preserveError) setError('');
+  async function load(selectedDate = date, preserveError = false, silent = false) {
+    if (!silent) setLoading(true); if (!preserveError) setError('');
     try { const data = await api.priceStrategy(selectedDate); setItems(data.items); setDates(data.dates); setSyncState(data.sync); }
     catch (err) { setError(err.message); }
-    finally { setLoading(false); }
+    finally { if (!silent) setLoading(false); }
   }
   useEffect(() => { load(date); }, [date]);
+  useEffect(() => {
+    if (!syncState?.running) return undefined;
+    const timer = setInterval(() => { void load(date, true, true); }, 10_000);
+    return () => clearInterval(timer);
+  }, [date, syncState?.running]);
   useEffect(() => { setPage(1); }, [date, query]);
   const filtered = useMemo(() => items.filter((row) => !query || [row.sku,row.asin,row.skc,row.nameZh,row.style,row.color,row.size]
     .some((value) => String(value ?? '').toLowerCase().includes(query.trim().toLowerCase()))), [items, query]);
@@ -87,7 +92,7 @@ export default function PriceStrategyPage() {
   }
   async function syncNow() {
     setBusy(true); setError(''); setMessage('');
-    try { const result = await api.syncPriceStrategy(date); setMessage(`船长同步完成：${result.channels} 个店铺，${result.skus} 个 SKU。${result.unmappedAds ? `${result.unmappedAds} 条广告记录未匹配 SKU。` : ''}`); }
+    try { await api.syncPriceStrategy(date); setMessage('同步已在后台开始，页面会自动更新状态。'); }
     catch (err) { setError(err.message); }
     finally { await load(date, true); setBusy(false); }
   }
@@ -102,12 +107,14 @@ export default function PriceStrategyPage() {
         PRICE_ALL_FIELDS.map((field) => field.key === 'date' ? date : field.key === 'marketplace' ? 'US' : field.key === 'sku' ? 'PET-SKU-001' : '')
       ], '价格策略模板.xlsx', headers)}>下载模板</button>
         <button className="btn" type="button" onClick={() => fileRef.current?.click()}>导入 Excel</button><input ref={fileRef} className="price-file" type="file" accept=".xlsx,.xls,.csv" onChange={readFile} tabIndex={-1} aria-hidden="true" />
-        <button className="btn" disabled={busy || !syncState?.configured} onClick={syncNow}>{busy ? '正在同步…' : '同步船长数据'}</button>
+        <button className="btn" disabled={busy || !syncState?.configured || syncState?.running || syncState?.rateLimitedToday} onClick={syncNow}>{syncState?.running ? '后台同步中…' : '同步船长数据'}</button>
         <button className="btn primary" onClick={() => { setError(''); setEditor({ date, marketplace: 'US' }); }}>添加记录</button></div></div>
-    <p className="hint">{syncState?.configured ? `北京时间每天 10 时后自动同步前一天数据。上次成功：${syncState.lastSuccess ? `${syncState.lastSuccess.date}，${syncState.lastSuccess.completedAt}` : '尚未同步'}` : '船长 API 未配置；可以先手动录入或导入。'} 动销速度＝近7日销量÷7；周转周数＝总库存÷近7日销量；预估售罄日按该速度推算；7天环比＝本期销量与前7日相比；转化率＝广告订单数÷广告点击数。利润、费比和广告销量暂无可靠自动口径。</p>
-    {syncState?.lastError && <p className="note err" role="status">上次同步失败（快照 {syncState.lastError.date}，{new Date(syncState.lastError.at).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}）：{syncState.lastError.message}</p>}
+    <p className="hint">{syncState?.configured ? `北京时间每天 10 时后自动同步前一天数据。上次成功：${syncState.lastSuccess ? `${syncState.lastSuccess.date}，${syncState.lastSuccess.completedAt}` : '尚未同步'}` : '船长 API 未配置；可以先手动录入或导入。'} {syncState?.usage && `本应用已记录的今日调用 ${syncState.usage.calls}/${syncState.usage.limit} 次安全额度；每次请求至少间隔 65 秒。`} 动销速度＝近7日销量÷7；周转周数＝总库存÷近7日销量；预估售罄日按该速度推算；7天环比＝本期销量与前7日相比；转化率＝广告订单数÷广告点击数。利润、费比和广告销量暂无可靠自动口径。</p>
+    {syncState?.running && <p className="note" role="status">船长同步正在后台运行，预计需要约 15 分钟；离开页面后仍会继续。</p>}
+    {syncState?.lastError && <p className="note err" role="status">上次同步失败（快照 {syncState.lastError.date}，{new Date(syncState.lastError.at).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}）：{syncState.lastError.message}{syncState.pauseReason ? `。${syncState.pauseReason}。` : ''}</p>}
+    {syncState?.pauseReason && !syncState.lastError && <p className="note err" role="status">{syncState.pauseReason}</p>}
     {message && <p className="note ok" role="status">{message}</p>}
-    {error && <p className="note err" role="alert">{error}</p>}
+    {error && !syncState?.rateLimitedToday && <p className="note err" role="alert">{error}</p>}
     <section className="card">
       <div className="row wrap price-toolbar"><label>快照日期 <input className="inp" type="date" value={date} onChange={(e) => setDate(e.target.value)} /></label>
         <label>SKU / ASIN / 款式搜索 <input className="inp" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="输入关键词" /></label>

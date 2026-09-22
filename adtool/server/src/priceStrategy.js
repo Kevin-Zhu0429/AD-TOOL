@@ -20,11 +20,14 @@ priceStrategyRouter.get('/', (req, res) => {
   res.json({ items, dates, sync: priceSyncStatus() });
 });
 
-priceStrategyRouter.post('/sync', async (req, res) => {
+priceStrategyRouter.post('/sync', (req, res) => {
   const date = String(req.body?.date ?? '');
   if (!dailyDates(date).length) return res.status(400).json({ error: '同步日期不合法' });
-  try { res.json(await syncPriceStrategy(date, req.session.user.id)); }
-  catch (error) { res.status(error.message === '价格策略表正在同步' ? 409 : 502).json({ error: String(error.message).slice(0, 300) }); }
+  const status = priceSyncStatus();
+  if (status.rateLimitedToday) return res.status(429).json({ error: status.pauseReason });
+  if (status.running) return res.status(409).json({ error: '价格策略表正在同步' });
+  void syncPriceStrategy(date, req.session.user.id).catch((error) => console.error('[price-sync]', error.message));
+  res.status(202).json({ accepted: true, date });
 });
 
 priceStrategyRouter.post('/rows', (req, res) => {
