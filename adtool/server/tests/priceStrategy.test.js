@@ -36,7 +36,11 @@ test('shared price snapshots validate atomically and Captain metrics preserve ma
         adApiCalls++;
         return adApiCalls === 1 ? [{ adId: 'ad-1', sku: 'DOG-L' }] : [];
       }
-      if (path.endsWith('/advertise_report')) return query.report_date === '20260920' ? [{ adId: 'ad-1', clicks: 12, ad_order_num: 2 }] : [];
+      if (path.endsWith('/advertise_report')) {
+        assert.ok(query.start_modified_time > 0);
+        assert.ok(query.end_modified_time > query.start_modified_time);
+        return query.report_date === '20260920' ? [{ adId: 'ad-1', clicks: 12, ad_order_num: 2 }] : [];
+      }
       if (path.includes('inventory_list')) return [{ SKU: 'DOG-L', fulfillable_quantity: 25, inbound_shipped_quantity: 5 }];
       return [];
     } };
@@ -60,16 +64,17 @@ test('shared price snapshots validate atomically and Captain metrics preserve ma
   assert.equal(synced.items[0].totalStock, 40);
   assert.equal(synced.items[0].day6, 3);
   assert.equal(synced.items[0].adSales7d, null);
+  assert.equal(synced.sync.callsPerSync, 20);
   await syncPriceStrategy('2026-09-21', 1, gateway);
   assert.equal((await call('/price-strategy?date=2026-09-21', owner)).data.items.length, 1);
   assert.equal((await call('/price-strategy?date=2026-09-21', owner)).data.items[0].clicks7d, 12);
-  await assert.rejects(syncPriceStrategy('2026-09-21', 1, {
+  await assert.rejects(syncPriceStrategy('2026-09-20', 1, {
     ...gateway,
     discoverChannels: async () => [{ channels: [
       { country: 'US', openChannelId: 'us-shop' }, { country: 'US', openChannelId: 'another-us-shop' },
     ] }],
   }), /多个美国站店铺/);
-  await assert.rejects(syncPriceStrategy('2026-09-21', 1, {
+  await assert.rejects(syncPriceStrategy('2026-09-20', 1, {
     ...gateway,
     paged: async (path) => {
       if (path.endsWith('/advertise')) throw new Error('start modified time 字段是必须的');
@@ -77,7 +82,7 @@ test('shared price snapshots validate atomically and Captain metrics preserve ma
     },
   }), /读取广告清单.*start modified time/);
   assert.match((await call('/price-strategy?date=2026-09-21', user)).data.sync.lastError.message, /读取广告清单.*start modified time/);
-  await assert.rejects(syncPriceStrategy('2026-09-21', 1, {
+  await assert.rejects(syncPriceStrategy('2026-09-20', 1, {
     ...gateway,
     paged: async (path) => {
       if (path.endsWith('/advertise')) throw new Error('请求频率过快，请稍等');

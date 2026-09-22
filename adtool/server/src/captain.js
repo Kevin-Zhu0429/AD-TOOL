@@ -3,6 +3,7 @@ import express from 'express';
 import { db, audit } from './db.js';
 import { requireLogin, requireRole } from './auth.js';
 import { MARKETPLACES, REGIONS } from './libs.js';
+import { AsyncLocalStorage } from 'node:async_hooks';
 
 const DEFAULT_BASE = 'https://openapi.captainbi.com';
 const PAGE_SIZE = 100;
@@ -11,11 +12,12 @@ const SYNC_OVERLAP_SECONDS = 5 * 60;
 const EU_MARKETS = REGIONS.find((region) => region.id === 'EU')?.markets ?? [];
 const CONTINENTAL_EU_MARKETS = EU_MARKETS.filter((country) => country !== 'UK');
 const runningUsers = new Set();
-const PET_DAILY_CALL_LIMIT = 60;
-const PET_CALL_INTERVAL_MS = 65_000;
+const PET_DAILY_CALL_LIMIT = 100;
+const PET_CALL_INTERVAL_MS = 10_000;
 
 let tokenCache = null;
 let captainQueue = Promise.resolve();
+const requestBudgetStorage = new AsyncLocalStorage();
 
 export const captainRouter = express.Router();
 captainRouter.use(requireLogin);
@@ -59,6 +61,11 @@ export function captainUsageStatus() {
   return { day, calls: db.prepare('SELECT calls FROM pet_captain_api_usage WHERE day=?').get(day)?.calls ?? 0, limit: PET_DAILY_CALL_LIMIT };
 }
 
+export async function withCaptainRequestBudget(limit, task) {
+  const budget = { limit: Math.max(1, Number(limit) || 1), used: 0 };
+  return requestBudgetStorage.run(budget, () => task(budget));
+}
+
 async function reserveCaptainRequest() {
   if (!isPet) return;
   const previous = captainQueue;
@@ -66,6 +73,12 @@ async function reserveCaptainRequest() {
   captainQueue = new Promise((resolve) => { release = resolve; });
   await previous;
   try {
+    const budget = requestBudgetStorage.getStore();
+    if (budget && budget.used >= budget.limit) {
+      const error = new Error(`本轮同步已完成 ${budget.limit} 次船长 API 请求，已保存当前进度；再次点击可继续补齐`);
+      error.code = 'CAPTAIN_BATCH_LIMIT';
+      throw error;
+    }
     let day = shanghaiDay();
     let record = db.prepare('SELECT calls,last_request_at FROM pet_captain_api_usage WHERE day=?').get(day);
     if ((record?.calls ?? 0) >= PET_DAILY_CALL_LIMIT) throw new Error(`本应用今日船长 API 调用已达 ${PET_DAILY_CALL_LIMIT} 次安全上限，请明天再同步`);
@@ -74,6 +87,7 @@ async function reserveCaptainRequest() {
     day = shanghaiDay();
     record = db.prepare('SELECT calls FROM pet_captain_api_usage WHERE day=?').get(day);
     if ((record?.calls ?? 0) >= PET_DAILY_CALL_LIMIT) throw new Error(`本应用今日船长 API 调用已达 ${PET_DAILY_CALL_LIMIT} 次安全上限，请明天再同步`);
+    if (budget) budget.used += 1;
     db.prepare(`INSERT INTO pet_captain_api_usage(day,calls,last_request_at) VALUES(?,1,?)
       ON CONFLICT(day) DO UPDATE SET calls=calls+1,last_request_at=excluded.last_request_at`).run(day, Date.now());
   } finally { release(); }
@@ -161,6 +175,22 @@ export async function paged(path, query, headers = {}) {
     if (!rows.length || rows.length < PAGE_SIZE || (total && items.length >= total)) return items;
   }
   throw new Error('船长 API 分页超过安全上限，请联系管理员检查接口数据');
+}
+
+export async function pagedChunk(path, query, headers = {}, startPage = 1, maxPages = 1) {
+  const items = [];
+  let page = Math.max(1, Number(startPage) || 1);
+  const limit = Math.max(1, Math.min(20, Number(maxPages) || 1));
+  for (let count = 0; count < limit; count += 1, page += 1) {
+    const payload = await captainGet(path, { ...query, page, rows: PAGE_SIZE }, headers);
+    const rows = Array.isArray(payload.data) ? payload.data : [];
+    items.push(...rows);
+    const total = intOf(payload.max_result);
+    if (!rows.length || rows.length < PAGE_SIZE || (total && (page - 1) * PAGE_SIZE + rows.length >= total)) {
+      return { items, complete: true, nextPage: 1, total };
+    }
+  }
+  return { items, complete: false, nextPage: page, total: null };
 }
 
 export async function discoverChannels() {

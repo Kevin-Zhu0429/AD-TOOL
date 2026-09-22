@@ -335,6 +335,23 @@ CREATE TABLE IF NOT EXISTS pet_price_ad_cache (
   updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
   PRIMARY KEY(channel_id, ad_id)
 );
+CREATE TABLE IF NOT EXISTS pet_price_ad_report_cache (
+  channel_id TEXT NOT NULL,
+  report_date TEXT NOT NULL,
+  ad_id TEXT NOT NULL,
+  clicks INTEGER NOT NULL DEFAULT 0,
+  ad_orders INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  PRIMARY KEY(channel_id, report_date, ad_id)
+);
+CREATE TABLE IF NOT EXISTS pet_price_order_cache (
+  snapshot_date TEXT NOT NULL,
+  channel_id TEXT NOT NULL,
+  order_key TEXT NOT NULL,
+  data_json TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  PRIMARY KEY(snapshot_date, channel_id, order_key)
+);
 CREATE TABLE IF NOT EXISTS pet_captain_api_usage (
   day TEXT PRIMARY KEY,
   calls INTEGER NOT NULL DEFAULT 0,

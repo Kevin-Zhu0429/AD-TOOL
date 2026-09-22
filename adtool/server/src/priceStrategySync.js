@@ -1,6 +1,6 @@
 import { db, audit } from './db.js';
 import { isPet } from './profile.js';
-import { captainUsageStatus, discoverChannels, paged } from './captain.js';
+import { captainUsageStatus, discoverChannels, paged, pagedChunk, withCaptainRequestBudget } from './captain.js';
 import { normalizePriceRow, dailyDates, dailyIsoDates } from '../../shared/priceStrategy.js';
 
 const daySeconds = 86400;
@@ -14,7 +14,8 @@ const positive = (value) => value !== null && value !== undefined && value !== '
 const nextDate = (date, days) => new Date((toStamp(date) + days * daySeconds) * 1000).toISOString().slice(0, 10);
 const shanghaiDay = () => new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Shanghai' });
 const shanghaiDayOf = (value) => new Date(value).toLocaleDateString('sv-SE', { timeZone: 'Asia/Shanghai' });
-const isRateLimitError = (message) => /请求频率过快|调用已达|rate.?limit|too many requests/i.test(String(message ?? ''));
+const isRateLimitError = (message) => /请求频率过快|rate.?limit|too many requests/i.test(String(message ?? ''));
+const CALLS_PER_SYNC = 20;
 const savedState = (key) => {
   const value = db.prepare('SELECT value FROM pet_price_sync_state WHERE key=?').get(key)?.value;
   return value ? JSON.parse(value) : null;
@@ -101,8 +102,65 @@ export function summarizeCaptainRows({ orders, ads, reports, inventory }, date) 
   }), unmappedAds };
 }
 
+const stateUpsert = db.prepare(`INSERT INTO pet_price_sync_state(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`);
+const saveInventory = db.prepare(`INSERT INTO pet_price_inventory_cache(channel_id,sku,available_stock,inbound_stock) VALUES(?,?,?,?)
+  ON CONFLICT(channel_id,sku) DO UPDATE SET available_stock=excluded.available_stock,inbound_stock=excluded.inbound_stock,updated_at=datetime('now','localtime')`);
+const saveAd = db.prepare(`INSERT INTO pet_price_ad_cache(channel_id,ad_id,sku) VALUES(?,?,?)
+  ON CONFLICT(channel_id,ad_id) DO UPDATE SET sku=excluded.sku,updated_at=datetime('now','localtime')`);
+const saveAdReport = db.prepare(`INSERT INTO pet_price_ad_report_cache(channel_id,report_date,ad_id,clicks,ad_orders) VALUES(?,?,?,?,?)
+  ON CONFLICT(channel_id,report_date,ad_id) DO UPDATE SET clicks=excluded.clicks,ad_orders=excluded.ad_orders,updated_at=datetime('now','localtime')`);
+const saveOrder = db.prepare(`INSERT INTO pet_price_order_cache(snapshot_date,channel_id,order_key,data_json) VALUES(?,?,?,?)
+  ON CONFLICT(snapshot_date,channel_id,order_key) DO UPDATE SET data_json=excluded.data_json,updated_at=datetime('now','localtime')`);
+
+async function readChunk(gateway, path, query, headers, key, maxPages) {
+  const cursor = savedState(key);
+  if (cursor?.complete) return { items: [], complete: true, nextPage: 1 };
+  const result = gateway.pagedChunk
+    ? await gateway.pagedChunk(path, query, headers, cursor?.nextPage ?? 1, maxPages)
+    : { items: await gateway.paged(path, query, headers), complete: true, nextPage: 1 };
+  stateUpsert.run(key, JSON.stringify({ complete: result.complete, nextPage: result.nextPage, updatedAt: new Date().toISOString() }));
+  return result;
+}
+
+function persistSnapshot({ date, actorId, channelId, startedAt, complete, stage, callsThisRun }) {
+  const dates = dailyIsoDates(date);
+  const orders = db.prepare('SELECT data_json FROM pet_price_order_cache WHERE snapshot_date=? AND channel_id=?').all(date, channelId)
+    .map(({ data_json: dataJson }) => ({ channel: channelId, order: JSON.parse(dataJson) }));
+  const ads = db.prepare('SELECT channel_id AS channel, ad_id AS adId, sku FROM pet_price_ad_cache WHERE channel_id=?').all(channelId)
+    .map(({ channel, adId, sku }) => ({ channel, ad: { adId, sku } }));
+  const reports = db.prepare(`SELECT channel_id AS channel, ad_id AS adId, clicks, ad_orders AS ad_order_num
+    FROM pet_price_ad_report_cache WHERE channel_id=? AND report_date BETWEEN ? AND ?`).all(channelId, dates[0], dates.at(-1))
+    .map(({ channel, ...report }) => ({ channel, report }));
+  const inventory = db.prepare(`SELECT channel_id AS channel, sku AS SKU, available_stock AS fulfillable_quantity,
+    inbound_stock AS inbound_shipped_quantity FROM pet_price_inventory_cache WHERE channel_id=?`).all(channelId).map((item) => ({ item }));
+  const summary = summarizeCaptainRows({ orders, ads, reports, inventory }, date);
+  const skus = db.prepare("SELECT sku,asin,style,size,color,fabric FROM sku_items WHERE user_id=-1 AND country='US'").all();
+  const skuByKey = new Map(skus.map((item) => [item.sku.toLowerCase(), item]));
+  const sourceBySku = new Map(summary.rows.map((row) => [row.sku.toLowerCase(), row]));
+  for (const sku of skus) if (!sourceBySku.has(sku.sku.toLowerCase())) sourceBySku.set(sku.sku.toLowerCase(), { sku: sku.sku, date });
+  const select = db.prepare('SELECT data_json FROM pet_price_strategy WHERE snapshot_date=? AND marketplace=? AND sku=?');
+  const upsert = db.prepare(`INSERT INTO pet_price_strategy(snapshot_date,marketplace,sku,data_json,updated_by)
+    VALUES(?,'US',?,?,?) ON CONFLICT(snapshot_date,marketplace,sku) DO UPDATE SET
+    data_json=excluded.data_json,updated_by=excluded.updated_by,updated_at=datetime('now','localtime')`);
+  db.transaction(() => {
+    for (const source of sourceBySku.values()) {
+      const existing = select.get(date, 'US', source.sku);
+      const old = existing ? JSON.parse(existing.data_json) : {};
+      const sku = skuByKey.get(source.sku.toLowerCase());
+      const merged = normalizePriceRow(withCalculatedPriceMetrics({ ...sku, ...old, ...source, date, marketplace: 'US',
+        totalStock: old.totalStock, price: old.price, promoPrice: old.promoPrice,
+        currentProfit: old.currentProfit, monthlyMargin: old.monthlyMargin, monthlyAdRatio: old.monthlyAdRatio }));
+      upsert.run(date, merged.sku, JSON.stringify(merged), actorId);
+    }
+    stateUpsert.run('last_success', JSON.stringify({ date, startedAt, completedAt: new Date().toISOString(),
+      skus: sourceBySku.size, channels: 1, unmappedAds: summary.unmappedAds, complete, stage, callsThisRun }));
+    db.prepare("DELETE FROM pet_price_sync_state WHERE key='last_error'").run();
+  })();
+  return { skus: sourceBySku.size, unmappedAds: summary.unmappedAds };
+}
+
 let running = false;
-export async function syncPriceStrategy(date, actorId = null, gateway = { discoverChannels, paged }) {
+export async function syncPriceStrategy(date, actorId = null, gateway = { discoverChannels, paged, pagedChunk }) {
   if (!isPet) throw new Error('只支持宠物版');
   if (!dailyDates(date).length) throw new Error('同步日期不合法');
   if (running) throw new Error('价格策略表正在同步');
@@ -110,87 +168,91 @@ export async function syncPriceStrategy(date, actorId = null, gateway = { discov
   if (pauseReason) throw new Error(pauseReason);
   running = true;
   const startedAt = new Date().toISOString();
-  const setState = db.prepare(`INSERT INTO pet_price_sync_state(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`);
-  setState.run('last_attempt', JSON.stringify({ date, startedAt }));
+  stateUpsert.run('last_attempt', JSON.stringify({ date, startedAt }));
   let stage = '读取店铺';
+  let coreSaved = false;
   try {
+    return await withCaptainRequestBudget(CALLS_PER_SYNC, async (requestBudget) => {
     const groups = await gateway.discoverChannels();
     const usChannels = groups.flatMap((group) => group.channels).filter((channel) => channel.country === 'US');
     const selectedChannelId = String(process.env.PET_CAPTAIN_CHANNEL_ID ?? '').trim();
     const channels = selectedChannelId ? usChannels.filter((channel) => channel.openChannelId === selectedChannelId) : usChannels;
     if (!channels.length) throw new Error(selectedChannelId ? 'PET_CAPTAIN_CHANNEL_ID 未匹配船长美国站店铺' : '船长未返回美国站店铺，请检查授权范围');
     if (channels.length > 1) throw new Error('船长授权了多个美国站店铺，请在服务器配置 PET_CAPTAIN_CHANNEL_ID，避免混合不同店铺的数据');
-    const orders = [], ads = [], reports = [], inventoryChanges = [];
     const end = toStamp(nextDate(date, 1));
     const start = Math.min(toStamp(`${date.slice(0, 7)}-01`), toStamp(nextDate(date, -13)));
     const recentStart = end - 30 * daySeconds;
     const adHistory = historyWindow('ad_history', date, end);
     const inventoryHistory = historyWindow('inventory_history', date, end);
-    for (const channel of channels) {
-      const header = { OpenChannelId: channel.openChannelId };
-      const channelId = channel.openChannelId;
-      stage = '读取订单';
-      for (const order of await gateway.paged('/v1/open_order/get_order_list', { start_modified_time: start, end_modified_time: end }, header)) orders.push({ channel: channelId, order });
-      for (const [windowStart, windowEnd] of [[recentStart, end], [adHistory.start, adHistory.end]]) {
-        stage = `读取广告清单（${new Date(windowStart * 1000).toISOString().slice(0, 10)} 起）`;
-        for (const ad of await gateway.paged('/v1/open_cpc/advertise', {
-          type: 1, start_modified_time: windowStart, end_modified_time: windowEnd,
-        }, header)) ads.push({ channel: channelId, ad });
-      }
-      for (const day of dailyIsoDates(date)) {
-        stage = `读取广告日报（${day}）`;
-        const reportDate = day.replaceAll('-', '');
-        for (const report of await gateway.paged('/v1/open_cpc/advertise_report', { report_date: reportDate }, header)) reports.push({ channel: channelId, report });
-      }
-      for (const [windowStart, windowEnd] of [[recentStart, end], [inventoryHistory.start, inventoryHistory.end]]) {
-        stage = `读取 FBA 库存（${new Date(windowStart * 1000).toISOString().slice(0, 10)} 起）`;
-        for (const item of await gateway.paged('/v1/open_fba/inventory_list', {
-          start_modified_time: windowStart, end_modified_time: windowEnd,
-        }, header)) inventoryChanges.push({ channel: channelId, item });
-      }
+    const channel = channels[0], channelId = channel.openChannelId, header = { OpenChannelId: channelId };
+    stage = '读取订单';
+    const orderKey = `order_cursor:${channelId}:${date}:${start}:${end}`;
+    const orderChunk = await readChunk(gateway, '/v1/open_order/get_order_list', {
+      start_modified_time: start, end_modified_time: end,
+    }, header, orderKey, 1);
+    db.transaction(() => { orderChunk.items.forEach((order, index) => {
+      const key = String(order.AmazonOrderId ?? order.id ?? `${order.LocalDate ?? ''}:${order.order_item?.[0]?.OrderItemId ?? index}`);
+      saveOrder.run(date, channelId, key, JSON.stringify(order));
+    }); })();
+
+    let allComplete = orderChunk.complete;
+    for (const [label, windowStart, windowEnd, history] of [
+      ['近期', recentStart, end, false], ['历史', inventoryHistory.start, inventoryHistory.end, true],
+    ]) {
+      stage = `读取 FBA 库存（${label}）`;
+      const key = `inventory_cursor:${channelId}:${windowStart}:${windowEnd}`;
+      const chunk = await readChunk(gateway, '/v1/open_fba/inventory_list', {
+        start_modified_time: windowStart, end_modified_time: windowEnd,
+      }, header, key, 1);
+      db.transaction(() => { for (const item of chunk.items) if (item.SKU) saveInventory.run(channelId, item.SKU,
+        positive(item.fulfillable_quantity), positive(item.inbound_shipped_quantity)); })();
+      allComplete &&= chunk.complete;
+      if (history && chunk.complete) stateUpsert.run('inventory_history', JSON.stringify({ date, offset: inventoryHistory.offset, nextOffset: inventoryHistory.nextOffset }));
     }
-    const saveCache = db.prepare(`INSERT INTO pet_price_inventory_cache(channel_id,sku,available_stock,inbound_stock) VALUES(?,?,?,?)
-      ON CONFLICT(channel_id,sku) DO UPDATE SET available_stock=excluded.available_stock,inbound_stock=excluded.inbound_stock,updated_at=datetime('now','localtime')`);
-    const saveAd = db.prepare(`INSERT INTO pet_price_ad_cache(channel_id,ad_id,sku) VALUES(?,?,?)
-      ON CONFLICT(channel_id,ad_id) DO UPDATE SET sku=excluded.sku,updated_at=datetime('now','localtime')`);
-    const select = db.prepare('SELECT data_json FROM pet_price_strategy WHERE snapshot_date=? AND marketplace=? AND sku=?');
-    const upsert = db.prepare(`INSERT INTO pet_price_strategy(snapshot_date,marketplace,sku,data_json,updated_by)
-      VALUES(?,'US',?,?,?) ON CONFLICT(snapshot_date,marketplace,sku) DO UPDATE SET
-      data_json=excluded.data_json,updated_by=excluded.updated_by,updated_at=datetime('now','localtime')`);
-    let summary, syncSkuCount;
-    stage = '保存价格策略快照';
-    db.transaction(() => {
-      for (const { channel, ad } of ads) if (ad.adId && ad.sku) saveAd.run(channel, String(ad.adId), String(ad.sku).trim());
-      const cachedAds = db.prepare('SELECT channel_id AS channel, ad_id AS adId, sku FROM pet_price_ad_cache').all()
-        .map(({ channel, adId, sku }) => ({ channel, ad: { adId, sku } }));
-      for (const { channel, item } of inventoryChanges) if (item.SKU) saveCache.run(channel, item.SKU, positive(item.fulfillable_quantity), positive(item.inbound_shipped_quantity));
-      const inventory = db.prepare('SELECT channel_id AS channel, sku AS SKU, available_stock AS fulfillable_quantity, inbound_stock AS inbound_shipped_quantity FROM pet_price_inventory_cache').all().map((item) => ({ item }));
-      summary = summarizeCaptainRows({ orders, ads: cachedAds, reports, inventory }, date);
-      // The existing SKU catalog supplies rows even when no order or ad has arrived yet.
-      const skus = db.prepare("SELECT sku,asin,style,size,color,fabric FROM sku_items WHERE user_id=-1 AND country='US'").all();
-      const sourceBySku = new Map(summary.rows.map((row) => [row.sku.toLowerCase(), row]));
-      for (const sku of skus) if (!sourceBySku.has(sku.sku.toLowerCase())) sourceBySku.set(sku.sku.toLowerCase(), { sku: sku.sku, date });
-      syncSkuCount = sourceBySku.size;
-      for (const source of sourceBySku.values()) {
-        const existing = select.get(date, 'US', source.sku);
-        const old = existing ? JSON.parse(existing.data_json) : {};
-        const sku = skus.find((item) => item.sku.toLowerCase() === source.sku.toLowerCase());
-        const merged = normalizePriceRow(withCalculatedPriceMetrics({ ...sku, ...old, ...source, date, marketplace: 'US',
-          // Keep manual fields, including profit and selling price.
-          totalStock: old.totalStock, price: old.price, promoPrice: old.promoPrice,
-          currentProfit: old.currentProfit, monthlyMargin: old.monthlyMargin, monthlyAdRatio: old.monthlyAdRatio }));
-        upsert.run(date, merged.sku, JSON.stringify(merged), actorId);
-      }
-      setState.run('last_success', JSON.stringify({ date, startedAt, completedAt: new Date().toISOString(), skus: sourceBySku.size, channels: channels.length, unmappedAds: summary.unmappedAds }));
-      setState.run('ad_history', JSON.stringify({ date, offset: adHistory.offset, nextOffset: adHistory.nextOffset }));
-      setState.run('inventory_history', JSON.stringify({ date, offset: inventoryHistory.offset, nextOffset: inventoryHistory.nextOffset }));
-      db.prepare("DELETE FROM pet_price_sync_state WHERE key='last_error'").run();
-    })();
-    if (actorId) audit(actorId, 'US', 'sync', 'pet_price_strategy', null, { date, skus: syncSkuCount, channels: channels.length });
-    return { date, skus: syncSkuCount, channels: channels.length, unmappedAds: summary.unmappedAds };
+    stage = '保存订单和库存';
+    let result = persistSnapshot({ date, actorId, channelId, startedAt, complete: false,
+      stage: '订单和库存已保存，广告仍在补齐', callsThisRun: requestBudget.used });
+    coreSaved = true;
+
+    for (const [label, windowStart, windowEnd, history] of [
+      ['近期', recentStart, end, false], ['历史', adHistory.start, adHistory.end, true],
+    ]) {
+      stage = `读取广告清单（${label}）`;
+      const key = `ad_cursor:${channelId}:${windowStart}:${windowEnd}`;
+      const chunk = await readChunk(gateway, '/v1/open_cpc/advertise', {
+        type: 1, start_modified_time: windowStart, end_modified_time: windowEnd,
+      }, header, key, 1);
+      db.transaction(() => { for (const ad of chunk.items) if (ad.adId && ad.sku) saveAd.run(channelId, String(ad.adId), String(ad.sku).trim()); })();
+      allComplete &&= chunk.complete;
+      if (history && chunk.complete) stateUpsert.run('ad_history', JSON.stringify({ date, offset: adHistory.offset, nextOffset: adHistory.nextOffset }));
+    }
+
+    for (const day of dailyIsoDates(date)) {
+      stage = `读取广告日报（${day}）`;
+      const key = `ad_report_cursor:${channelId}:${day}`;
+      const chunk = await readChunk(gateway, '/v1/open_cpc/advertise_report', {
+        report_date: day.replaceAll('-', ''), start_modified_time: toStamp(day), end_modified_time: toStamp(nextDate(day, 1)),
+      }, header, key, 1);
+      db.transaction(() => { for (const report of chunk.items) if (report.adId) saveAdReport.run(channelId, day,
+        String(report.adId), positive(report.clicks) ?? 0, positive(report.ad_order_num) ?? 0); })();
+      allComplete &&= chunk.complete;
+    }
+    stage = '保存广告汇总';
+    result = persistSnapshot({ date, actorId, channelId, startedAt, complete: allComplete,
+      stage: allComplete ? '全部数据已完成' : '基础数据已保存，广告分页将在后续同步继续', callsThisRun: requestBudget.used });
+    if (actorId) audit(actorId, 'US', 'sync', 'pet_price_strategy', null, { date, skus: result.skus, channels: 1, complete: allComplete });
+    return { date, skus: result.skus, channels: 1, unmappedAds: result.unmappedAds,
+      complete: allComplete, callsThisRun: requestBudget.used };
+    });
   } catch (error) {
+    if (error.code === 'CAPTAIN_BATCH_LIMIT' && coreSaved) {
+      const saved = savedState('last_success') ?? {};
+      stateUpsert.run('last_success', JSON.stringify({ ...saved, complete: false, stage: error.message, completedAt: new Date().toISOString() }));
+      db.prepare("DELETE FROM pet_price_sync_state WHERE key='last_error'").run();
+      return { date, complete: false, callsThisRun: CALLS_PER_SYNC };
+    }
     const message = `${stage}：${String(error.message)}`.slice(0, 300);
-    setState.run('last_error', JSON.stringify({ date, at: new Date().toISOString(), stage, message }));
+    stateUpsert.run('last_error', JSON.stringify({ date, at: new Date().toISOString(), stage, message, coreSaved }));
     throw Object.assign(new Error(message), { status: error.status });
   } finally { running = false; }
 }
@@ -204,6 +266,7 @@ export function priceSyncStatus() {
     : lastError && lastError.at && shanghaiDayOf(lastError.at) === shanghaiDay() && isRateLimitError(lastError.message)
       ? '船长今天已提示请求过快，为保护免费额度，请明天再同步' : null;
   return { configured: !!(process.env.CAPTAIN_CLIENT_ID && process.env.CAPTAIN_CLIENT_SECRET), running,
+    callsPerSync: CALLS_PER_SYNC,
     rateLimitedToday: !!pauseReason, pauseReason, usage,
     lastSuccess: states.last_success ?? null, lastAttempt: states.last_attempt ?? null, lastError };
 }
@@ -217,7 +280,7 @@ export function startPriceSyncScheduler() {
     const todayShanghai = `${parts.year}-${parts.month}-${parts.day}`;
     const date = nextDate(todayShanghai, -1);
     const status = priceSyncStatus();
-    if (!status.configured || status.rateLimitedToday || running || status.lastSuccess?.date === date
+    if (!status.configured || status.rateLimitedToday || running || status.lastSuccess?.date === date && status.lastSuccess?.complete
       || status.lastAttempt?.date === date && Date.now() - Date.parse(status.lastAttempt.startedAt) < 6 * 60 * 60_000) return;
     try { await syncPriceStrategy(date); } catch (error) { console.error('[price-sync]', error.message); }
   };
