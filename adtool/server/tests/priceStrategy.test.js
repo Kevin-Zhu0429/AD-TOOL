@@ -69,6 +69,14 @@ test('shared price snapshots validate atomically and Captain metrics preserve ma
       { country: 'US', openChannelId: 'us-shop' }, { country: 'US', openChannelId: 'another-us-shop' },
     ] }],
   }), /多个美国站店铺/);
+  await assert.rejects(syncPriceStrategy('2026-09-21', 1, {
+    ...gateway,
+    paged: async (path) => {
+      if (path.endsWith('/advertise')) throw new Error('start modified time 字段是必须的');
+      return [];
+    },
+  }), /读取广告清单.*start modified time/);
+  assert.match((await call('/price-strategy?date=2026-09-21', user)).data.sync.lastError.message, /读取广告清单.*start modified time/);
   assert.equal((await call('/price-strategy?date=2026-09-21', user)).data.items[0].price, 19.99);
   assert.equal((await call(`/price-strategy/${synced.items[0].id}`, user, {}, 'DELETE')).status, 200);
   assert.equal((await call('/price-strategy?date=2026-09-21', owner)).data.items.length, 0);

@@ -96,6 +96,7 @@ export async function syncPriceStrategy(date, actorId = null, gateway = { discov
   const startedAt = new Date().toISOString();
   const setState = db.prepare(`INSERT INTO pet_price_sync_state(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`);
   setState.run('last_attempt', JSON.stringify({ date, startedAt }));
+  let stage = '读取店铺';
   try {
     const groups = await gateway.discoverChannels();
     const usChannels = groups.flatMap((group) => group.channels).filter((channel) => channel.country === 'US');
@@ -114,17 +115,21 @@ export async function syncPriceStrategy(date, actorId = null, gateway = { discov
     for (const channel of channels) {
       const header = { OpenChannelId: channel.openChannelId };
       const channelId = channel.openChannelId;
+      stage = '读取订单';
       for (const order of await gateway.paged('/v1/open_order/get_order_list', { start_modified_time: start, end_modified_time: end }, header)) orders.push({ channel: channelId, order });
       for (let windowStart = adStart; windowStart < end; windowStart += 30 * daySeconds) {
+        stage = `读取广告清单（${new Date(windowStart * 1000).toISOString().slice(0, 10)} 起）`;
         for (const ad of await gateway.paged('/v1/open_cpc/advertise', {
           type: 1, start_modified_time: windowStart, end_modified_time: Math.min(end, windowStart + 30 * daySeconds),
         }, header)) ads.push({ channel: channelId, ad });
       }
       for (const day of dailyIsoDates(date)) {
+        stage = `读取广告日报（${day}）`;
         const reportDate = day.replaceAll('-', '');
         for (const report of await gateway.paged('/v1/open_cpc/advertise_report', { report_date: reportDate }, header)) reports.push({ channel: channelId, report });
       }
       for (let windowStart = inventoryStart; windowStart < end; windowStart += 30 * daySeconds) {
+        stage = `读取 FBA 库存（${new Date(windowStart * 1000).toISOString().slice(0, 10)} 起）`;
         for (const item of await gateway.paged('/v1/open_fba/inventory_list', {
           start_modified_time: windowStart, end_modified_time: Math.min(end, windowStart + 30 * daySeconds),
         }, header)) inventoryChanges.push({ channel: channelId, item });
@@ -139,6 +144,7 @@ export async function syncPriceStrategy(date, actorId = null, gateway = { discov
       VALUES(?,'US',?,?,?) ON CONFLICT(snapshot_date,marketplace,sku) DO UPDATE SET
       data_json=excluded.data_json,updated_by=excluded.updated_by,updated_at=datetime('now','localtime')`);
     let summary, syncSkuCount;
+    stage = '保存价格策略快照';
     db.transaction(() => {
       for (const { channel, ad } of ads) if (ad.adId && ad.sku) saveAd.run(channel, String(ad.adId), String(ad.sku).trim());
       const cachedAds = db.prepare('SELECT channel_id AS channel, ad_id AS adId, sku FROM pet_price_ad_cache').all()
@@ -168,8 +174,9 @@ export async function syncPriceStrategy(date, actorId = null, gateway = { discov
     if (actorId) audit(actorId, 'US', 'sync', 'pet_price_strategy', null, { date, skus: syncSkuCount, channels: channels.length });
     return { date, skus: syncSkuCount, channels: channels.length, unmappedAds: summary.unmappedAds };
   } catch (error) {
-    setState.run('last_error', JSON.stringify({ date, at: new Date().toISOString(), message: String(error.message).slice(0, 300) }));
-    throw error;
+    const message = `${stage}：${String(error.message)}`.slice(0, 300);
+    setState.run('last_error', JSON.stringify({ date, at: new Date().toISOString(), stage, message }));
+    throw Object.assign(new Error(message), { status: error.status });
   } finally { running = false; }
 }
 
