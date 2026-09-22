@@ -77,7 +77,7 @@ export default function HomePage({ user, market, onNav, theme, onOpenChangelog }
         <EntryCard
           tone="blue" icon="chart" title="ABA 报告"
           desc={isPet ? "上传美国站品牌或 ASIN 搜索查询周报，查看搜索词的曝光、点击和购买表现，并关联店铺共享 SKU。" : "上传品牌搜索查询周报，按搜索词、墨盒系列和对应机型筛选，查看每周查询量、曝光、点击和购买表现。"}
-          meta="品牌视图 · 数据仅自己可见 · 服务器保存"
+          meta={isPet ? '品牌视图 · 店铺共享 · 服务器保存' : '品牌视图 · 数据仅自己可见 · 服务器保存'}
           onClick={() => onNav('aba')}
         />
         <EntryCard
@@ -128,6 +128,12 @@ export default function HomePage({ user, market, onNav, theme, onOpenChangelog }
             onClick={() => onNav('products')}
           />
         )}
+        {isPet && <EntryCard
+          tone="amber" icon="chart" title="价格策略表"
+          desc="按日期和 SKU 查看销量、广告、库存与价格。可导入表格，船长数据每天自动同步。"
+          meta="US 站 · 店铺共享 · 每日快照"
+          onClick={() => onNav('priceStrategy')}
+        />}
         <EntryCard
           tone="green" icon="box" title="小工具"
           desc="收纳日常办公中随开随用的轻量工具。首个工具可以把多个 Excel 文件中的表格快速汇总到一张工作表,全程只在本机浏览器中处理。"

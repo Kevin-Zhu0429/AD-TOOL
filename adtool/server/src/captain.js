@@ -114,7 +114,7 @@ async function captainGet(path, query = {}, extraHeaders = {}) {
   throw new Error('船长 API 授权失败，请重新生成 APPID 和密钥');
 }
 
-async function paged(path, query, headers = {}) {
+export async function paged(path, query, headers = {}) {
   const items = [];
   for (let page = 1; page <= 10_000; page += 1) {
     const payload = await captainGet(path, { ...query, page, rows: PAGE_SIZE }, headers);
@@ -126,7 +126,7 @@ async function paged(path, query, headers = {}) {
   throw new Error('船长 API 分页超过安全上限，请联系管理员检查接口数据');
 }
 
-async function discoverChannels() {
+export async function discoverChannels() {
   const sitePayload = await captainGet('/v1/open_user/get_site_list');
   const sites = new Map((Array.isArray(sitePayload.data) ? sitePayload.data : []).map((site) => [
     Number(site.site_id), countryOf(site.code),

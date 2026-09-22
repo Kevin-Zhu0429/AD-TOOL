@@ -52,7 +52,7 @@ git fetch origin
 git switch codex-pet-adaptation
 git pull --ff-only origin codex-pet-adaptation
 mkdir -p data-pet-prod
-docker compose up -d --build
+docker compose --env-file /etc/amazon-app/app.env up -d --build
 ```
 
 `data-pet-prod` 必须允许现有 `.env` 的 `APP_UID` / `APP_GID` 写入；如果部署账号与该身份不同，由管理员设置该目录的所有者。原墨盒 `data-prod` 原地保留，宠物不会打开或修改它。原域名现在展示宠物版，墨盒容器被同名宠物服务替换；不会同时运行两个站点。
@@ -60,7 +60,7 @@ docker compose up -d --build
 首次创建宠物管理员（只执行一次）：
 
 ```bash
-docker compose exec adtool node src/seed.js 用户名 显示名 密码
+docker compose --env-file /etc/amazon-app/app.env exec adtool node src/seed.js 用户名 显示名 密码
 ```
 
 本地账号不自动同步到服务器。打开原域名重新登录；访问 `/api/config` 应看到 `id: "pet"` 和 `markets: ["US"]`。如果原来登录页已打开，刷新页面后再登录。
@@ -69,12 +69,12 @@ docker compose exec adtool node src/seed.js 用户名 显示名 密码
 
 ```bash
 git pull --ff-only origin codex-pet-adaptation
-docker compose up -d --build
+docker compose --env-file /etc/amazon-app/app.env up -d --build
 ```
 
 船长凭据使用 `.env` 的 `PET_CAPTAIN_CLIENT_ID` / `PET_CAPTAIN_CLIENT_SECRET`，不继承原墨盒凭据。未配置时该集成不可用。现有 HTTPS、会话密钥及端口配置沿用原 `.env`。
 
-如需恢复墨盒，在工作区干净时切回 `main`，再执行 `docker compose up -d --build`，会重新挂载原 `data-prod`。宠物数据仍保存在 `data-pet-prod`，不删除它。
+如需恢复墨盒，在工作区干净时切回 `main`，再执行 `docker compose --env-file /etc/amazon-app/app.env up -d --build`，会重新挂载原 `data-prod`。宠物数据仍保存在 `data-pet-prod`，不删除它。
 
 ### 将来独立域名部署（当前不用）
 
@@ -91,3 +91,13 @@ docker compose up -d --build
 升级启动时自动事务迁移原账号数据，同一 SKU / 广告组合 / 品牌或 ASIN 周报重复时保留最近更新记录（时间相同按记录编号），原记录与报表明细归档在数据库的 `pet_shared_migration_archive`。共享数据不随个人账号删除。墨盒版维持原账号隔离。
 
 本地广告草稿和广告优化中临时打开的文件仍在当前浏览器内，不属于已保存的服务器业务库，不会自动跨电脑同步。
+
+## 价格策略表与船长同步
+
+宠物版新增店铺共享的价格策略表，支持单行录入、Excel/CSV 导入和导出。第二行 7 个日期列表示所选快照日期及之前 6 天的每日销量。同步使用船长美国站的订单、广告和 FBA 库存接口；每天北京时间 10 时后自动同步前一天，也可在页面手动同步。上次同步时间和错误会显示在页面。
+
+在现有 `/etc/amazon-app/app.env` 中设置 `PET_CAPTAIN_CLIENT_ID` 与 `PET_CAPTAIN_CLIENT_SECRET`，沿用原有 `docker compose --env-file /etc/amazon-app/app.env up -d --build`。这两个值应为宠物店铺已授权的船长 API 凭据。如果船长授权范围内有多个美国站店铺，再设置 `PET_CAPTAIN_CHANNEL_ID` 指向宠物店铺的 `open_channel_id`；未指定时会暂停同步并提示，避免混合店铺数据。不要把真实密钥提交到仓库。当地无凭据时表仍可人工维护。
+
+自动指标：SKU 每日订单件数、当月与近 7 日订单数及销量、近 7 日广告点击和广告订单数、船长可售及在途库存、近 3 日动销值、近 7 日每日动销速度。近 7 日动销取近 7 日销量；有总库存且有销量时，周转周数＝总库存数÷近 7 日销量，预估售罄日按此速度向上取整到天；填入截止上月总销量时，总销量＝该值＋本月销量。转化率使用广告订单数除以广告点击数；7 天环比使用前 7 日销量。原订单的买家字段不会落库。无法准确按 SKU 获取的广告销量及未定义成本口径的利润、费比保留人工维护；`总库存数` 与船长可售库存分开显示。
+
+船长的广告日报是否准时更新，以及订单 `LocalDate` 的实际时区口径，需要用服务器首次同步结果与后台报表核对。调度失败会留状态，不会删除人工录入的价格或利润。

@@ -15,6 +15,8 @@ import { portfolioRouter } from './portfolios.js';
 import { productRouter } from './products.js';
 import { abaRouter } from './aba.js';
 import { captainRouter } from './captain.js';
+import { priceStrategyRouter } from './priceStrategy.js';
+import { startPriceSyncScheduler } from './priceStrategySync.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -49,6 +51,7 @@ app.use('/api/portfolio', portfolioRouter);
 app.use('/api/products', productRouter);
 app.use('/api/aba', abaRouter);
 app.use('/api/captain', captainRouter);
+app.use('/api/price-strategy', priceStrategyRouter);
 
 app.get('/api/health', (req, res) => {
   res.json({ ok: true, time: new Date().toISOString() });
@@ -70,4 +73,5 @@ app.use((err, req, res, next) => {
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`[server] http://localhost:${PORT}`);
+  startPriceSyncScheduler();
 });

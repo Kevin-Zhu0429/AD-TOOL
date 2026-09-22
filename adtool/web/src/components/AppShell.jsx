@@ -34,6 +34,7 @@ export default function AppShell({
     { id: 'portfolios', label: '广告组合库', icon: 'layers' },
     { id: 'aba', label: 'ABA 报告', icon: 'chart' },
     ...(user.productIntel ? [{ id: 'products', label: '产品情报', icon: 'chart' }] : []),
+    ...(isPet ? [{ id: 'priceStrategy', label: '价格策略表', icon: 'chart' }] : []),
     { id: 'tools', label: '小工具', icon: 'box' },
     ...(user.role === 'owner' ? [{ id: 'admin', label: '账号管理', icon: 'users' }] : []),
   ];

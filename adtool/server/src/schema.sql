@@ -302,3 +302,29 @@ CREATE TABLE IF NOT EXISTS product_settings (
   updated_by   INTEGER REFERENCES users(id),
   updated_at   TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
+-- 宠物美国站价格策略：按日期与 SKU 保留快照，业务字段以 JSON 存储。
+CREATE TABLE IF NOT EXISTS pet_price_strategy (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  snapshot_date TEXT NOT NULL,
+  marketplace TEXT NOT NULL DEFAULT 'US' CHECK (marketplace = 'US'),
+  sku TEXT NOT NULL COLLATE NOCASE,
+  data_json TEXT NOT NULL,
+  updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  UNIQUE(snapshot_date, marketplace, sku)
+);
+CREATE INDEX IF NOT EXISTS idx_pet_price_strategy_date ON pet_price_strategy(snapshot_date DESC, sku);
+
+CREATE TABLE IF NOT EXISTS pet_price_sync_state (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS pet_price_inventory_cache (
+  channel_id TEXT NOT NULL,
+  sku TEXT NOT NULL COLLATE NOCASE,
+  available_stock INTEGER,
+  inbound_stock INTEGER,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  PRIMARY KEY(channel_id, sku)
+);

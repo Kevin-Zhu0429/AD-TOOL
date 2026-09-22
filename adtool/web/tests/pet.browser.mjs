@@ -135,6 +135,13 @@ try {
   assert.match(await page.locator('.inventory-alert').innerText(), /\$18\.00/);
   assert.equal(await page.getByRole('button', { name: '跑偏词检测（Beta）' }).count(), 0);
   await page.screenshot({ path: output + 'pet-optimizer.png', fullPage: true });
+  await nav('价格策略表');
+  await page.getByRole('button', { name: '添加记录' }).click();
+  await page.getByRole('dialog').getByLabel('SKU *').fill('PET-RAIN-L');
+  await page.getByRole('dialog').getByLabel('售价').fill('19.99');
+  await page.getByRole('dialog').getByRole('button', { name: '保存记录' }).click();
+  await page.locator('.price-table tbody tr').filter({ hasText: 'PET-RAIN-L' }).waitFor();
+  await page.screenshot({ path: output + 'pet-price-strategy.png', fullPage: true });
   await nav('账号管理'); assert.doesNotMatch(await page.locator('.shell-main').innerText(), /B\/C\/D\/E|干扰墨盒/);
   assert.deepEqual(errors, []);
   console.log('Pet browser passed: US-only, SKU variants, picker keyboard, product import/edit/retry/delete/export, narrow viewport, ABA linkage/export and optimizer inventory.');

@@ -1,0 +1,13 @@
+.price-strategy > .card { padding: 18px; }
+.price-strategy .lib-head { flex-wrap: wrap; }
+.price-file { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.price-toolbar { margin-bottom: 10px; }
+.price-toolbar label { display: flex; align-items: center; gap: 8px; }
+.price-table { max-height: 66vh; overflow: auto; margin-top: 12px; }
+.price-table th, .price-table td { white-space: nowrap; min-width: 96px; }
+.price-table .price-sku { position: sticky; left: 0; z-index: 1; background: var(--panel); font-weight: 650; }
+.price-fieldset { border: 1px solid var(--border); border-radius: 10px; margin: 12px 0; padding: 12px; }
+.price-fieldset legend { color: var(--text-dim); padding: 0 6px; }
+.price-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.price-preview { max-height: 40vh; overflow: auto; }
+@media (max-width: 760px) { .price-fields { grid-template-columns: 1fr; } .price-toolbar label { align-items: stretch; flex-direction: column; } }
