@@ -328,3 +328,10 @@ CREATE TABLE IF NOT EXISTS pet_price_inventory_cache (
   updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
   PRIMARY KEY(channel_id, sku)
 );
+CREATE TABLE IF NOT EXISTS pet_price_ad_cache (
+  channel_id TEXT NOT NULL,
+  ad_id TEXT NOT NULL,
+  sku TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  PRIMARY KEY(channel_id, ad_id)
+);

@@ -109,11 +109,17 @@ export async function syncPriceStrategy(date, actorId = null, gateway = { discov
     const hasInventoryCache = !!db.prepare('SELECT 1 FROM pet_price_inventory_cache LIMIT 1').get();
     const initialLookback = Math.min(365, Math.max(30, Number(process.env.CAPTAIN_INITIAL_LOOKBACK_DAYS) || 365));
     const inventoryStart = end - (hasInventoryCache ? 30 : initialLookback) * daySeconds;
+    const adCacheInitialized = !!db.prepare("SELECT 1 FROM pet_price_sync_state WHERE key='ad_cache_initialized'").get();
+    const adStart = end - (adCacheInitialized ? 30 : initialLookback) * daySeconds;
     for (const channel of channels) {
       const header = { OpenChannelId: channel.openChannelId };
       const channelId = channel.openChannelId;
       for (const order of await gateway.paged('/v1/open_order/get_order_list', { start_modified_time: start, end_modified_time: end }, header)) orders.push({ channel: channelId, order });
-      for (const ad of await gateway.paged('/v1/open_cpc/advertise', { type: 1 }, header)) ads.push({ channel: channelId, ad });
+      for (let windowStart = adStart; windowStart < end; windowStart += 30 * daySeconds) {
+        for (const ad of await gateway.paged('/v1/open_cpc/advertise', {
+          type: 1, start_modified_time: windowStart, end_modified_time: Math.min(end, windowStart + 30 * daySeconds),
+        }, header)) ads.push({ channel: channelId, ad });
+      }
       for (const day of dailyIsoDates(date)) {
         const reportDate = day.replaceAll('-', '');
         for (const report of await gateway.paged('/v1/open_cpc/advertise_report', { report_date: reportDate }, header)) reports.push({ channel: channelId, report });
@@ -126,15 +132,20 @@ export async function syncPriceStrategy(date, actorId = null, gateway = { discov
     }
     const saveCache = db.prepare(`INSERT INTO pet_price_inventory_cache(channel_id,sku,available_stock,inbound_stock) VALUES(?,?,?,?)
       ON CONFLICT(channel_id,sku) DO UPDATE SET available_stock=excluded.available_stock,inbound_stock=excluded.inbound_stock,updated_at=datetime('now','localtime')`);
+    const saveAd = db.prepare(`INSERT INTO pet_price_ad_cache(channel_id,ad_id,sku) VALUES(?,?,?)
+      ON CONFLICT(channel_id,ad_id) DO UPDATE SET sku=excluded.sku,updated_at=datetime('now','localtime')`);
     const select = db.prepare('SELECT data_json FROM pet_price_strategy WHERE snapshot_date=? AND marketplace=? AND sku=?');
     const upsert = db.prepare(`INSERT INTO pet_price_strategy(snapshot_date,marketplace,sku,data_json,updated_by)
       VALUES(?,'US',?,?,?) ON CONFLICT(snapshot_date,marketplace,sku) DO UPDATE SET
       data_json=excluded.data_json,updated_by=excluded.updated_by,updated_at=datetime('now','localtime')`);
     let summary, syncSkuCount;
     db.transaction(() => {
+      for (const { channel, ad } of ads) if (ad.adId && ad.sku) saveAd.run(channel, String(ad.adId), String(ad.sku).trim());
+      const cachedAds = db.prepare('SELECT channel_id AS channel, ad_id AS adId, sku FROM pet_price_ad_cache').all()
+        .map(({ channel, adId, sku }) => ({ channel, ad: { adId, sku } }));
       for (const { channel, item } of inventoryChanges) if (item.SKU) saveCache.run(channel, item.SKU, positive(item.fulfillable_quantity), positive(item.inbound_shipped_quantity));
       const inventory = db.prepare('SELECT channel_id AS channel, sku AS SKU, available_stock AS fulfillable_quantity, inbound_stock AS inbound_shipped_quantity FROM pet_price_inventory_cache').all().map((item) => ({ item }));
-      summary = summarizeCaptainRows({ orders, ads, reports, inventory }, date);
+      summary = summarizeCaptainRows({ orders, ads: cachedAds, reports, inventory }, date);
       // The existing SKU catalog supplies rows even when no order or ad has arrived yet.
       const skus = db.prepare("SELECT sku,asin,style,size,color,fabric FROM sku_items WHERE user_id=-1 AND country='US'").all();
       const sourceBySku = new Map(summary.rows.map((row) => [row.sku.toLowerCase(), row]));
@@ -151,6 +162,7 @@ export async function syncPriceStrategy(date, actorId = null, gateway = { discov
         upsert.run(date, merged.sku, JSON.stringify(merged), actorId);
       }
       setState.run('last_success', JSON.stringify({ date, startedAt, completedAt: new Date().toISOString(), skus: sourceBySku.size, channels: channels.length, unmappedAds: summary.unmappedAds }));
+      setState.run('ad_cache_initialized', JSON.stringify({ at: new Date().toISOString() }));
       db.prepare("DELETE FROM pet_price_sync_state WHERE key='last_error'").run();
     })();
     if (actorId) audit(actorId, 'US', 'sync', 'pet_price_strategy', null, { date, skus: syncSkuCount, channels: channels.length });
