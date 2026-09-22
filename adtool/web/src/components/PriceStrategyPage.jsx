@@ -34,8 +34,8 @@ export default function PriceStrategyPage() {
   const [editor, setEditor] = useState(null), [upload, setUpload] = useState(null);
   const [confirmAction, confirmDialog] = useConfirm();
 
-  async function load(selectedDate = date) {
-    setLoading(true); setError('');
+  async function load(selectedDate = date, preserveError = false) {
+    setLoading(true); if (!preserveError) setError('');
     try { const data = await api.priceStrategy(selectedDate); setItems(data.items); setDates(data.dates); setSyncState(data.sync); }
     catch (err) { setError(err.message); }
     finally { setLoading(false); }
@@ -87,9 +87,9 @@ export default function PriceStrategyPage() {
   }
   async function syncNow() {
     setBusy(true); setError(''); setMessage('');
-    try { const result = await api.syncPriceStrategy(date); setMessage(`船长同步完成：${result.channels} 个店铺，${result.skus} 个 SKU。${result.unmappedAds ? `${result.unmappedAds} 条广告记录未匹配 SKU。` : ''}`); await load(date); }
+    try { const result = await api.syncPriceStrategy(date); setMessage(`船长同步完成：${result.channels} 个店铺，${result.skus} 个 SKU。${result.unmappedAds ? `${result.unmappedAds} 条广告记录未匹配 SKU。` : ''}`); }
     catch (err) { setError(err.message); }
-    finally { setBusy(false); }
+    finally { await load(date, true); setBusy(false); }
   }
   const labels = (key, valueDate = editor?.date || date) => DAILY_KEYS.includes(key)
     ? `${dailyDates(valueDate)[DAILY_KEYS.indexOf(key)] ?? '第' + (DAILY_KEYS.indexOf(key) + 1) + '天'}销量`
@@ -105,7 +105,7 @@ export default function PriceStrategyPage() {
         <button className="btn" disabled={busy || !syncState?.configured} onClick={syncNow}>{busy ? '正在同步…' : '同步船长数据'}</button>
         <button className="btn primary" onClick={() => { setError(''); setEditor({ date, marketplace: 'US' }); }}>添加记录</button></div></div>
     <p className="hint">{syncState?.configured ? `北京时间每天 10 时后自动同步前一天数据。上次成功：${syncState.lastSuccess ? `${syncState.lastSuccess.date}，${syncState.lastSuccess.completedAt}` : '尚未同步'}` : '船长 API 未配置；可以先手动录入或导入。'} 动销速度＝近7日销量÷7；周转周数＝总库存÷近7日销量；预估售罄日按该速度推算；7天环比＝本期销量与前7日相比；转化率＝广告订单数÷广告点击数。利润、费比和广告销量暂无可靠自动口径。</p>
-    {syncState?.lastError && <p className="note err" role="status">上次同步失败：{syncState.lastError.message}。可核对船长授权后手动重试。</p>}
+    {syncState?.lastError && <p className="note err" role="status">上次同步失败（快照 {syncState.lastError.date}，{new Date(syncState.lastError.at).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}）：{syncState.lastError.message}</p>}
     {message && <p className="note ok" role="status">{message}</p>}
     {error && <p className="note err" role="alert">{error}</p>}
     <section className="card">

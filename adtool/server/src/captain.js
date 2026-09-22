@@ -109,7 +109,12 @@ async function captainGet(path, query = {}, extraHeaders = {}) {
       tokenCache = null;
       continue;
     }
-    return readJson(response);
+    try { return await readJson(response); }
+    catch (error) {
+      const contextual = new Error(`船长接口 ${path}：${error.message}`);
+      contextual.status = error.status;
+      throw contextual;
+    }
   }
   throw new Error('船长 API 授权失败，请重新生成 APPID 和密钥');
 }
