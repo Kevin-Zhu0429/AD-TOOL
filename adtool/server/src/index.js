@@ -14,6 +14,7 @@ import { portfolioRouter } from './portfolios.js';
 import { productRouter } from './products.js';
 import { abaRouter } from './aba.js';
 import { captainRouter } from './captain.js';
+import { agedFeesRouter } from './agedFees.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -46,6 +47,7 @@ app.use('/api/portfolio', portfolioRouter);
 app.use('/api/products', productRouter);
 app.use('/api/aba', abaRouter);
 app.use('/api/captain', captainRouter);
+app.use('/api/aged-fees', agedFeesRouter);
 
 app.get('/api/health', (req, res) => {
   res.json({ ok: true, time: new Date().toISOString() });

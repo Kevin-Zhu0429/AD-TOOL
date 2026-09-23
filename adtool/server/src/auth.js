@@ -498,7 +498,7 @@ authRouter.post('/users/:id/reset-password', requireRole('owner'), (req, res) =>
  */
 const AUDIT_MODULES = new Set([
   'home', 'builder', 'manual', 'optimizer', 'library', 'skus', 'portfolios',
-  'aba', 'products', 'tools', 'admin', 'profile',
+  'aba', 'products', 'tools', 'agedFees', 'admin', 'profile',
 ]);
 const CLIENT_AUDIT_ACTIONS = new Set(['open', 'import_local', 'export', 'clear_local']);
 

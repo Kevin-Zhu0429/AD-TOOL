@@ -4,6 +4,33 @@
 PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
 
+-- FBA 超龄仓储费共享批次。每次导入保留一个不可变的库存快照；运营修正存到行上。
+CREATE TABLE IF NOT EXISTS aged_fee_batches (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  source_file TEXT NOT NULL,
+  base_date TEXT NOT NULL,
+  scenario TEXT NOT NULL,
+  row_count INTEGER NOT NULL,
+  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+CREATE TABLE IF NOT EXISTS aged_fee_rows (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  batch_id INTEGER NOT NULL REFERENCES aged_fee_batches(id) ON DELETE CASCADE,
+  row_index INTEGER NOT NULL,
+  market TEXT NOT NULL,
+  brand TEXT NOT NULL,
+  base_json TEXT NOT NULL,
+  special INTEGER NOT NULL DEFAULT 0 CHECK (special IN (0, 1)),
+  correction_value REAL,
+  reason TEXT NOT NULL DEFAULT '',
+  revision INTEGER NOT NULL DEFAULT 0,
+  updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  updated_at TEXT,
+  UNIQUE(batch_id, row_index)
+);
+CREATE INDEX IF NOT EXISTS idx_aged_fee_rows_batch_market ON aged_fee_rows (batch_id, market, brand);
+
 -- ABA reports are private to the uploading account, including owner accounts.
 CREATE TABLE IF NOT EXISTS aba_reports (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

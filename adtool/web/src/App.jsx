@@ -16,6 +16,7 @@ import AdminPage from './components/AdminPage.jsx';
 import ProfilePage from './components/ProfilePage.jsx';
 import ProductPage from './components/ProductPage.jsx';
 import ToolsPage from './components/ToolsPage.jsx';
+import AgedStorageFeePage from './components/AgedStorageFeePage.jsx';
 import AbaPage from './components/AbaPage.jsx';
 
 export default function App() {
@@ -52,7 +53,7 @@ export default function App() {
     const labels = {
       home: '首页', builder: '自动广告', manual: '手动广告', optimizer: '广告优化',
       library: '否定词库', skus: 'SKU 库', portfolios: '广告组合库', aba: 'ABA 报告',
-      products: '产品情报', tools: '小工具', admin: '账号管理', profile: '个人资料',
+      products: '产品情报', tools: '小工具', agedFees: '超龄仓储费', admin: '账号管理', profile: '个人资料',
     };
     document.title = `${labels[page] ?? '首页'} — 广告工作台`;
   }, [page]);
@@ -122,6 +123,8 @@ export default function App() {
       <ProductPage key={market} market={market} />
     ) : page === 'tools' ? (
       <ToolsPage />
+    ) : page === 'agedFees' ? (
+      <AgedStorageFeePage />
     ) : page === 'admin' && user.role === 'owner' ? (
       <AdminPage user={user} markets={markets} />
     ) : page === 'profile' ? (

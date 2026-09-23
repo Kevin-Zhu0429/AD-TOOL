@@ -15,10 +15,11 @@ export const REGIONS = [
   { id: 'EU', name: '欧洲', anchor: 'DE', markets: ['DE', 'ES', 'FR', 'IT', 'UK'] },
   { id: 'NA', name: '美洲', anchor: 'US', markets: ['US', 'CA'] },
   { id: 'AU', name: '澳洲', anchor: 'AU', markets: ['AU'] },
+  { id: 'ME', name: '中东', anchor: 'AE', markets: ['AE'] },
 ];
 
-/** 站点顺序沿用老版本(ES 在前),末尾补上澳洲 */
-export const MARKETPLACES = ['ES', 'DE', 'FR', 'IT', 'UK', 'US', 'CA', 'AU'];
+/** 站点顺序沿用老版本(ES 在前),末尾补上澳洲和阿联酋 */
+export const MARKETPLACES = ['ES', 'DE', 'FR', 'IT', 'UK', 'US', 'CA', 'AU', 'AE'];
 
 export function regionOf(marketplace) {
   const mk = String(marketplace ?? '').toUpperCase();

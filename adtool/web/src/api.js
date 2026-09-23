@@ -12,6 +12,9 @@ async function request(path, options = {}) {
 }
 
 export const api = {
+  agedFees: (batchId) => request(`/aged-fees${batchId ? `?batchId=${encodeURIComponent(batchId)}` : ''}`),
+  importAgedFees: (rows, date, scenario, sourceFile) => request('/aged-fees/import', { method: 'POST', body: { rows, date, scenario, sourceFile } }),
+  updateAgedFeeRow: (id, correction) => request(`/aged-fees/rows/${id}`, { method: 'PATCH', body: correction }),
   abaAsin: (params, signal) => request(`/aba/asin?${new URLSearchParams(Object.entries(params).filter(([, value]) => value !== undefined))}`, { signal }),
   importAbaAsin: (marketplace, files) => request('/aba/asin/import', { method: 'POST', body: { marketplace, files } }),
   aba: (params, signal) => request(`/aba?${new URLSearchParams(Object.entries(params).filter(([, value]) => value !== undefined))}`, { signal }),

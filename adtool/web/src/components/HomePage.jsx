@@ -129,9 +129,15 @@ export default function HomePage({ user, market, onNav, theme, onOpenChangelog }
         )}
         <EntryCard
           tone="green" icon="box" title="小工具"
-          desc="收纳日常办公中随开随用的轻量工具。首个工具可以把多个 Excel 文件中的表格快速汇总到一张工作表,全程只在本机浏览器中处理。"
-          meta="所有账号可用 · Excel 表格合并"
+          desc="合并多个 Excel 表格，快速得到一份完整总表。"
+          meta="所有账号可用 · 表格合并"
           onClick={() => onNav('tools')}
+        />
+        <EntryCard
+          tone="blue" icon="box" title="FBA 超龄仓储费"
+          desc="导入库存表，按品牌和市场查看费用；修正日销后即时重算，并导出当前筛选结果。"
+          meta="所有账号共享 · 支持 ZIP 与 Excel"
+          onClick={() => onNav('agedFees')}
         />
         {user.role === 'owner' && (
           <EntryCard

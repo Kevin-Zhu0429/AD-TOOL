@@ -16,6 +16,7 @@ export async function startAbaTestServer() {
   const { skuRouter } = await import('../src/skus.js');
   const { portfolioRouter } = await import('../src/portfolios.js');
   const { captainRouter } = await import('../src/captain.js');
+  const { agedFeesRouter } = await import('../src/agedFees.js');
   const insertUser = db.prepare('INSERT INTO users (username, display_name, password_hash, role, marketplace, seen_version) VALUES (?, ?, ?, ?, ?, ?)');
   for (const [name, role, market] of [['aba-test', 'operator', 'ES'], ['aba-other', 'owner', 'ALL'], ['aba-de', 'operator', 'DE']]) {
     insertUser.run(name, name, bcrypt.hashSync('local-test-password', 4), role, market, '999.0.0');
@@ -30,6 +31,7 @@ export async function startAbaTestServer() {
   app.use('/api/sku', skuRouter);
   app.use('/api/portfolio', portfolioRouter);
   app.use('/api/captain', captainRouter);
+  app.use('/api/aged-fees', agedFeesRouter);
   app.get('/api/neg', (req, res) => res.json({ libs: [], items: {} }));
   const server = await new Promise((resolve) => { const listener = app.listen(0, '127.0.0.1', () => resolve(listener)); });
   return { db, directory, url: `http://127.0.0.1:${server.address().port}`, async close() {

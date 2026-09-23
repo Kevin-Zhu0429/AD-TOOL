@@ -34,6 +34,7 @@ export default function AppShell({
     { id: 'aba', label: 'ABA 报告', icon: 'chart' },
     ...(user.productIntel ? [{ id: 'products', label: '产品情报', icon: 'chart' }] : []),
     { id: 'tools', label: '小工具', icon: 'box' },
+    { id: 'agedFees', label: '超龄仓储费', icon: 'box' },
     ...(user.role === 'owner' ? [{ id: 'admin', label: '账号管理', icon: 'users' }] : []),
   ];
 
