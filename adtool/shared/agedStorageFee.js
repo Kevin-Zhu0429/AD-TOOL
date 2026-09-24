@@ -162,7 +162,8 @@ export function resultForRow(row, correction = {}, scenario = 'uniform') {
     catch { valid = false; finalSales = null; }
   }
   return { ...row, salesSource: row.salesSource === '手动固定' ? '近14天无日销修正' : row.salesSource,
-    special, correctionValue: correction.value ?? '', reason: correction.reason ?? '', finalSales, fee, valid };
+    special, correctionValue: correction.value ?? '', reason: correction.reason ?? '', finalSales, fee, valid,
+    originalFee: row.fee, dirty: correction.dirty === true };
 }
 
 export function exportRow(row) {
@@ -178,10 +179,12 @@ export function exportRow(row) {
 }
 
 export function sortAgedFeeRows(rows, metric = '', direction = 'desc') {
+  // Keep a row in its current sorted position while its correction is being edited.
+  const editing = (row) => row.special && (row.dirty || !row.valid);
   const getValue = {
-    average: (row) => row.fee.average,
-    total: (row) => row.fee.total,
-    sales: (row) => row.finalSales,
+    average: (row) => editing(row) ? row.originalFee?.average : row.fee.average,
+    total: (row) => editing(row) ? row.originalFee?.total : row.fee.total,
+    sales: (row) => editing(row) ? row.dailySales : row.finalSales,
   }[metric];
   if (!getValue) return rows;
   const sign = direction === 'asc' ? 1 : -1;

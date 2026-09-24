@@ -66,6 +66,21 @@ test('费用和日销排序使用修正后数值，空值排在末尾', () => {
   assert.deepEqual(sortAgedFeeRows(rows, 'sales', 'asc').map((row) => row.id), [1, 2, 3]);
 });
 
+test('特殊情况尚未填完或仍在编辑时保持排序位置，保存后按修正值排序', () => {
+  const [fast, slow] = calculateInventory([
+    inventoryRow('fast', 2, 2), inventoryRow('slow', 1, 1),
+  ], '2026-09-01');
+  const pending = resultForRow(slow, { special: true, value: '' });
+  const editing = resultForRow(slow, { special: true, value: '5', dirty: true });
+  const saved = resultForRow(slow, { special: true, value: '5' });
+  assert.deepEqual(sortAgedFeeRows([resultForRow(fast), pending], 'total').map((row) => row.sku), ['slow', 'fast']);
+  assert.deepEqual(sortAgedFeeRows([resultForRow(fast), editing], 'total').map((row) => row.sku), ['slow', 'fast']);
+  assert.deepEqual(sortAgedFeeRows([resultForRow(fast), saved], 'total').map((row) => row.sku), ['fast', 'slow']);
+  assert.deepEqual(sortAgedFeeRows([resultForRow(fast), pending], 'sales').map((row) => row.sku), ['fast', 'slow']);
+  assert.deepEqual(sortAgedFeeRows([resultForRow(fast), editing], 'sales').map((row) => row.sku), ['fast', 'slow']);
+  assert.deepEqual(sortAgedFeeRows([resultForRow(fast), saved], 'sales').map((row) => row.sku), ['slow', 'fast']);
+});
+
 test('14 天数据缺失且 7 天为零时拒绝整表', () => {
   const row = inventoryRow('missing', 0, 0);
   delete row['14日均销量'];

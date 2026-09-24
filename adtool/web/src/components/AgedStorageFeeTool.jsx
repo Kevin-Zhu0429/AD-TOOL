@@ -30,6 +30,7 @@ export default function AgedStorageFeeTool() {
   const [corrections, setCorrections] = useState({});
   const [brand, setBrand] = useState('');
   const [market, setMarket] = useState('');
+  const [specialFilter, setSpecialFilter] = useState('');
   const [page, setPage] = useState(1);
   const [sortMetric, setSortMetric] = useState('');
   const [sortDirection, setSortDirection] = useState('desc');
@@ -37,7 +38,8 @@ export default function AgedStorageFeeTool() {
   const rows = shared?.rows ?? EMPTY_ROWS;
   const brands = useMemo(() => [...new Set(rows.map((row) => row.brand))].sort(), [rows]);
   const markets = useMemo(() => [...new Set(rows.map((row) => row.market))].sort(), [rows]);
-  const filtered = useMemo(() => rows.filter((row) => (!brand || row.brand === brand) && (!market || row.market === market)), [rows, brand, market]);
+  const filtered = useMemo(() => rows.filter((row) => (!brand || row.brand === brand) && (!market || row.market === market)
+    && (!specialFilter || (corrections[row.id]?.special === true ? 'yes' : 'no') === specialFilter)), [rows, brand, market, specialFilter, corrections]);
   const resolved = useMemo(() => filtered.map((row) => resultForRow(row, corrections[row.id], shared.batch.scenario)), [filtered, corrections, shared]);
   const ordered = useMemo(() => sortAgedFeeRows(resolved, sortMetric, sortDirection), [resolved, sortMetric, sortDirection]);
   const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
@@ -49,7 +51,7 @@ export default function AgedStorageFeeTool() {
     setShared(data);
     setCorrections(Object.fromEntries(data.rows.map((row) => [row.id, row.correction])));
     if (data.batch) { setDate(data.batch.date); setScenario(data.batch.scenario); }
-    setBrand(''); setMarket(''); setPage(1);
+    setBrand(''); setMarket(''); setSpecialFilter(''); setPage(1);
     setSaveError('');
   }
 
@@ -149,6 +151,7 @@ export default function AgedStorageFeeTool() {
       <div className="aged-toolbar">
         <label className="field"><span>品牌</span><select className="inp" value={brand} onChange={(event) => { setBrand(event.target.value); setPage(1); }}><option value="">全部品牌</option>{brands.map((item) => <option key={item}>{item}</option>)}</select></label>
         <label className="field"><span>市场</span><select className="inp" value={market} onChange={(event) => { setMarket(event.target.value); setPage(1); }}><option value="">全部市场</option>{markets.map((item) => <option key={item}>{item}</option>)}</select></label>
+        <label className="field"><span>特殊情况</span><select className="inp" value={specialFilter} onChange={(event) => { setSpecialFilter(event.target.value); setPage(1); }}><option value="">全部</option><option value="yes">是</option><option value="no">否</option></select></label>
         <label className="field"><span>排序指标</span><select className="inp" value={sortMetric} onChange={(event) => { setSortMetric(event.target.value); setPage(1); }}><option value="">原始顺序</option><option value="average">套均仓储费</option><option value="total">仓储费总额</option><option value="sales">最终计算日销</option></select></label>
         <label className="field"><span>顺序</span><select className="inp" value={sortDirection} disabled={!sortMetric} onChange={(event) => { setSortDirection(event.target.value); setPage(1); }}><option value="desc">从高到低</option><option value="asc">从低到高</option></select></label>
         <div className="spacer" />
@@ -170,7 +173,7 @@ export default function AgedStorageFeeTool() {
           {AGE_BUCKETS.map((bucket, index) => <td className="aged-number" key={bucket}>{amount(row.buckets[index])}</td>)}
         </tr>)}</tbody>
       </table></div>
-      {!filtered.length && <p className="aged-empty">当前品牌和市场下没有数据，请调整筛选条件。</p>}
+      {!filtered.length && <p className="aged-empty">当前筛选条件下没有数据，请调整筛选条件。</p>}
       <div className="aged-pagination"><span>每页 {PAGE_SIZE} 条 · 第 {Math.min(page, pageCount)} / {pageCount} 页</span>
         <button className="btn sm" disabled={page <= 1} onClick={() => setPage((value) => value - 1)}>上一页</button>
         <button className="btn sm" disabled={page >= pageCount} onClick={() => setPage((value) => value + 1)}>下一页</button>
