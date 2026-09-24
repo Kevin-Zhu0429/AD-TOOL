@@ -362,6 +362,29 @@ docker compose up -d
   将来如果套 HTTPS 域名,记得把它改成 `true`,并加上 `app.set('trust proxy', 1)`。
 - **端口 8080 直接对内网开放**,没有反代、没有 HTTPS。内网工具够用;
   要是以后需要域名或证书,在前面加一层 Nginx 反代到 `127.0.0.1:8080` 即可,应用不用改。
+
+### 域名入口的 API 缓存
+
+如果 HTTPS 域名接入了 Nginx、CDN 或其他网关，`/api/` 下的请求必须直达应用，不能缓存读取结果。
+这些接口包含账号权限和词库等实时数据；缓存会造成「保存成功，刷新后又显示旧值，几分钟后才生效」。
+应用本身会给 API 响应加 `Cache-Control: private, no-store`，但仍需检查网关是否覆盖或忽略该响应头。
+
+Nginx 可为 API 单独配置：
+
+```nginx
+location ^~ /api/ {
+    proxy_pass http://127.0.0.1:8080;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_cache off;
+    proxy_cache_bypass 1;
+    proxy_no_cache 1;
+}
+```
+
+如果还有 CDN，给 `adtool.cyloral.com/api/*` 设置跳过缓存规则，并清除此前缓存的 API 响应。
+上线后连续请求 `https://adtool.cyloral.com/api/health`，确认 `time` 每次变化、响应有 `Cache-Control: private, no-store`，且没有缓存命中标记。
 - **建议把数据库从 git 里摘掉**。数据库进版本库会导致多人协作时二进制冲突,而且 4MB 的 WAL
   每次改动都要重传。建议:
 

@@ -24,6 +24,14 @@ if (process.env.TRUST_PROXY === 'true') {
 }
 const SqliteStore = SqliteStoreFactory(session);
 
+// API responses contain live and often account-specific data. Never let browsers
+// or reverse proxies reuse a response after an account or library change.
+app.use('/api', (_req, res, next) => {
+  res.set('Cache-Control', 'private, no-store, max-age=0');
+  res.set('Surrogate-Control', 'no-store');
+  next();
+});
+
 app.use(express.json({ limit: '50mb' }));
 app.use(
   session({

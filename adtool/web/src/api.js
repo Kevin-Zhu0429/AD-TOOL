@@ -1,11 +1,17 @@
 import { splitAgedFeeRows } from './agedStorageUpload.js';
 
+let readNonce = 0;
+
 async function request(path, options = {}) {
-  const res = await fetch(`/api${path}`, {
-    method: options.method || 'GET',
+  const method = options.method || 'GET';
+  // A unique URL also bypasses stale API entries already held by a proxy.
+  const url = `/api${path}${method === 'GET' ? `${path.includes('?') ? '&' : '?'}_=${Date.now()}-${++readNonce}` : ''}`;
+  const res = await fetch(url, {
+    method,
     headers: options.body ? { 'Content-Type': 'application/json' } : undefined,
     body: options.body ? JSON.stringify(options.body) : undefined,
     credentials: 'include',
+    cache: method === 'GET' ? 'no-store' : undefined,
     signal: options.signal,
   });
   const data = await res.json().catch(() => ({}));
