@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as XLSX from 'xlsx';
-import { AGE_BUCKETS, calculateInventory, calculateSkuFee, exportRow, MARKET_RATES, OUTPUT_COLUMNS, resultForRow, sortAgedFeeRows } from '../../shared/agedStorageFee.js';
+import { AGE_BUCKETS, calculateInventory, calculateSkuFee, compactInventoryRows, exportRow, MARKET_RATES, OUTPUT_COLUMNS, resultForRow, sortAgedFeeRows } from '../../shared/agedStorageFee.js';
 
 const inventoryRow = (sku, sales7, sales14) => ({
   市场代码: 'CY_AE', SKU: sku, '7日均销量': sales7, '14日均销量': sales14,
@@ -21,6 +21,38 @@ test('7 天为零时退到 14 天，两者为零时固定 0.14', () => {
     [2, '7天'], [1, '14天'], [0.14, '近14天无日销修正'],
   ]);
   assert.match(exportRow(resultForRow(rows[2]))[7], /0\.14（近14天无日销修正）/);
+});
+
+test('上传行只保留计算字段，服务端重算结果与原表一致', () => {
+  const source = [
+    { ...inventoryRow('seven', 2, 5), 无关的大字段: '不应上传'.repeat(500) },
+    { ...inventoryRow('fourteen', 0, 1), 无关的大字段: '不应上传'.repeat(500) },
+    { ...inventoryRow('fixed', 0, 0), 无关的大字段: '不应上传'.repeat(500) },
+  ];
+  const calculated = calculateInventory(source, '2026-09-01');
+  const compact = compactInventoryRows(calculated);
+  assert.equal(compact.some((row) => '无关的大字段' in row), false);
+  const restored = calculateInventory(compact, '2026-09-01');
+  assert.deepEqual(restored, calculated);
+});
+
+test('没有费率的市场保留库存行，费用留空且修正日销不阻断导出', () => {
+  const known = inventoryRow('UK-SKU', 2, 2);
+  known.市场代码 = 'CY_UK';
+  const unknown = inventoryRow('JP-SKU', 0, 0);
+  unknown.市场代码 = 'CY_JP';
+  const rows = calculateInventory([known, unknown], '2026-09-01');
+  assert.equal(rows.length, 2);
+  assert.deepEqual(rows[1].fee, { average: null, total: null, months: null });
+  const revised = resultForRow(rows[1], { special: true, value: '3' });
+  assert.equal(revised.valid, true);
+  assert.equal(revised.finalSales, 3);
+  assert.equal(revised.fee.total, null);
+  assert.deepEqual(exportRow(revised).slice(5, 7), ['', '']);
+  const onlyUnknown = { ...unknown };
+  delete onlyUnknown['14日均销量'];
+  assert.equal(calculateInventory([onlyUnknown], '2026-09-01').length, 1);
+  assert.equal(calculateInventory([{ ...unknown, 市场代码: '123' }], '2026-09-01')[0].market, '未识别');
 });
 
 test('费用和日销排序使用修正后数值，空值排在末尾', () => {

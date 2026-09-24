@@ -119,10 +119,10 @@ export function calculateInventory(sourceRows, date, scenario = 'uniform') {
     const sku = String(source[skuCol] ?? '').trim();
     if (!sku) return;
     const marketCode = String(source[marketCol] ?? '').trim();
-    const market = marketCode.toUpperCase().match(/([A-Z]{2})$/)?.[1];
-    if (!MARKET_RATES[market]) { errors.push(`第${index + 2}行 SKU ${sku}：无法识别市场代码“${marketCode}”`); return; }
+    const market = marketCode.toUpperCase().match(/([A-Z]{2})$/)?.[1] ?? '未识别';
+    const hasRate = !!MARKET_RATES[market];
     const sales7 = toNumber(source[sales7Col]);
-    if (!sales7 && !sales14Col) { errors.push(`第${index + 2}行 SKU ${sku}：7天日销为0，但缺少14天日销列`); return; }
+    if (hasRate && !sales7 && !sales14Col) { errors.push(`第${index + 2}行 SKU ${sku}：7天日销为0，但缺少14天日销列`); return; }
     const sales14 = sales14Col ? toNumber(source[sales14Col]) : 0;
     const dailySales = sales7 || sales14 || 0.14;
     const salesSource = sales7 ? '7天' : sales14 ? '14天' : '近14天无日销修正';
@@ -135,7 +135,20 @@ export function calculateInventory(sourceRows, date, scenario = 'uniform') {
   if (errors.length) throw new Error(`${errors.slice(0, 8).join('；')}${errors.length > 8 ? `；另有${errors.length - 8}行` : ''}。未生成结果。`);
   if (!result.length) throw new Error('表格中没有可计算的 SKU。');
   // 输入逐行独立，导入即展示；修正后的金额在行级计算，避免每次改动重算整张表。
-  return result.map((row) => ({ ...row, fee: calculateSkuFee(row.buckets, row.dailySales, date, row.market, scenario) }));
+  return result.map((row) => ({ ...row, fee: MARKET_RATES[row.market]
+    ? calculateSkuFee(row.buckets, row.dailySales, date, row.market, scenario)
+    : { average: null, total: null, months: null } }));
+}
+
+// 上传只保留计算所需的列，避免把库存原表中的其他字段一起发送到服务器。
+export function compactInventoryRows(calculated) {
+  return calculated.map((row) => ({
+    市场代码: row.marketCode,
+    SKU: row.sku,
+    '7日均销量': row.salesSource === '7天' ? row.dailySales : 0,
+    '14日均销量': row.salesSource === '14天' ? row.dailySales : 0,
+    ...Object.fromEntries(AGE_BUCKETS.map((bucket, index) => [bucket, row.buckets[index]])),
+  }));
 }
 
 export function resultForRow(row, correction = {}, scenario = 'uniform') {
@@ -145,7 +158,7 @@ export function resultForRow(row, correction = {}, scenario = 'uniform') {
   let finalSales = valid ? (special ? revised : row.dailySales) : null;
   let fee = { average: null, total: null, months: null };
   if (valid) {
-    try { fee = special ? calculateSkuFee(row.buckets, finalSales, row.date, row.market, scenario) : row.fee; }
+    try { fee = !MARKET_RATES[row.market] ? fee : special ? calculateSkuFee(row.buckets, finalSales, row.date, row.market, scenario) : row.fee; }
     catch { valid = false; finalSales = null; }
   }
   return { ...row, salesSource: row.salesSource === '手动固定' ? '近14天无日销修正' : row.salesSource,

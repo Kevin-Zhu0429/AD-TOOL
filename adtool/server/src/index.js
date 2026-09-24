@@ -64,6 +64,7 @@ if (fs.existsSync(DIST)) {
 
 app.use((err, req, res, next) => {
   console.error(err);
+  if (err.status === 413) return res.status(413).json({ error: '单次上传内容超过服务器限制，请刷新页面后重试' });
   res.status(500).json({ error: '服务器内部错误' });
 });
 

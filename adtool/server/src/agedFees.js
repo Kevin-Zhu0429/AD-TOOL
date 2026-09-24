@@ -1,10 +1,33 @@
 import express from 'express';
+import { randomUUID } from 'node:crypto';
 import { db, audit } from './db.js';
 import { requireLogin } from './auth.js';
-import { calculateInventory, calculateSkuFee } from '../../shared/agedStorageFee.js';
+import { calculateInventory, calculateSkuFee, MARKET_RATES } from '../../shared/agedStorageFee.js';
 
 export const agedFeesRouter = express.Router();
 agedFeesRouter.use(requireLogin);
+const MAX_ROWS = 20000;
+const MAX_CHUNK_ROWS = 200;
+const MAX_CHUNK_BYTES = 256 * 1024;
+
+function saveBatch(calculated, date, scenario, sourceFile, userId, uploadId = null) {
+  const insertBatch = db.prepare('INSERT INTO aged_fee_batches (source_file, base_date, scenario, row_count, created_by) VALUES (?, ?, ?, ?, ?)');
+  const insertRow = db.prepare('INSERT INTO aged_fee_rows (batch_id, row_index, market, brand, base_json) VALUES (?, ?, ?, ?, ?)');
+  const batchId = db.transaction(() => {
+    const id = Number(insertBatch.run(sourceFile.trim() || '库存表', date, scenario, calculated.length, userId).lastInsertRowid);
+    for (const row of calculated) insertRow.run(id, row.id, row.market, row.brand, JSON.stringify(row));
+    if (uploadId) db.prepare('DELETE FROM aged_fee_uploads WHERE id = ?').run(uploadId);
+    return id;
+  })();
+  audit(userId, null, 'import', 'aged_fee_batches', batchId, { rows: calculated.length, date });
+  return cleanBatch(db.prepare('SELECT * FROM aged_fee_batches WHERE id = ?').get(batchId));
+}
+
+function ownUpload(req, res) {
+  const upload = db.prepare('SELECT * FROM aged_fee_uploads WHERE id = ? AND created_by = ?').get(req.params.id, req.session.user.id);
+  if (!upload) res.status(404).json({ error: '导入任务不存在或已完成' });
+  return upload;
+}
 
 function cleanBatch(batch) {
   const items = db.prepare('SELECT * FROM aged_fee_rows WHERE batch_id = ? ORDER BY row_index').all(batch.id);
@@ -31,20 +54,59 @@ agedFeesRouter.get('/', (req, res) => {
 
 agedFeesRouter.post('/import', (req, res) => {
   const { rows, date, scenario = 'uniform', sourceFile = '' } = req.body ?? {};
-  if (!Array.isArray(rows) || !rows.length || rows.length > 20000) return res.status(400).json({ error: '一次请导入 1 到 20000 行库存数据' });
+  if (!Array.isArray(rows) || !rows.length || rows.length > MAX_ROWS) return res.status(400).json({ error: '一次请导入 1 到 20000 行库存数据' });
   if (typeof sourceFile !== 'string' || sourceFile.length > 255) return res.status(400).json({ error: '文件名过长' });
   let calculated;
   try { calculated = calculateInventory(rows, date, scenario); }
   catch (error) { return res.status(400).json({ error: error.message }); }
-  const insertBatch = db.prepare('INSERT INTO aged_fee_batches (source_file, base_date, scenario, row_count, created_by) VALUES (?, ?, ?, ?, ?)');
-  const insertRow = db.prepare('INSERT INTO aged_fee_rows (batch_id, row_index, market, brand, base_json) VALUES (?, ?, ?, ?, ?)');
-  const batchId = db.transaction(() => {
-    const id = insertBatch.run(sourceFile.trim() || '库存表', date, scenario, calculated.length, req.session.user.id).lastInsertRowid;
-    for (const row of calculated) insertRow.run(id, row.id, row.market, row.brand, JSON.stringify(row));
-    return Number(id);
-  })();
-  audit(req.session.user.id, null, 'import', 'aged_fee_batches', batchId, { rows: calculated.length, date });
-  res.json(cleanBatch(db.prepare('SELECT * FROM aged_fee_batches WHERE id = ?').get(batchId)));
+  res.json(saveBatch(calculated, date, scenario, sourceFile, req.session.user.id));
+});
+
+agedFeesRouter.post('/import/start', (req, res) => {
+  const { date, scenario = 'uniform', sourceFile = '', rowCount } = req.body ?? {};
+  const parsedDate = typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date) ? new Date(`${date}T00:00:00Z`) : null;
+  if (!parsedDate || Number.isNaN(parsedDate.valueOf()) || parsedDate.toISOString().slice(0, 10) !== date) return res.status(400).json({ error: '请选择有效的统计日期' });
+  if (!['uniform', 'youngest', 'oldest'].includes(scenario)) return res.status(400).json({ error: '未知库龄场景' });
+  if (typeof sourceFile !== 'string' || sourceFile.length > 255) return res.status(400).json({ error: '文件名过长' });
+  if (!Number.isInteger(rowCount) || rowCount < 1 || rowCount > MAX_ROWS) return res.status(400).json({ error: '一次请导入 1 到 20000 行库存数据' });
+  db.prepare("DELETE FROM aged_fee_uploads WHERE created_at < datetime('now', 'localtime', '-1 day')").run();
+  const id = randomUUID();
+  db.prepare('INSERT INTO aged_fee_uploads (id, created_by, base_date, scenario, source_file, expected_rows) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(id, req.session.user.id, date, scenario, sourceFile.trim() || '库存表', rowCount);
+  res.json({ uploadId: id });
+});
+
+agedFeesRouter.post('/import/:id/rows', (req, res) => {
+  const upload = ownUpload(req, res);
+  if (!upload) return;
+  const { offset, rows } = req.body ?? {};
+  if (!Number.isInteger(offset) || offset < 0 || !Array.isArray(rows) || !rows.length || rows.length > MAX_CHUNK_ROWS || offset + rows.length > upload.expected_rows)
+    return res.status(400).json({ error: '导入分片范围不合法' });
+  const encoded = rows.map((row) => JSON.stringify(row));
+  if (encoded.some((row) => !row) || Buffer.byteLength(encoded.join(','), 'utf8') > MAX_CHUNK_BYTES)
+    return res.status(400).json({ error: '导入分片过大' });
+  const insert = db.prepare('INSERT INTO aged_fee_upload_rows (upload_id, row_index, raw_json) VALUES (?, ?, ?) ON CONFLICT(upload_id, row_index) DO UPDATE SET raw_json = excluded.raw_json');
+  db.transaction(() => encoded.forEach((row, index) => insert.run(upload.id, offset + index, row)))();
+  res.json({ received: offset + rows.length });
+});
+
+agedFeesRouter.post('/import/:id/finish', (req, res) => {
+  const upload = ownUpload(req, res);
+  if (!upload) return;
+  const items = db.prepare('SELECT row_index, raw_json FROM aged_fee_upload_rows WHERE upload_id = ? ORDER BY row_index').all(upload.id);
+  if (items.length !== upload.expected_rows || items.some((item, index) => item.row_index !== index))
+    return res.status(400).json({ error: `导入不完整：已收到 ${items.length} / ${upload.expected_rows} 行` });
+  let calculated;
+  try { calculated = calculateInventory(items.map((item) => JSON.parse(item.raw_json)), upload.base_date, upload.scenario); }
+  catch (error) { return res.status(400).json({ error: error.message }); }
+  res.json(saveBatch(calculated, upload.base_date, upload.scenario, upload.source_file, req.session.user.id, upload.id));
+});
+
+agedFeesRouter.delete('/import/:id', (req, res) => {
+  const upload = ownUpload(req, res);
+  if (!upload) return;
+  db.prepare('DELETE FROM aged_fee_uploads WHERE id = ?').run(upload.id);
+  res.json({ ok: true });
 });
 
 agedFeesRouter.patch('/rows/:id', (req, res) => {
@@ -61,8 +123,10 @@ agedFeesRouter.patch('/rows/:id', (req, res) => {
   if (special && numeric !== null && (!Number.isFinite(numeric) || numeric <= 0)) return res.status(400).json({ error: '修正日销必须大于 0' });
   if (special && numeric !== null) {
     const row = JSON.parse(item.base_json);
-    try { calculateSkuFee(row.buckets, numeric, row.date, row.market, db.prepare('SELECT scenario FROM aged_fee_batches WHERE id = ?').get(item.batch_id).scenario); }
-    catch (error) { return res.status(400).json({ error: error.message }); }
+    if (MARKET_RATES[row.market]) {
+      try { calculateSkuFee(row.buckets, numeric, row.date, row.market, db.prepare('SELECT scenario FROM aged_fee_batches WHERE id = ?').get(item.batch_id).scenario); }
+      catch (error) { return res.status(400).json({ error: error.message }); }
+    }
   }
   const saved = db.prepare(`UPDATE aged_fee_rows SET special = ?, correction_value = ?, reason = ?, revision = revision + 1,
     updated_by = ?, updated_at = datetime('now', 'localtime') WHERE id = ? AND revision = ?`)

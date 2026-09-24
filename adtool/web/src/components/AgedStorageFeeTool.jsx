@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import * as XLSX from 'xlsx';
 import { api } from '../api.js';
 import { readInventoryRows } from '../agedStorageImport.js';
-import { AGE_BUCKETS, calculateInventory, exportRow, FEE_BUCKETS, MARKET_RATES, OUTPUT_COLUMNS, resultForRow, sortAgedFeeRows } from '../../../shared/agedStorageFee.js';
+import { AGE_BUCKETS, calculateInventory, compactInventoryRows, exportRow, FEE_BUCKETS, MARKET_RATES, OUTPUT_COLUMNS, resultForRow, sortAgedFeeRows } from '../../../shared/agedStorageFee.js';
 import Icon from './Icon.jsx';
 import './ToolsPage.css';
 import './AgedStorageFeeTool.css';
@@ -22,6 +22,7 @@ export default function AgedStorageFeeTool() {
   const [date, setDate] = useState(today);
   const [scenario, setScenario] = useState('uniform');
   const [busy, setBusy] = useState(false);
+  const [importProgress, setImportProgress] = useState(null);
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState(null);
   const [fileError, setFileError] = useState('');
@@ -42,6 +43,7 @@ export default function AgedStorageFeeTool() {
   const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const shown = ordered.slice((Math.min(page, pageCount) - 1) * PAGE_SIZE, Math.min(page, pageCount) * PAGE_SIZE);
   const pending = resolved.reduce((count, row) => count + (!row.valid ? 1 : 0), 0);
+  const withoutRates = resolved.reduce((count, row) => count + (!MARKET_RATES[row.market] ? 1 : 0), 0);
 
   function applyShared(data) {
     setShared(data);
@@ -63,15 +65,18 @@ export default function AgedStorageFeeTool() {
   async function importFile(file) {
     if (!file) return;
     setBusy(true);
+    setImportProgress(null);
     setFileError('');
     try {
       const rows = await readInventoryRows(file);
-      calculateInventory(rows, date, scenario);
-      applyShared(await api.importAgedFees(rows, date, scenario, file.name));
+      const calculated = calculateInventory(rows, date, scenario);
+      applyShared(await api.importAgedFees(compactInventoryRows(calculated), date, scenario, file.name,
+        (sent, total) => setImportProgress({ sent, total })));
     } catch (error) {
       setFileError(`无法处理表格：${error.message || '请检查文件格式'}`);
     } finally {
       setBusy(false);
+      setImportProgress(null);
       if (fileRef.current) fileRef.current.value = '';
     }
   }
@@ -120,11 +125,11 @@ export default function AgedStorageFeeTool() {
       <label className="field"><span>新批次库龄场景</span><select className="inp" value={scenario} onChange={(event) => setScenario(event.target.value)}>
         <option value="uniform">区间均匀（推荐）</option><option value="youngest">最年轻端（费用下界）</option><option value="oldest">最老端（费用上界）</option>
       </select></label>
-      <button className="btn primary" disabled={busy} onClick={() => fileRef.current?.click()}><Icon name="upload" />{busy ? '正在保存…' : shared?.batch ? '导入新批次' : '导入库存表'}</button>
+      <button className="btn primary" disabled={busy} onClick={() => fileRef.current?.click()}><Icon name="upload" />{busy ? importProgress ? `正在导入 ${importProgress.sent}/${importProgress.total}` : '正在读取表格…' : shared?.batch ? '导入新批次' : '导入库存表'}</button>
       <button className="btn" disabled={loading || busy || savingId !== null} onClick={refresh}>刷新共享结果</button>
       <input ref={fileRef} type="file" hidden accept=".zip,.xlsx,.xls,.csv" onChange={(event) => importFile(event.target.files?.[0])} />
     </div>
-    <p className="aged-help">支持 .zip、.xlsx、.xls、.csv；ZIP 内可放库存表。首张工作表需包含市场代码、SKU、7 日均销量和 8 个库龄列。7 天为 0 时取 14 天，两者都为 0 时按 0.14 计算。任一账号导入新批次后，所有账号查看同一份最新结果。</p>
+    <p className="aged-help">支持 .zip、.xlsx、.xls、.csv；ZIP 内可放库存表。首张工作表需包含市场代码、SKU、7 日均销量和 8 个库龄列。7 天为 0 时取 14 天，两者都为 0 时按 0.14 计算。未配置费率的市场会保留数据，费用留空。任一账号导入新批次后，所有账号查看同一份最新结果。</p>
     <details className="aged-rate-panel" open>
       <summary><span className="aged-rate-title">各市场费率</span><span className="aged-rate-caption">按库龄阶段查看 · 每月 15 日库存快照</span><span className="aged-rate-toggle" aria-hidden="true">⌄</span></summary>
       <div className="aged-rate-table-wrap"><table className="aged-rate-table"><caption>市场超龄仓储费率，美元 / 件 / 次</caption><thead><tr><th scope="col">市场</th>{FEE_BUCKETS.map((bucket) => <th scope="col" key={bucket}>{bucket === '456+' ? '456 天以上' : `${bucket.replace('-', '–')} 天`}</th>)}</tr></thead><tbody>{Object.entries(MARKET_RATES).map(([code, rates]) => <tr key={code}><th scope="row">{code}</th>{rates.map((rate, index) => <td key={FEE_BUCKETS[index]}>${rate.toFixed(2)}</td>)}</tr>)}</tbody></table></div>
@@ -137,7 +142,8 @@ export default function AgedStorageFeeTool() {
     {!!rows.length && <>
       <div className="aged-summary" role="status">
         <span><b>{rows.length}</b> 个可查看 SKU</span><span><b>{filtered.length}</b> 条符合筛选</span>
-        <span>筛选结果合计 <b>{pending ? '待补正' : money(resolved.reduce((sum, row) => sum + (row.fee.total || 0), 0))}</b></span>
+        <span>已配置费率市场合计 <b>{pending ? '待补正' : money(resolved.reduce((sum, row) => sum + (row.fee.total || 0), 0))}</b></span>
+        {withoutRates > 0 && <span className="aged-no-rate">{withoutRates} 条市场无费率，费用留空</span>}
         <span className="aged-source">批次 #{shared.batch.id} · {shared.batch.sourceFile} · {shared.batch.date} · {shared.batch.scenario === 'uniform' ? '区间均匀' : shared.batch.scenario === 'youngest' ? '最年轻端' : '最老端'}</span>
       </div>
       <div className="aged-toolbar">
@@ -152,7 +158,7 @@ export default function AgedStorageFeeTool() {
       <div className="aged-table-wrap"><table className="aged-table">
         <thead><tr>{OUTPUT_COLUMNS.map((column) => <th key={column} scope="col">{column}</th>)}</tr></thead>
         <tbody>{shown.map((row) => <tr key={row.id}>
-          <td>{row.date}</td><td>{row.marketCode}</td><td>{row.brand}</td><td>{row.market}</td><td className="aged-sku">{row.sku}</td>
+          <td>{row.date}</td><td>{row.marketCode}</td><td>{row.brand}</td><td>{row.market || '—'}{!MARKET_RATES[row.market] && <small className="aged-source-label">无费率</small>}</td><td className="aged-sku">{row.sku}</td>
           <td className="aged-number">{money(row.fee.average)}</td><td className="aged-number">{money(row.fee.total)}</td>
           <td className="aged-number">{amount(row.dailySales)}<small className="aged-source-label">{row.salesSource}</small></td>
           <td><select className="inp aged-cell-select" aria-label={`${row.sku} 是否有特殊情况`} disabled={!row.canEdit || loading || savingId !== null} value={row.special ? 'yes' : 'no'} onChange={(event) => { const special = event.target.value === 'yes'; const next = updateCorrection(row.id, { special, value: special ? row.correctionValue : '', reason: special ? row.reason : '', dirty: true }); saveCorrection(row.id, next); }}><option value="no">否</option><option value="yes">是</option></select></td>

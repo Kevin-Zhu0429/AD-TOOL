@@ -1,3 +1,5 @@
+import { splitAgedFeeRows } from './agedStorageUpload.js';
+
 async function request(path, options = {}) {
   const res = await fetch(`/api${path}`, {
     method: options.method || 'GET',
@@ -7,13 +9,39 @@ async function request(path, options = {}) {
     signal: options.signal,
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `请求失败 (${res.status})`);
+  if (!res.ok) {
+    const error = new Error(data.error || (res.status === 413 ? '导入内容超过服务器单次请求限制，请刷新页面后重试' : `请求失败 (${res.status})`));
+    error.status = res.status;
+    throw error;
+  }
   return data;
+}
+
+async function importAgedFees(rows, date, scenario, sourceFile, onProgress) {
+  const chunks = splitAgedFeeRows(rows);
+  let uploadId;
+  try {
+    ({ uploadId } = await request('/aged-fees/import/start', { method: 'POST', body: { date, scenario, sourceFile, rowCount: rows.length } }));
+  } catch (error) {
+    // 前端已更新而后端仍为旧版时，紧凑数据可继续使用原导入接口。
+    if (error.status === 404) return request('/aged-fees/import', { method: 'POST', body: { rows, date, scenario, sourceFile } });
+    throw error;
+  }
+  try {
+    for (const chunk of chunks) {
+      await request(`/aged-fees/import/${uploadId}/rows`, { method: 'POST', body: chunk });
+      onProgress?.(chunk.offset + chunk.rows.length, rows.length);
+    }
+    return await request(`/aged-fees/import/${uploadId}/finish`, { method: 'POST' });
+  } catch (error) {
+    await request(`/aged-fees/import/${uploadId}`, { method: 'DELETE' }).catch(() => {});
+    throw error;
+  }
 }
 
 export const api = {
   agedFees: (batchId) => request(`/aged-fees${batchId ? `?batchId=${encodeURIComponent(batchId)}` : ''}`),
-  importAgedFees: (rows, date, scenario, sourceFile) => request('/aged-fees/import', { method: 'POST', body: { rows, date, scenario, sourceFile } }),
+  importAgedFees,
   updateAgedFeeRow: (id, correction) => request(`/aged-fees/rows/${id}`, { method: 'PATCH', body: correction }),
   abaAsin: (params, signal) => request(`/aba/asin?${new URLSearchParams(Object.entries(params).filter(([, value]) => value !== undefined))}`, { signal }),
   importAbaAsin: (marketplace, files) => request('/aba/asin/import', { method: 'POST', body: { marketplace, files } }),

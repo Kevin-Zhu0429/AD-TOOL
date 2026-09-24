@@ -31,6 +31,23 @@ CREATE TABLE IF NOT EXISTS aged_fee_rows (
 );
 CREATE INDEX IF NOT EXISTS idx_aged_fee_rows_batch_market ON aged_fee_rows (batch_id, market, brand);
 
+-- 分批导入暂存区。只有完成全部分片并通过整表校验后才生成共享批次。
+CREATE TABLE IF NOT EXISTS aged_fee_uploads (
+  id TEXT PRIMARY KEY,
+  created_by INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  base_date TEXT NOT NULL,
+  scenario TEXT NOT NULL,
+  source_file TEXT NOT NULL,
+  expected_rows INTEGER NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+CREATE TABLE IF NOT EXISTS aged_fee_upload_rows (
+  upload_id TEXT NOT NULL REFERENCES aged_fee_uploads(id) ON DELETE CASCADE,
+  row_index INTEGER NOT NULL,
+  raw_json TEXT NOT NULL,
+  PRIMARY KEY (upload_id, row_index)
+);
+
 -- ABA reports are private to the uploading account, including owner accounts.
 CREATE TABLE IF NOT EXISTS aba_reports (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
