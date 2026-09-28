@@ -31,19 +31,25 @@ function identitiesForAsinRow(row, data, params) {
   });
 }
 
+// Market totals repeat on every SKU row of a search term, so exports split them evenly.
+const SHARED_MARKET_KEYS = new Set(['market_impressions', 'market_clicks', 'market_purchases']);
+
 export function buildAsinGroupExport(data, params = {}) {
-  const rows = (data.items ?? []).flatMap((group) => {
+  const entries = (data.items ?? []).flatMap((group) => {
     const queryRows = group.query_rows?.length ? group.query_rows : [{ ...group, query: '' }];
-    return queryRows.flatMap((queryRow) => identitiesForAsinRow(queryRow, data, params).map((identity) => (
-      ASIN_GROUP_EXPORT_COLUMNS.map((column) => {
-        if (column.key === 'sku') return identity.sku;
-        if (column.key === 'recognition') return group.recognition;
-        if (column.key === 'asin') return identity.asin;
-        const value = queryRow[column.key];
-        if (value === null || value === undefined) return '';
-        return column.rate ? value / 100 : value;
-      })
-    )));
+    return queryRows.flatMap((queryRow) => identitiesForAsinRow(queryRow, data, params)
+      .map((identity) => ({ group, queryRow, identity, termKey: JSON.stringify([group.recognition, queryRow.query]) })));
   });
+  const skuCounts = new Map();
+  for (const { termKey } of entries) skuCounts.set(termKey, (skuCounts.get(termKey) ?? 0) + 1);
+  const rows = entries.map(({ group, queryRow, identity, termKey }) => ASIN_GROUP_EXPORT_COLUMNS.map((column) => {
+    if (column.key === 'sku') return identity.sku;
+    if (column.key === 'recognition') return group.recognition;
+    if (column.key === 'asin') return identity.asin;
+    const value = queryRow[column.key];
+    if (value === null || value === undefined) return '';
+    if (SHARED_MARKET_KEYS.has(column.key)) return value / skuCounts.get(termKey);
+    return column.rate ? value / 100 : value;
+  }));
   return { columns: ASIN_GROUP_EXPORT_COLUMNS, rows };
 }

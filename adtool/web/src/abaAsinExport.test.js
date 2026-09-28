@@ -34,7 +34,12 @@ test('printer-group export puts each search term, ASIN and SKU mapping on its ow
   assert.ok(exported.rows.every((item) => !String(item[0]).includes('\n') && !String(item[3]).includes('\n')));
   assert.equal(exported.rows[0][7], 0.2);
   assert.equal(exported.rows[0][9], 10);
-  assert.equal(exported.rows[2][4], 900);
+  assert.equal(exported.rows[0][4], 1000 / 3);
+  assert.equal(exported.rows[0][5], 100 / 3);
+  assert.equal(exported.rows[0][6], 20 / 3);
+  assert.equal(exported.rows[2][4], 300);
+  assert.equal(exported.rows[3][4], 150);
+  assert.equal(exported.rows[4][6], 10);
   assert.equal(exported.rows[2][9], 20);
   assert.equal(exported.rows[0][11], 0.5);
   assert.equal(exported.rows[0][12], 0.25);
@@ -48,4 +53,25 @@ test('printer-group export keeps unlinked SKU cell empty and respects selected m
   ] };
   assert.equal(buildAsinGroupExport(data).rows[0][0], 'IN-SCOPE');
   assert.deepEqual(buildAsinGroupExport({ ...data, skuItems: [] }).rows[0].slice(0, 4), ['', '墨盒 KW 词', '', 'B000000305']);
+});
+
+test('printer-group export splits market totals across every SKU row of a search term', () => {
+  const base = { query: 'hp 305', market_impressions: 900, market_clicks: 90, market_purchases: 9, market_cvr: 10,
+    asin_impressions: 30, asin_clicks: 3, asin_purchases: 1, asin_cvr: 33.3, brand_share: 11.1 };
+  const data = {
+    items: [{ recognition: 'HP 305', query_rows: [{ ...base, asin: 'B000000305' }, { ...base, asin: 'B000000306' }] }],
+    selectedModel: null,
+    skuItems: [
+      { id: 1, asin: 'B000000305', sku: 'A' },
+      { id: 2, asin: 'B000000305', sku: 'B' },
+      { id: 3, asin: 'B000000306', sku: 'C' },
+    ],
+  };
+  const { rows } = buildAsinGroupExport(data);
+  assert.equal(rows.length, 3);
+  for (const [column, total] of [[4, 900], [5, 90], [6, 9]]) {
+    assert.ok(rows.every((row) => row[column] === total / 3));
+    assert.ok(Math.abs(rows.reduce((sum, row) => sum + row[column], 0) - total) < 1e-9);
+  }
+  assert.ok(rows.every((row) => row[7] === 0.1 && row[8] === 30));
 });
