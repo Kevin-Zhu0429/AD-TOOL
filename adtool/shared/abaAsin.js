@@ -115,7 +115,16 @@ export function aggregateAsinView(rows, { series = false, view = 'queries', merg
     const exportQueries = series
       ? aggregateAsinQueries(rows, { series: false, mergeWeeks, average, modelLabel }).map(asinRates)
       : queries.map(asinRates);
+    // Exports split each week's market totals across the SKUs that have that week.
+    const marketWeeks = new Map();
+    for (const row of rows) {
+      const key = JSON.stringify([row.asin, row.query]);
+      if (!marketWeeks.has(key)) marketWeeks.set(key, []);
+      marketWeeks.get(key).push({ week_end: row.week_end, market_impressions: row.market_impressions,
+        market_clicks: row.market_clicks, market_purchases: row.market_purchases });
+    }
     for (const row of exportQueries) {
+      row.market_weeks = marketWeeks.get(JSON.stringify([row.asin, row.query])) ?? [];
       const key = groupKey(row);
       if (!queryRows.has(key)) queryRows.set(key, []);
       queryRows.get(key).push(row);
