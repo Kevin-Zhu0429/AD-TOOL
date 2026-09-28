@@ -113,15 +113,28 @@ try {
   assert.equal(await page.getByText('HP · DE').count(), 0);
   assert.match(await page.locator('.sku-zero-summary').innerText(), /1 个 SKU 在库为 0/);
   assert.match(await page.locator('tbody tr').filter({ hasText: 'ZERO-SKU-BROWSER' }).innerText(), /已断货/);
+  // 超级管理员统一同步时 BROWSER-SKU 在库 0 → 20,算这个账号的一次补货
+  const changePanel = page.locator('.sku-change');
+  assert.match(await changePanel.innerText(), /新断货 0 个，补货 1 个/);
+  assert.match(await changePanel.locator('.sku-change-col.restock').innerText(), /本次补货 1[\s\S]*ES · BROWSER-SKU[\s\S]*在库 0 → 20/);
+  const skuRow = page.locator('tbody tr').filter({ hasText: 'BROWSER-SKU' }).filter({ hasNotText: 'ZERO' });
+  assert.match(await skuRow.innerText(), /已补货/);
+  if (process.env.SCREENSHOT_DIR) await page.screenshot({ path: `${process.env.SCREENSHOT_DIR}/sku-stock-change.png`, fullPage: true });
+
   await page.getByRole('button', { name: '同步船长库存', exact: true }).click();
-  await page.getByText(/已更新 1 行，读取 3 个库存 SKU/).waitFor();
-  const skuRow = page.locator('tbody tr').filter({ hasText: 'BROWSER-SKU' });
+  await page.getByText(/已更新 1 行，读取 3 个库存 SKU；新断货 0 个，补货 0 个/).waitFor();
   assert.match(await skuRow.innerText(), /20/);
   assert.match(await skuRow.innerText(), /1/);
   assert.match(await page.locator('.sku-zero-summary').innerText(), /1 个 SKU 在库为 0/);
+  assert.match(await changePanel.innerText(), /这次同步没有新断货或补货/);
+  assert.match(await skuRow.innerText(), /已补货/);
+  await changePanel.getByRole('button', { name: '只看已补货 1', exact: true }).click();
+  assert.equal(await page.locator('tbody tr').count(), 1);
+  await page.getByLabel('按库存状态筛选').selectOption('');
 
   await page.setViewportSize({ width: 390, height: 844 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  if (process.env.SCREENSHOT_DIR) await page.screenshot({ path: `${process.env.SCREENSHOT_DIR}/sku-stock-change-narrow.png`, fullPage: true });
   assert.deepEqual(pageErrors, []);
   console.log('Captain country assignment browser workflow passed');
 } finally {

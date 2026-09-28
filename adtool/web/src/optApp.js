@@ -7,7 +7,9 @@ import * as XLSX from 'xlsx';
 import * as C from './optCore.js';
 import * as NL from './negLib.js';
 import * as MD from './modelDrift.js';
-import { buildSkuInventoryIndex, summarizeSkuInventory } from './skuMatch.js';
+import {
+  buildSkuInventoryIndex, isNewlyOutOfStock, isRestocked, isZeroStock, skuKey, summarizeSkuInventory,
+} from './skuMatch.js';
 import { parseBulkWorkbookFile } from './largeWorkbook.js';
 
 const MARKUP = `
@@ -521,6 +523,15 @@ export function mountOptimizer(root, host, options) {
         '<button class="btn sm" data-batch="bid-set">应用</button>':'')+
       '<div style="flex:1"></div><button class="btn sm" data-batch="clear">取消选择</button></div>';
   }
+  /** SKU 库的库存状态 → 这条商品广告该关还是该开 */
+  function stockFlag(a,st){
+    var item=S.skuInventoryIndex[skuKey(a.sku)];
+    if(!item)return '';
+    if(isZeroStock(item)&&st==='enabled')
+      return '<span class="flagchip bad">'+(isNewlyOutOfStock(item)?'新断货':'在库 0')+' · 建议关闭</span>';
+    if(isRestocked(item)&&st==='paused')return '<span class="flagchip good">已补货 · 可重新开启</span>';
+    return '';
+  }
   function skuTab(cp){
     var c=S.model.colIdx;
     if(!cp.ads.length)return '<div class="empty">这条活动没有 SKU 广告行</div>';
@@ -538,7 +549,7 @@ export function mountOptimizer(root, host, options) {
           '<td class="num">'+fi(a.m.imp)+'</td><td class="num">'+fi(a.m.clicks)+'</td><td class="num">'+fp(a.m.ctr,2)+'</td>'+
           '<td class="num">'+fm(a.m.spend)+'</td><td class="num">'+fi(a.m.orders)+'</td><td class="num">'+fp(a.m.cvr,1)+'</td>'+
           '<td class="num">'+fm(a.m.sales)+'</td><td class="num">'+facos(a.m)+'</td><td class="num">'+S.cur+a.m.cpc.toFixed(3)+'</td>'+
-          '<td>'+flagsHtml(f)+(a.eligible?'':'<span class="flagchip bad">'+esc(a.eligibilityText)+'</span>')+'</td></tr>';
+          '<td>'+stockFlag(a,st)+flagsHtml(f)+(a.eligible?'':'<span class="flagchip bad">'+esc(a.eligibilityText)+'</span>')+'</td></tr>';
       }).join('')+'</tbody></table>';
   }
   function targetTab(cp){
@@ -1442,16 +1453,63 @@ export function mountOptimizer(root, host, options) {
     var inv=o.inventory;
     if(!inv.totalCount)return '<span class="muted">—</span>';
     if(!inv.matchedCount)return '<span class="inventory-unknown">未关联 SKU 库</span>';
+    var news=(inv.newOutCount?'<span class="inventory-new">新断货</span>':'')+
+      (inv.restockedCount?'<span class="inventory-restock">已补货</span>':'');
     if(inv.zeroStockCount){
       var label=inv.totalCount===1?'在库 0':inv.zeroStockCount+'/'+inv.totalCount+' SKU 在库 0';
-      var detail=inv.transit>0?'在途 '+fi(inv.transit):'无在途';
-      return '<span class="inventory-zero">'+label+'</span><small>'+detail+'</small>';
+      var detail=[inv.transit>0?'在途 '+fi(inv.transit):'无在途'];
+      if(o.ads.outOn)detail.push(o.ads.outOn+' 条广告在投');
+      return '<span class="inventory-zero">'+label+'</span>'+news+'<small>'+detail.join(' · ')+'</small>';
     }
     if(inv.unknownCount===inv.matchedCount)return '<span class="inventory-unknown">库存未填写</span>';
     var extra=[];
     if(inv.transit>0)extra.push('在途 '+fi(inv.transit));
     if(inv.missingCount)extra.push(inv.missingCount+' 个未关联');
-    return '<span class="inventory-ok">在库 '+fi(inv.stock)+'</span>'+(extra.length?'<small>'+extra.join(' · ')+'</small>':'');
+    if(o.ads.restockOff)extra.push(o.ads.restockOff+' 条广告暂停中');
+    return '<span class="inventory-ok">在库 '+fi(inv.stock)+'</span>'+news+(extra.length?'<small>'+extra.join(' · ')+'</small>':'');
+  }
+  /**
+   * 库存 → 广告状态建议(看当前改动后的状态):
+   * SKU 在库 0 但广告还在投 → 该关;SKU 刚补货(船长同步)但广告还停着 → 该开。
+   * 只动商品广告这一层;活动 / 广告组本身暂停的,开了广告也不会投,单独计数提醒。
+   */
+  function adStockPlan(o){
+    var c=S.model.colIdx,plan={outOn:[],restockOff:[],blocked:0};
+    o.items.forEach(function(x){
+      var item=S.skuInventoryIndex[skuKey(x.ad.sku)];
+      if(!item)return;
+      var st=C.normState(curVal(x.ad.row,c.state));
+      if(isZeroStock(item)&&st==='enabled')plan.outOn.push(x);
+      else if(isRestocked(item)&&st==='paused'){
+        plan.restockOff.push(x);
+        var g=x.cp.adGroups.filter(function(ag){return ag.id===x.ad.adGroupId})[0];
+        if((x.cp.row&&C.normState(curVal(x.cp.row,c.state))!=='enabled')||(g&&C.normState(curVal(g.row,c.state))!=='enabled'))plan.blocked++;
+      }
+    });
+    return plan;
+  }
+  /** 汇总整张矩阵的库存动作:在库 0 还在投的广告、补货后还暂停的广告 */
+  function stockActions(list){
+    var out={news:{},ads:[]},back={skus:{},ads:[],blocked:0};
+    list.forEach(function(o){
+      o.items.forEach(function(x){
+        var item=S.skuInventoryIndex[skuKey(x.ad.sku)];
+        if(!item)return;
+        if(isNewlyOutOfStock(item))out.news[skuKey(x.ad.sku)]=1;
+        if(isRestocked(item))back.skus[skuKey(x.ad.sku)]=1;
+      });
+      out.ads=out.ads.concat(o.plan.outOn);back.ads=back.ads.concat(o.plan.restockOff);back.blocked+=o.plan.blocked;
+    });
+    S.an._stockAct={pause:out.ads,enable:back.ads};
+    var nBack=Object.keys(back.skus).length,restock='';
+    if(nBack){
+      restock='<div class="stock-act restock" role="status"><div><b>已补货 '+nBack+' 个 SKU</b>'+
+        '<span>'+(back.ads.length
+          ?'有 '+back.ads.length+' 条商品广告还处于暂停，可以重新投放'+(back.blocked?'（其中 '+back.blocked+' 条所在的活动或广告组也是暂停，需要到「按活动优化」里一起开启）':'')+'。'
+          :'这些 SKU 的广告都已在投放。')+'</span></div>'+
+        (back.ads.length?'<button class="btn sm" data-stockact="enable">一键重新开启 '+back.ads.length+' 条广告</button>':'')+'</div>';
+    }
+    return {newOut:Object.keys(out.news).length,pause:out.ads.length,restock:restock};
   }
   function anSkuData(){
     var byAsin=S.an.byAsin,map={};
@@ -1467,6 +1525,7 @@ export function mountOptimizer(root, host, options) {
       var o=map[k];o.m=C.sumMetrics(o.items.map(function(x){return x.ad.m}));o.nc=Object.keys(o.camps).length;
       o.skuSet={};o.items.forEach(function(x){o.skuSet[x.ad.sku]=1});
       o.inventory=summarizeSkuInventory(S.skuInventoryIndex,Object.keys(o.skuSet));
+      o.plan=adStockPlan(o);o.ads={outOn:o.plan.outOn.length,restockOff:o.plan.restockOff.length};
       o.stAll=skuTerms(o,false).length;o.stEx=skuTerms(o,true).length;
       return o;
     });
@@ -1492,6 +1551,8 @@ export function mountOptimizer(root, host, options) {
       if(S.an.mark==='red'&&skuMark(o.m)!=='red')return false;
       if(S.an.mark==='blue'&&skuMark(o.m)!=='blue')return false;
       if(S.an.mark==='stock'&&!o.inventory.zeroStockCount)return false;
+      if(S.an.mark==='newout'&&!o.inventory.newOutCount)return false;
+      if(S.an.mark==='restock'&&!o.inventory.restockedCount)return false;
       if(q&&(String(o.sku)+' '+String(o.asin)).toLowerCase().indexOf(q)<0)return false;
       return true;
     });
@@ -1504,27 +1565,35 @@ export function mountOptimizer(root, host, options) {
       return anMetricGet(o,k);
     });
     var sum=C.sumMetrics(list.map(function(o){return o.m}));
+    var act=stockActions(data.list);
     var alert=inventoryRisks.length?'<div class="inventory-alert" role="status">'+
       '<span class="inventory-alert-icon" aria-hidden="true">!</span><div><b>发现 '+inventoryRisks.length+' 项包含在库为 0 的广告 SKU</b>'+
-      '<span>本周期已产生 '+fi(inventoryRiskMetrics.clicks)+' 次点击、'+fm(inventoryRiskMetrics.spend)+' 花费。库存来自当前站点 SKU 库，建议先检查这些投放。</span></div></div>':'';
-    var bar=alert+'<div class="anbar">'+
+      '<span>'+(act.newOut?'其中 '+act.newOut+' 个 SKU 是最近一次船长同步新断货。':'')+
+      '本周期已产生 '+fi(inventoryRiskMetrics.clicks)+' 次点击、'+fm(inventoryRiskMetrics.spend)+' 花费。库存来自当前站点 SKU 库，'+
+      (act.pause?'还有 '+act.pause+' 条商品广告在投，建议先关闭，补货后再开。':'这些 SKU 的广告已经都关了。')+'</span></div>'+
+      (act.pause?'<button class="btn sm" data-stockact="pause">一键关闭 '+act.pause+' 条在投广告</button>':'')+'</div>':'';
+    var nNewOut=data.list.filter(function(o){return o.inventory.newOutCount>0}).length;
+    var nRestock=data.list.filter(function(o){return o.inventory.restockedCount>0}).length;
+    var bar=alert+act.restock+'<div class="anbar">'+
       '<div class="seg"><button type="button" class="sgb'+(S.an.byAsin?'':' on')+'" data-anby="sku" aria-pressed="'+(!S.an.byAsin)+'">按 SKU</button><button type="button" class="sgb'+(S.an.byAsin?' on':'')+'" data-anby="asin" aria-pressed="'+S.an.byAsin+'">按 ASIN</button></div>'+
       anPfOptions()+
       '<input type="text" id="anQ" placeholder="搜 SKU / ASIN" value="'+esc(S.an.q)+'">'+
       '<label>最小点击 <input type="number" id="anMin" value="'+(S.an.minClicks||0)+'" min="0" style="width:64px"></label>'+
       '<div class="seg"><button type="button" class="sgb'+(!S.an.mark?' on':'')+'" data-anmark="" aria-pressed="'+(!S.an.mark)+'">全部</button>'+
         '<button type="button" class="sgb mk-stock'+(S.an.mark==='stock'?' on':'')+'" data-anmark="stock" aria-pressed="'+(S.an.mark==='stock')+'">在库 0 <b>'+inventoryRisks.length+'</b></button>'+
+        (nNewOut||S.an.mark==='newout'?'<button type="button" class="sgb mk-stock'+(S.an.mark==='newout'?' on':'')+'" data-anmark="newout" aria-pressed="'+(S.an.mark==='newout')+'">新断货 <b>'+nNewOut+'</b></button>':'')+
+        (nRestock||S.an.mark==='restock'?'<button type="button" class="sgb mk-restock'+(S.an.mark==='restock'?' on':'')+'" data-anmark="restock" aria-pressed="'+(S.an.mark==='restock')+'">已补货 <b>'+nRestock+'</b></button>':'')+
         '<button type="button" class="sgb mk-red'+(S.an.mark==='red'?' on':'')+'" data-anmark="red" aria-pressed="'+(S.an.mark==='red')+'">低转化高 ACOS</button>'+
         '<button type="button" class="sgb mk-blue'+(S.an.mark==='blue'?' on':'')+'" data-anmark="blue" aria-pressed="'+(S.an.mark==='blue')+'">点击无转化</button></div>'+
       '<div style="flex:1"></div><button class="btn sm" id="anCsv">导出本面板 CSV</button></div>'+
-      '<div class="anhint"><b>库存联动：</b>SKU 库明确返回在库 0 时整行标红；有在途也会继续提醒，库存空白不会误判。红色指标＝转化率低于 '+fp(S.cfg.skuCvrMin,0)+' 且 ACOS ≥ '+fp(S.cfg.skuAcosMax,1)+'；蓝色指标＝点击 ≥ '+S.cfg.skuDeadClicks+' 次零转化。点任意一行展开查看活动和搜索词。</div>';
+      '<div class="anhint"><b>库存联动：</b>SKU 库明确返回在库 0 时整行标红；有在途也会继续提醒，库存空白不会误判。「新断货」「已补货」来自 SKU 库最近一次船长同步，一键关闭 / 开启只改商品广告状态，导出后生效。红色指标＝转化率低于 '+fp(S.cfg.skuCvrMin,0)+' 且 ACOS ≥ '+fp(S.cfg.skuAcosMax,1)+'；蓝色指标＝点击 ≥ '+S.cfg.skuDeadClicks+' 次零转化。点任意一行展开查看活动和搜索词。</div>';
     if(!list.length)return bar+'<div class="empty">没有符合条件的 SKU</div>';
     return bar+'<table class="tbl antbl"><thead><tr>'+
       anTh('key',S.an.byAsin?'ASIN':'广告 SKU')+(S.an.byAsin?'':'<th>ASIN</th>')+'<th>库存</th>'+anTh('nc','活动数',1)+
       anTh('stAll','搜索词 独占/全部',1)+anTh('pClick','点击占比',1)+anTh('pOrder','订单占比',1)+mHeads()+'</tr></thead><tbody>'+
       list.map(function(o){
         var mk=skuMark(o.m);
-        return '<tr class="anrow'+(o.inventory.zeroStockCount?' stock-zero':'')+(mk?' mk-'+mk:'')+(isExp(o.key)?' expd':'')+'" data-anexp="'+esc(o.key)+'">'+
+        return '<tr class="anrow'+(o.inventory.zeroStockCount?' stock-zero':o.inventory.restockedCount?' stock-restock':'')+(mk?' mk-'+mk:'')+(isExp(o.key)?' expd':'')+'" data-anexp="'+esc(o.key)+'">'+
           '<td class="anname">'+esc(o.key)+'</td>'+(S.an.byAsin?'':'<td class="muted mono" style="font-size:12px">'+esc(o.asin)+'</td>')+
           '<td class="inventory-cell">'+inventoryText(o)+'</td>'+
           '<td class="num">'+o.nc+'</td>'+
@@ -1972,6 +2041,14 @@ export function mountOptimizer(root, host, options) {
         else if(op==='highacos')hit=m.sales>0&&m.acos>S.cfg.targetAcos;
         if(hit)S.an.adSel[x.ad.row.i]=1;
       });
+      renderAnalysis();return;
+    }
+    var sa=e.target.closest('[data-stockact]');
+    if(sa){
+      var c4=S.model.colIdx,w4=stateWords(),pause=sa.dataset.stockact==='pause';
+      var rows=(S.an._stockAct&&S.an._stockAct[pause?'pause':'enable'])||[];
+      rows.forEach(function(x){setVal(x.ad.row,c4.state,pause?w4.paused:w4.enabled,'state')});
+      toast(rows.length?(pause?'已关闭 ':'已重新开启 ')+rows.length+' 条商品广告，导出后生效':'没有需要处理的广告');
       renderAnalysis();return;
     }
     var ab=e.target.closest('[data-adbatch]');

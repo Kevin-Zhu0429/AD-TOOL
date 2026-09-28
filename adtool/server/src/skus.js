@@ -3,6 +3,7 @@ import { db, audit } from './db.js';
 import { requireLogin } from './auth.js';
 import { MARKETPLACES } from './libs.js';
 import { SKU_COLS, dedupeKey, normRow } from './skuLib.js';
+import { STOCK_EVENT_DAYS, attachStockEvents, latestSync } from './stockEvents.js';
 
 export const skuRouter = express.Router();
 
@@ -41,12 +42,16 @@ skuRouter.get('/', (req, res) => {
   const sql = `${SELECT}${where.length ? ` WHERE ${where.join(' AND ')}` : ''}
                ORDER BY s.country, s.brand, s.model, s.sku`;
 
+  const items = db.prepare(sql).all(...args);
   res.json({
     cols: SKU_COLS,
     marketplaces: MARKETPLACES,
     scope: all ? 'all' : 'mine',
     canViewAll: me.role === 'owner',
-    items: db.prepare(sql).all(...args),
+    stockEventDays: STOCK_EVENT_DAYS,
+    // 最近一次船长同步带来的新断货 / 补货;只看自己的库时才给
+    stockSync: all ? null : latestSync(me.id),
+    items: attachStockEvents(items, all ? items.map((item) => item.user_id) : [me.id]),
   });
 });
 

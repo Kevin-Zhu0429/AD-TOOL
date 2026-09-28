@@ -40,6 +40,21 @@ export function isOutOfStock(it) {
   return isZeroStock(it) && !Number(it?.transit);
 }
 
+/** 船长同步后仍然成立的「新断货」：在库从有货变成 0，且现在还是 0。 */
+export function isNewlyOutOfStock(it) {
+  return it?.stockEvent?.kind === 'out';
+}
+
+/** 船长同步后仍然成立的「补货」：在库从 0 变成有货，且现在还有货。 */
+export function isRestocked(it) {
+  return it?.stockEvent?.kind === 'restock';
+}
+
+/** 变动日期显示成 MM-DD；后端时间是 `YYYY-MM-DD HH:MM:SS`。 */
+export function stockEventDate(it) {
+  return String(it?.stockEvent?.at ?? '').slice(5, 10);
+}
+
 /** SKU 比对忽略首尾空格和大小写，和后端判重口径一致。 */
 export function skuKey(value) {
   return String(value ?? '').trim().toLowerCase();
@@ -58,6 +73,7 @@ export function buildSkuInventoryIndex(items) {
 /**
  * 汇总一个广告矩阵项关联的 SKU 库库存。
  * `zeroStockCount` 只统计明确返回 0 的在库值；未填写库存会落在 unknownCount。
+ * `newOutCount` / `restockedCount` 是船长同步带来的、现在仍成立的新断货 / 补货数。
  */
 export function summarizeSkuInventory(index, skus) {
   const keys = [...new Set((skus ?? []).map(skuKey).filter(Boolean))];
@@ -65,6 +81,8 @@ export function summarizeSkuInventory(index, skus) {
   let missingCount = 0;
   let unknownCount = 0;
   let zeroStockCount = 0;
+  let newOutCount = 0;
+  let restockedCount = 0;
   let stock = 0;
   let transit = 0;
 
@@ -80,6 +98,8 @@ export function summarizeSkuInventory(index, skus) {
       stock += Number(item.stock) || 0;
       if (isZeroStock(item)) zeroStockCount++;
     }
+    if (isNewlyOutOfStock(item)) newOutCount++;
+    if (isRestocked(item)) restockedCount++;
     transit += Number(item.transit) || 0;
   }
 
@@ -89,6 +109,8 @@ export function summarizeSkuInventory(index, skus) {
     missingCount,
     unknownCount,
     zeroStockCount,
+    newOutCount,
+    restockedCount,
     stock,
     transit,
     matched,

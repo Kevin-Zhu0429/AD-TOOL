@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import * as XLSX from 'xlsx';
 import { api } from '../api.js';
-import { isOutOfStock, isZeroStock } from '../skuMatch.js';
+import {
+  isNewlyOutOfStock, isOutOfStock, isRestocked, isZeroStock, stockEventDate,
+} from '../skuMatch.js';
 import './LibraryPage.css';
 import './SkuPage.css';
 
@@ -35,6 +37,91 @@ function mapHeader(cols, head) {
   return Object.keys(idx).length ? idx : null;
 }
 
+const STOCK_FILTERS = [
+  ['', '全部库存'],
+  ['out', '新断货'],
+  ['restock', '已补货'],
+  ['zero', '在库 0'],
+];
+
+const STOCK_FILTER_TEST = {
+  out: isNewlyOutOfStock,
+  restock: isRestocked,
+  zero: isZeroStock,
+};
+
+const SHOW_EVENTS = 12;
+
+function StockEventList({ title, kind, events }) {
+  const [all, setAll] = useState(false);
+  if (!events.length) return null;
+  const shown = all ? events : events.slice(0, SHOW_EVENTS);
+  return (
+    <div className={`sku-change-col ${kind}`}>
+      <div className="sku-change-col-head">
+        <b>{title} {events.length}</b>
+        <span>{kind === 'out' ? '在库变成 0，建议关闭这些 SKU 的广告' : '在库从 0 恢复，可以重新投放'}</span>
+      </div>
+      <ul>
+        {shown.map((event) => (
+          <li key={event.id}>
+            <span className="mono">{event.country} · {event.sku}</span>
+            <small>
+              {[event.brand, event.model, event.setGroup].filter(Boolean).join(' ')}
+              {' · 在库 '}{event.prevStock ?? '—'} → {event.stock ?? '—'}
+              {event.transit ? ` · 在途 ${event.transit}` : ''}
+            </small>
+          </li>
+        ))}
+      </ul>
+      {events.length > SHOW_EVENTS && (
+        <button className="btn ghost sm" onClick={() => setAll(!all)}>
+          {all ? '收起' : `展开全部 ${events.length} 个`}
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** 最近一次船长同步的新断货 / 补货,以及近 N 天仍成立的变动入口 */
+function StockChangePanel({ sync, days, outCount, restockCount, onFilter }) {
+  if (!sync && !outCount && !restockCount) return null;
+  const changed = sync && (sync.outCount || sync.restockCount);
+  return (
+    <div className="sku-change" role="status">
+      <div className="sku-change-head">
+        <div>
+          <b>库存变动</b>
+          <span>
+            {sync
+              ? `最近一次同步 ${sync.at.slice(5, 16)}：新断货 ${sync.outCount} 个，补货 ${sync.restockCount} 个`
+              : '还没有同步记录'}
+          </span>
+        </div>
+        <div className="spacer" />
+        <button className="btn sm" disabled={!outCount} onClick={() => onFilter('out')}>
+          只看新断货 {outCount}
+        </button>
+        <button className="btn sm" disabled={!restockCount} onClick={() => onFilter('restock')}>
+          只看已补货 {restockCount}
+        </button>
+      </div>
+      {changed ? (
+        <div className="sku-change-body">
+          <StockEventList key={`out-${sync.id}`} title="本次新断货" kind="out" events={sync.outOfStock} />
+          <StockEventList key={`restock-${sync.id}`} title="本次补货" kind="restock" events={sync.restocked} />
+        </div>
+      ) : sync ? (
+        <p className="hint">这次同步没有新断货或补货。</p>
+      ) : null}
+      <p className="hint">
+        表格里标「新断货」「已补货」的是近 {days} 天船长同步出的、现在仍成立的变动。
+        广告优化的 SKU 矩阵会同步提示：新断货的 SKU 可一键关闭在投广告，补货的 SKU 可一键重新开启暂停的广告。
+      </p>
+    </div>
+  );
+}
+
 const val = (it, key) => (it[key] === null || it[key] === undefined || it[key] === '' ? '' : it[key]);
 
 export default function SkuPage({ market }) {
@@ -46,7 +133,7 @@ export default function SkuPage({ market }) {
   const [draft, setDraft] = useState('');
   const [replace, setReplace] = useState(false);
   const [filter, setFilter] = useState('');
-  const [facet, setFacet] = useState({ country: '', brand: '' });
+  const [facet, setFacet] = useState({ country: '', brand: '', stock: '' });
   const [checked, setChecked] = useState(() => new Set());
   const [edit, setEdit] = useState(null);          // 正在编辑的那一行:{id, ...列}
   const [captain, setCaptain] = useState(null);
@@ -77,6 +164,8 @@ export default function SkuPage({ market }) {
   const cols = useMemo(() => data?.cols ?? [], [data]);
   const items = useMemo(() => data?.items ?? [], [data]);
   const zeroStockItems = useMemo(() => items.filter(isZeroStock), [items]);
+  const newOutCount = useMemo(() => items.filter(isNewlyOutOfStock).length, [items]);
+  const restockCount = useMemo(() => items.filter(isRestocked).length, [items]);
 
   const facetValues = useMemo(() => {
     const countries = new Set();
@@ -93,6 +182,7 @@ export default function SkuPage({ market }) {
     return items.filter((it) => {
       if (facet.country && it.country !== facet.country) return false;
       if (facet.brand && it.brand !== facet.brand) return false;
+      if (facet.stock && !STOCK_FILTER_TEST[facet.stock](it)) return false;
       if (!f) return true;
       return cols.some((c) => String(it[c.key] ?? '').toLowerCase().includes(f));
     });
@@ -162,7 +252,9 @@ export default function SkuPage({ market }) {
       const result = await api.syncCaptainInventory();
       await Promise.all([load(scope), loadCaptain()]);
       window.dispatchEvent(new CustomEvent('adtool:sku-inventory-updated'));
+      const stock = result.stockSync;
       const text = `已更新 ${result.updated} 行，读取 ${result.fetched} 个库存 SKU` +
+        (stock ? `；新断货 ${stock.outCount} 个，补货 ${stock.restockCount} 个` : '') +
         (result.unmatched ? `，${result.unmatched} 个 SKU 在网站库里未匹配` : '') +
         (result.failed ? `，${result.failed} 家店铺失败` : '');
       setSyncMsg({ kind: result.failed ? 'warn' : 'ok', text });
@@ -397,6 +489,12 @@ export default function SkuPage({ market }) {
                 {facetValues.brands.map((b) => <option key={b} value={b}>{b}</option>)}
               </select>
             )}
+            <select
+              className="inp" style={{ width: 110 }} value={facet.stock} aria-label="按库存状态筛选"
+              onChange={(e) => setFacet({ ...facet, stock: e.target.value })}
+            >
+              {STOCK_FILTERS.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+            </select>
             <span className="stat"><b>{shown.length}</b> / {items.length} 行</span>
             <div className="spacer" />
             {mine && checked.size > 0 && (
@@ -406,6 +504,15 @@ export default function SkuPage({ market }) {
             )}
           </div>
 
+            {mine && (
+              <StockChangePanel
+                sync={data.stockSync}
+                days={data.stockEventDays ?? 30}
+                outCount={newOutCount}
+                restockCount={restockCount}
+                onFilter={(stock) => setFacet({ ...facet, stock })}
+              />
+            )}
             {msg && <div id="sku-feedback" className={`note ${msg.kind}`} role={msg.kind === 'err' ? 'alert' : 'status'} style={{ marginBottom: 11 }}>{msg.text}</div>}
             {zeroStockItems.length > 0 && (
               <div className="note err sku-zero-summary" role="status">
@@ -444,8 +551,11 @@ export default function SkuPage({ market }) {
                   const editing = edit?.id === it.id;
                   const zeroStock = isZeroStock(it);
                   const outOfStock = isOutOfStock(it);
+                  const newOut = isNewlyOutOfStock(it);
+                  const restocked = isRestocked(it);
+                  const rowClass = zeroStock ? 'sku-zero-row' : restocked ? 'sku-restock-row' : undefined;
                   return (
-                    <tr key={it.id} className={zeroStock ? 'sku-zero-row' : undefined}>
+                    <tr key={it.id} className={rowClass}>
                       {mine && (
                         <td>
                           <input
@@ -476,6 +586,16 @@ export default function SkuPage({ market }) {
                               {c.key === 'stock' && zeroStock && (
                                 <span className="tag red sku-zero-tag">
                                   {outOfStock ? '已断货' : '在库 0'}
+                                </span>
+                              )}
+                              {c.key === 'stock' && newOut && (
+                                <span className="tag red sku-zero-tag" title={`同步前在库 ${it.stockEvent.prevStock}`}>
+                                  新断货 {stockEventDate(it)}
+                                </span>
+                              )}
+                              {c.key === 'stock' && restocked && (
+                                <span className="tag green sku-zero-tag" title="同步前在库 0">
+                                  已补货 {stockEventDate(it)}
                                 </span>
                               )}
                             </>

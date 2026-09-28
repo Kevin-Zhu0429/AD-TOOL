@@ -2,6 +2,7 @@ import express from 'express';
 import { db, audit } from './db.js';
 import { requireLogin, requireRole } from './auth.js';
 import { MARKETPLACES, REGIONS } from './libs.js';
+import { recordStockChanges, snapshotStock } from './stockEvents.js';
 
 const DEFAULT_BASE = 'https://openapi.captainbi.com';
 const PAGE_SIZE = 100;
@@ -369,6 +370,14 @@ function applyLegacySnapshots(userId) {
   return { updated, unmatched, inventorySkus: totals.size };
 }
 
+/** 写库存并记下这次同步的新断货 / 补货 */
+function applyAndTrackStock(userId) {
+  const before = snapshotStock(userId);
+  const applied = applyInventorySnapshots(userId);
+  const stockSync = recordStockChanges(userId, before);
+  return { ...applied, stockSync };
+}
+
 export function applyInventorySnapshots(userId) {
   const assigned = applyAssignedSnapshots(userId);
   const legacy = applyLegacySnapshots(userId);
@@ -472,10 +481,12 @@ async function syncUser(userId, actorId = userId) {
   try {
     const refreshed = await refreshSources(sources);
     const applied = refreshed.succeeded
-      ? applyInventorySnapshots(userId)
-      : { updated: 0, unmatched: 0, inventorySkus: 0 };
+      ? applyAndTrackStock(userId)
+      : { updated: 0, unmatched: 0, inventorySkus: 0, stockSync: null };
+    const { stockSync, ...counts } = applied;
     audit(actorId, null, refreshed.errors.length ? 'sync_partial' : 'sync', 'captain_inventory', null, {
-      targetUserId: userId, ...refreshed, ...applied, errors: refreshed.errors.slice(0, 10),
+      targetUserId: userId, ...refreshed, ...counts, errors: refreshed.errors.slice(0, 10),
+      outOfStock: stockSync?.outCount ?? 0, restocked: stockSync?.restockCount ?? 0,
     });
     return { bindings: sources.length, ...refreshed, ...applied };
   } finally {
@@ -751,17 +762,24 @@ captainRouter.post('/sync-all', requireRole('owner'), async (req, res, next) => 
     userIds.forEach((userId) => runningUsers.add(userId));
     try {
       const refreshed = await refreshSources(allActiveSources());
-      const results = userIds.map((userId) => ({
-        userId,
-        ...(refreshed.succeeded
-          ? applyInventorySnapshots(userId)
-          : { updated: 0, unmatched: 0, inventorySkus: 0 }),
-      }));
+      const results = userIds.map((userId) => {
+        if (!refreshed.succeeded) {
+          return { userId, updated: 0, unmatched: 0, inventorySkus: 0, outOfStock: 0, restocked: 0 };
+        }
+        const { stockSync, ...counts } = applyAndTrackStock(userId);
+        return {
+          userId, ...counts,
+          outOfStock: stockSync?.outCount ?? 0,
+          restocked: stockSync?.restockCount ?? 0,
+        };
+      });
       const totals = results.reduce((sum, row) => ({
         updated: sum.updated + row.updated,
         unmatched: sum.unmatched + row.unmatched,
         inventorySkus: sum.inventorySkus + row.inventorySkus,
-      }), { updated: 0, unmatched: 0, inventorySkus: 0 });
+        outOfStock: sum.outOfStock + row.outOfStock,
+        restocked: sum.restocked + row.restocked,
+      }), { updated: 0, unmatched: 0, inventorySkus: 0, outOfStock: 0, restocked: 0 });
       audit(req.session.user.id, null, refreshed.failed ? 'sync_partial' : 'sync',
         'captain_inventory_all', null, { users: userIds.length, ...refreshed, ...totals });
       res.json({ users: userIds.length, results, ...refreshed, ...totals });
