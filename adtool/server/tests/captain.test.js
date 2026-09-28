@@ -61,6 +61,7 @@ test('Captain shared EU inventory is assigned to separate users by country', asy
   ).run(users['aba-test']);
 
   let failingChannel = '';
+  const quantityOverrides = new Map();
   const inventoryCalls = new Map();
   global.fetch = async (input, options = {}) => {
     const url = new URL(String(input));
@@ -105,7 +106,7 @@ test('Captain shared EU inventory is assigned to separate users by country', asy
         'channel-de': [15, 1], 'channel-es': [15, 1], 'channel-fr': [15, 1], 'channel-it': [15, 1],
         'channel-uk': [7, 4], 'channel-us': [99, 5],
       };
-      const [stock, transit] = quantities[channel] ?? [0, 0];
+      const [stock, transit] = quantityOverrides.get(channel) ?? quantities[channel] ?? [0, 0];
       return Response.json({ code: 200, msg: 'ok', max_result: 1, data: [{
         SKU: 'EU-SKU-1', asin: 'B012345678', fulfillable_quantity: stock,
         inbound_shipped_quantity: transit, inbound_receiving_quantity: 0,
@@ -234,4 +235,62 @@ test('Captain shared EU inventory is assigned to separate users by country', asy
     "SELECT stock, transit FROM sku_items WHERE user_id = ? AND brand = 'Canon'"
   ).get(users['aba-test']);
   assert.deepEqual(canon, { stock: 77, transit: 88 });
+
+  // 库存变动:这次同步 US 从 99 变 0 = 新断货;下次从 0 变 25 = 补货
+  failingChannel = '';
+  const quietSync = await call('/captain/sync', esCookie, 'POST');
+  assert.equal(quietSync.data.stockSync.outCount, 0);
+  assert.equal(quietSync.data.stockSync.restockCount, 0);
+
+  quantityOverrides.set('channel-us', [0, 3]);
+  const outSync = await call('/captain/sync', esCookie, 'POST');
+  assert.equal(outSync.status, 200);
+  assert.equal(outSync.data.stockSync.outCount, 1);
+  assert.equal(outSync.data.stockSync.restockCount, 0);
+  assert.deepEqual(
+    outSync.data.stockSync.outOfStock.map(({ country, sku, prevStock, stock, transit }) => ({
+      country, sku, prevStock, stock, transit,
+    })),
+    [{ country: 'US', sku: 'EU-SKU-1', prevStock: 99, stock: 0, transit: 3 }],
+  );
+  let list = await call('/sku', esCookie);
+  assert.equal(list.data.stockSync.id, outSync.data.stockSync.id);
+  const usRow = () => list.data.items.find((item) => item.country === 'US');
+  assert.equal(usRow().stockEvent.kind, 'out');
+  assert.equal(usRow().stockEvent.prevStock, 99);
+  assert.equal(list.data.items.find((item) => item.country === 'ES' && item.brand === 'HP').stockEvent, undefined);
+
+  // 同步没变化:本次结果清零,但表格里仍标着还成立的新断货
+  await call('/captain/sync', esCookie, 'POST');
+  list = await call('/sku', esCookie);
+  assert.equal(list.data.stockSync.outCount, 0);
+  assert.equal(usRow().stockEvent.kind, 'out');
+
+  // 别的账号看不到这条变动
+  const deList = await call('/sku', deCookie);
+  assert.equal(deList.data.stockSync.outCount, 0);
+  assert.ok(deList.data.items.every((item) => !item.stockEvent));
+
+  quantityOverrides.set('channel-us', [25, 0]);
+  const backSync = await call('/captain/sync', esCookie, 'POST');
+  assert.equal(backSync.data.stockSync.outCount, 0);
+  assert.equal(backSync.data.stockSync.restockCount, 1);
+  assert.equal(backSync.data.stockSync.restocked[0].prevStock, 0);
+  assert.equal(backSync.data.stockSync.restocked[0].stock, 25);
+  list = await call('/sku', esCookie);
+  assert.equal(usRow().stockEvent.kind, 'restock');
+
+  // 手动改回 0:补货标记不再成立,不提示
+  const usId = usRow().id;
+  assert.equal((await call(`/sku/${usId}`, esCookie, 'PATCH', { stock: '0' })).status, 200);
+  list = await call('/sku', esCookie);
+  assert.equal(usRow().stockEvent, undefined);
+
+  // 超级管理员统一同步:按账号汇总新断货 / 补货数量
+  quantityOverrides.set('channel-us', [0, 0]);
+  assert.equal((await call(`/sku/${usId}`, esCookie, 'PATCH', { stock: '5' })).status, 200);
+  const allOut = await call('/captain/sync-all', ownerCookie, 'POST');
+  assert.equal(allOut.status, 200);
+  assert.equal(allOut.data.outOfStock, 1);
+  assert.equal(allOut.data.results.find((row) => row.userId === users['aba-test']).outOfStock, 1);
 });

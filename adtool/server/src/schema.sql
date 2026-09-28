@@ -301,6 +301,42 @@ CREATE TABLE IF NOT EXISTS captain_inventory_snapshots (
   PRIMARY KEY (binding_id, sku_key)
 );
 
+-- ---------- 库存变动（每次船长同步后对比在库） ----------
+-- 每个账号每次同步记一条 run；在库从 >0 变成 0 记「新断货」，从 0 变成 >0 记「补货」。
+-- 同步前没有库存值（空）的行不算变动，避免第一次同步把所有 0 库存都当成新断货。
+-- 事件按「账号 + 国家 + 小写 SKU」关联 SKU 库，整表替换后 id 变了也能对上。
+CREATE TABLE IF NOT EXISTS sku_stock_syncs (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  out_count     INTEGER NOT NULL DEFAULT 0,
+  restock_count INTEGER NOT NULL DEFAULT 0,
+  created_at    TEXT    NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_sku_stock_syncs_user ON sku_stock_syncs (user_id, id);
+
+CREATE TABLE IF NOT EXISTS sku_stock_events (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  sync_id      INTEGER NOT NULL REFERENCES sku_stock_syncs(id) ON DELETE CASCADE,
+  user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  country      TEXT    NOT NULL,
+  brand        TEXT,
+  model        TEXT,
+  set_group    TEXT,
+  sku          TEXT    NOT NULL,
+  sku_key      TEXT    NOT NULL,
+  asin         TEXT,
+  kind         TEXT    NOT NULL CHECK (kind IN ('out', 'restock')),
+  prev_stock   INTEGER,
+  prev_transit INTEGER,
+  stock        INTEGER,
+  transit      INTEGER,
+  created_at   TEXT    NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_sku_stock_events_sku ON sku_stock_events (user_id, country, sku_key, id);
+CREATE INDEX IF NOT EXISTS idx_sku_stock_events_sync ON sku_stock_events (sync_id);
+
 -- ---------- 广告组合库 ----------
 -- 广告组合编号由亚马逊账号和站点共同决定，因此按用户 + 站点隔离。
 -- 名称用于从“540 Series”“混投”等业务写法自动匹配投放 SKU。
