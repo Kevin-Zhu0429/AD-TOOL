@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { aggregateAsinView } from '../../shared/abaAsin.js';
 import { buildAsinGroupExport, skusForAsinRow } from './abaAsinExport.js';
 
 test('printer-group export puts each search term, ASIN and SKU mapping on its own row', () => {
@@ -74,4 +75,25 @@ test('printer-group export splits market totals across every SKU row of a search
     assert.ok(Math.abs(rows.reduce((sum, row) => sum + row[column], 0) - total) < 1e-9);
   }
   assert.ok(rows.every((row) => row[7] === 0.1 && row[8] === 30));
+});
+
+test('printer-group export splits each week only across SKUs whose ASIN has that week', () => {
+  const row = (asin, week_end, market_impressions) => ({
+    asin, query: 'hp deskjet 2700 ink', report_id: `${asin}:${week_end}`, week_start: week_end, week_end, week_number: 1,
+    recognition: 'HP DESKJET2700', group: { key: 'hp-2700' }, candidates: [],
+    query_volume: 50, market_impressions, market_clicks: market_impressions / 10, market_purchases: market_impressions / 100,
+    asin_impressions: 10, asin_clicks: 2, asin_purchases: 1,
+  });
+  // B0AAA uploaded weeks 38 and 39; B0BBB only uploaded week 39.
+  const source = [row('B0AAA00000', '2026-09-19', 1000), row('B0AAA00000', '2026-09-26', 1200), row('B0BBB00000', '2026-09-26', 1200)];
+  const skuItems = [{ id: 1, asin: 'B0AAA00000', sku: '305-BK' }, { id: 2, asin: 'B0BBB00000', sku: '305-CL' }];
+  for (const series of [false, true]) {
+    const sum = buildAsinGroupExport({ items: aggregateAsinView(source, { series, view: 'printers', includeQueries: true }), skuItems, aggregation: 'sum' });
+    assert.deepEqual(sum.rows.map((item) => [item[0], item[4], item[5], item[6]]), [['305-BK', 1600, 160, 16], ['305-CL', 600, 60, 6]]);
+    const average = buildAsinGroupExport({ items: aggregateAsinView(source, { series, view: 'printers', average: true, includeQueries: true }), skuItems, aggregation: 'average' });
+    assert.deepEqual(average.rows.map((item) => [item[0], item[4]]), [['305-BK', 800], ['305-CL', 300]]);
+  }
+  const website = aggregateAsinView(source, { series: true, view: 'printers' })[0];
+  assert.equal(website.market_impressions, 2200);
+  assert.equal(aggregateAsinView(source, { series: true, view: 'printers', average: true })[0].market_impressions, 1100);
 });
