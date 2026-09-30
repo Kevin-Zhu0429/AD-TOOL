@@ -88,7 +88,10 @@ function saveRows(user, rows, replace) {
        asin = CASE WHEN @hasAsin THEN excluded.asin ELSE sku_items.asin END,
        updated_at = datetime('now', 'localtime')`
   );
-  const exists = db.prepare('SELECT id FROM sku_items WHERE user_id = ? AND dedupe = ?');
+  // 一次查出这个账号已有的判重键,逐行判断新增还是更新时不用每行再查一次库
+  const existing = replace
+    ? new Set()
+    : new Set(db.prepare('SELECT dedupe FROM sku_items WHERE user_id = ?').pluck().all(user.id));
 
   let added = 0;
   let updated = 0;
@@ -103,7 +106,7 @@ function saveRows(user, rows, replace) {
       }
     }
     for (const { row, dedupe, hasAsin } of ok) {
-      const had = !replace && exists.get(user.id, dedupe);
+      const had = existing.has(dedupe);
       ins.run({ ...row, user_id: user.id, dedupe, hasAsin });
       if (had) updated++;
       else added++;

@@ -36,25 +36,25 @@ abaRouter.post('/import', (req, res) => {
     });
   } catch (err) { return res.status(400).json({ error: err.message }); }
   const userId = req.session.user.id;
+  const findReport = db.prepare('SELECT id, content_hash FROM aba_reports WHERE user_id = ? AND marketplace = ? AND brand = ? AND week_end = ?');
+  const upsertReport = db.prepare(`INSERT INTO aba_reports (user_id, marketplace, brand, week_start, week_end, week_number, source_file, content_hash, row_count)
+    VALUES (@user_id, @marketplace, @brand, @week_start, @week_end, @week_number, @source_file, @content_hash, @row_count)
+    ON CONFLICT(user_id, marketplace, brand, week_end) DO UPDATE SET
+    week_start=excluded.week_start, week_number=excluded.week_number, source_file=excluded.source_file,
+    content_hash=excluded.content_hash, row_count=excluded.row_count, updated_at=datetime('now') RETURNING id`);
+  const clearQueries = db.prepare('DELETE FROM aba_queries WHERE report_id=?');
+  const insert = db.prepare(`INSERT INTO aba_queries (report_id, query, query_volume, impressions, clicks, click_rate, click_price, purchases, brand_impressions, brand_clicks, brand_purchases)
+    VALUES (@report_id, @query, @query_volume, @impressions, @clicks, @click_rate, @click_price, @purchases, @brand_impressions, @brand_clicks, @brand_purchases)`);
   const result = db.transaction(() => {
     const results = [];
     for (const report of reports) {
-      const previous = db.prepare('SELECT id, content_hash FROM aba_reports WHERE user_id = ? AND marketplace = ? AND brand = ? AND week_end = ?')
-        .get(userId, req.abaMarket, report.brand, report.week_end);
+      const previous = findReport.get(userId, req.abaMarket, report.brand, report.week_end);
       if (previous?.content_hash === report.content_hash) {
         results.push({ source_file: report.source_file, brand: report.brand, week_end: report.week_end, status: 'unchanged', count: report.rows.length });
         continue;
       }
-      db.prepare(`INSERT INTO aba_reports (user_id, marketplace, brand, week_start, week_end, week_number, source_file, content_hash)
-        VALUES (@user_id, @marketplace, @brand, @week_start, @week_end, @week_number, @source_file, @content_hash)
-        ON CONFLICT(user_id, marketplace, brand, week_end) DO UPDATE SET
-        week_start=excluded.week_start, week_number=excluded.week_number, source_file=excluded.source_file,
-        content_hash=excluded.content_hash, updated_at=datetime('now')`).run({ ...report, user_id: userId });
-      const { id } = db.prepare('SELECT id FROM aba_reports WHERE user_id=? AND marketplace=? AND brand=? AND week_end=?')
-        .get(userId, req.abaMarket, report.brand, report.week_end);
-      db.prepare('DELETE FROM aba_queries WHERE report_id=?').run(id);
-      const insert = db.prepare(`INSERT INTO aba_queries (report_id, query, query_volume, impressions, clicks, click_rate, click_price, purchases, brand_impressions, brand_clicks, brand_purchases)
-        VALUES (@report_id, @query, @query_volume, @impressions, @clicks, @click_rate, @click_price, @purchases, @brand_impressions, @brand_clicks, @brand_purchases)`);
+      const { id } = upsertReport.get({ ...report, user_id: userId, row_count: report.rows.length });
+      clearQueries.run(id);
       for (const row of report.rows) insert.run({ ...row, report_id: id });
       results.push({ source_file: report.source_file, brand: report.brand, week_end: report.week_end, status: previous ? 'updated' : 'added', count: report.rows.length });
     }
@@ -67,8 +67,7 @@ abaRouter.post('/import', (req, res) => {
 abaRouter.get('/', (req, res) => {
   const userId = req.session.user.id;
   // No owner/scope override: every query starts with the current account.
-  const reports = db.prepare(`SELECT r.id, r.brand, r.week_start, r.week_end, r.week_number, r.source_file, r.updated_at,
-    (SELECT count(*) FROM aba_queries q WHERE q.report_id=r.id) AS row_count
+  const reports = db.prepare(`SELECT r.id, r.brand, r.week_start, r.week_end, r.week_number, r.source_file, r.updated_at, r.row_count
     FROM aba_reports r WHERE r.user_id=? AND r.marketplace=? ORDER BY r.week_end DESC, r.brand`).all(userId, req.abaMarket);
   const brands = [...new Set(reports.map((r) => r.brand))];
   const requestedBrand = String(req.query.brand ?? '');
