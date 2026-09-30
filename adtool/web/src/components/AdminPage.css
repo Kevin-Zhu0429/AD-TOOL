@@ -29,6 +29,7 @@
 .audit-stats-card, .audit-log-card { padding: 0; overflow: hidden; }
 .audit-stats-scroll { max-height: 310px; border: 0; border-radius: 0; }
 .audit-log-scroll { max-height: 54vh; border-width: 1px 0 0; border-radius: 0; }
+.audit-more { display: flex; justify-content: center; padding: 10px; border-top: 1px solid var(--border); }
 .audit-username { display: block; color: var(--text-faint); font-size: 10.5px; font-weight: 400; }
 .audit-count { display: inline-block; min-width: 42px; font: 600 14px/1.7 var(--mono); }
 .audit-count.seven { color: var(--accent-text); }

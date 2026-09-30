@@ -45,6 +45,15 @@ async function importAgedFees(rows, date, scenario, sourceFile, onProgress) {
   }
 }
 
+/** 操作明细的筛选和翻页参数;all / 空值不带 */
+function auditQuery({ userId, days, before } = {}) {
+  const q = new URLSearchParams();
+  if (userId && userId !== 'all') q.set('userId', userId);
+  if (days) q.set('days', days);
+  if (before) q.set('before', before);
+  return q.toString();
+}
+
 export const api = {
   agedFees: (batchId) => request(`/aged-fees${batchId ? `?batchId=${encodeURIComponent(batchId)}` : ''}`),
   importAgedFees,
@@ -71,7 +80,9 @@ export const api = {
   deleteUser: (id) => request(`/auth/users/${id}`, { method: 'DELETE' }),
   resetPassword: (id, newPassword) =>
     request(`/auth/users/${id}/reset-password`, { method: 'POST', body: { newPassword } }),
-  audit: () => request('/auth/audit'),
+  // 统计 + 第一页明细;filters: { userId, days }
+  audit: (filters = {}) => request(`/auth/audit?${auditQuery(filters)}`),
+  auditLogs: (filters = {}, before) => request(`/auth/audit/logs?${auditQuery({ ...filters, before })}`),
   recordActivity: (module, action, marketplace, detail) =>
     request('/auth/audit/events', {
       method: 'POST', body: { module, action, marketplace: marketplace || '', detail },

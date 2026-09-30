@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
 import CaptainAdmin from './CaptainAdmin.jsx';
 import './AdminPage.css';
@@ -70,6 +70,9 @@ export default function AdminPage({ user, markets }) {
   const [auditTotals, setAuditTotals] = useState({ sevenDay: 0, thirtyDay: 0 });
   const [logUser, setLogUser] = useState('all');
   const [logPeriod, setLogPeriod] = useState('30');
+  const [logNext, setLogNext] = useState(null);
+  const [logBusy, setLogBusy] = useState(false);
+  const logRequest = useRef(0);
   const [resetUser, setResetUser] = useState(null);
   const [resetPassword, setResetPassword] = useState('');
   const [resetShown, setResetShown] = useState(false);
@@ -92,9 +95,13 @@ export default function AdminPage({ user, markets }) {
 
   async function load() {
     try {
-      const [u, a] = await Promise.all([api.listUsers(), api.audit()]);
+      const request = ++logRequest.current;
+      const [u, a] = await Promise.all([api.listUsers(), api.audit({ userId: logUser, days: logPeriod })]);
       setUsers(u.users);
-      setLogs(a.logs);
+      if (request === logRequest.current) {
+        setLogs(a.logs);
+        setLogNext(a.nextBefore ?? null);
+      }
       setAuditStats(a.stats ?? []);
       setAuditTotals(a.totals ?? { sevenDay: 0, thirtyDay: 0 });
     } catch (e) {
@@ -109,14 +116,29 @@ export default function AdminPage({ user, markets }) {
     if (deleteUser && !deleteDialogRef.current?.open) deleteDialogRef.current?.showModal();
   }, [deleteUser]);
 
-  const visibleLogs = useMemo(() => {
-    const cutoff = logPeriod === 'all' ? 0 : Date.now() - Number(logPeriod) * 24 * 60 * 60 * 1000;
-    return logs.filter((log) => {
-      if (logUser !== 'all' && String(log.user_id) !== logUser) return false;
-      if (!cutoff) return true;
-      return new Date(String(log.created_at).replace(' ', 'T')).getTime() >= cutoff;
-    });
-  }, [logs, logUser, logPeriod]);
+  // 账号和时间在服务端筛;切换条件时重新取第一页,「加载更多」接着上一页往后取
+  async function loadLogs(filters, before) {
+    const request = ++logRequest.current;
+    setLogBusy(true);
+    try {
+      const page = await api.auditLogs(filters, before);
+      if (request !== logRequest.current) return;   // 条件已经又变了,丢掉旧结果
+      setLogs((old) => (before ? [...old, ...page.logs] : page.logs));
+      setLogNext(page.nextBefore ?? null);
+    } catch (e) {
+      setMsg({ kind: 'err', text: e.message });
+    } finally {
+      if (request === logRequest.current) setLogBusy(false);
+    }
+  }
+  function changeLogUser(value) {
+    setLogUser(value);
+    loadLogs({ userId: value, days: logPeriod });
+  }
+  function changeLogPeriod(value) {
+    setLogPeriod(value);
+    loadLogs({ userId: logUser, days: value });
+  }
 
   async function act(fn, okText) {
     setMsg(null);
@@ -555,10 +577,10 @@ export default function AdminPage({ user, markets }) {
 
           <div className="card audit-log-card">
             <div className="audit-log-head">
-              <div><h2>操作明细</h2><p className="hint">最多保留展示最近 500 条，可按账号和时间查看。</p></div>
+              <div><h2>操作明细</h2><p className="hint">按账号和时间查看，每次加载 100 条。</p></div>
               <div className="audit-filters">
-                <label>账号<select className="inp" value={logUser} onChange={(event) => setLogUser(event.target.value)}><option value="all">全部账号</option>{auditStats.map((item) => <option key={item.id} value={item.id}>{item.display_name}</option>)}</select></label>
-                <label>时间<select className="inp" value={logPeriod} onChange={(event) => setLogPeriod(event.target.value)}><option value="7">近 7 天</option><option value="30">近 30 天</option><option value="all">全部明细</option></select></label>
+                <label>账号<select className="inp" value={logUser} onChange={(event) => changeLogUser(event.target.value)}><option value="all">全部账号</option>{auditStats.map((item) => <option key={item.id} value={item.id}>{item.display_name}</option>)}</select></label>
+                <label>时间<select className="inp" value={logPeriod} onChange={(event) => changeLogPeriod(event.target.value)}><option value="7">近 7 天</option><option value="30">近 30 天</option><option value="all">全部明细</option></select></label>
               </div>
             </div>
             <div className="scroll audit-log-scroll">
@@ -567,7 +589,7 @@ export default function AdminPage({ user, markets }) {
                 <tr><th>时间</th><th>人</th><th>站点</th><th>动作</th><th>对象</th><th>详情</th></tr>
               </thead>
               <tbody>
-                {visibleLogs.map((l) => (
+                {logs.map((l) => (
                   <tr key={l.id}>
                     <td className="audit-time">{l.created_at}</td>
                     <td><b>{l.who ?? '已删除账号'}</b><small className="audit-username mono">{l.username ?? ''}</small></td>
@@ -577,10 +599,17 @@ export default function AdminPage({ user, markets }) {
                     <td className="audit-detail">{detailText(l.detail)}</td>
                   </tr>
                 ))}
-                {!visibleLogs.length && <tr><td colSpan={6} className="empty">这个条件下还没有操作</td></tr>}
+                {!logs.length && !logBusy && <tr><td colSpan={6} className="empty">这个条件下还没有操作</td></tr>}
               </tbody>
             </table>
           </div>
+            {logNext && (
+              <div className="audit-more">
+                <button className="btn sm" type="button" disabled={logBusy} aria-busy={logBusy} onClick={() => loadLogs({ userId: logUser, days: logPeriod }, logNext)}>
+                  {logBusy ? '正在加载…' : '加载更多'}
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
