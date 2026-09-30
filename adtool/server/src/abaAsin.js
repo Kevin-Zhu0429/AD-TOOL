@@ -14,5 +14,5 @@ abaAsinRouter.post('/import', async (req, res) => {
 abaAsinRouter.get('/', async (req, res) => {
   // 匹配、聚合、排序都在 worker 线程里做,主线程只转发结果
   const payload = { userId: req.session.user.id, market: req.abaMarket, query: { ...req.query }, generation: dataGeneration() };
-  await respondWithTask(res, 'asinView', payload, { key: viewKey('asin', payload) });
+  await respondWithTask(res, 'asinView', payload, { key: viewKey('asin', payload), cancelOnClose: true });
 });
