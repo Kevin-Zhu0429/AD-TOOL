@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { Suspense, lazy, useEffect, useRef, useState } from 'react';
 import { api } from './api.js';
 import { useTheme } from './theme.js';
 import { hasUnseen, visibleVersion } from './changelog.js';
@@ -6,18 +6,18 @@ import Changelog, { VersionBadge } from './components/Changelog.jsx';
 import LoginPage from './components/LoginPage.jsx';
 import AppShell from './components/AppShell.jsx';
 import HomePage from './components/HomePage.jsx';
-import BuilderPage from './components/BuilderPage.jsx';
-import ManualPage from './components/ManualPage.jsx';
-import OptimizerPage from './components/OptimizerPage.jsx';
-import LibraryPage from './components/LibraryPage.jsx';
-import SkuPage from './components/SkuPage.jsx';
-import PortfolioPage from './components/PortfolioPage.jsx';
-import AdminPage from './components/AdminPage.jsx';
-import ProfilePage from './components/ProfilePage.jsx';
-import ProductPage from './components/ProductPage.jsx';
-import ToolsPage from './components/ToolsPage.jsx';
-import AgedStorageFeePage from './components/AgedStorageFeePage.jsx';
-import AbaPage from './components/AbaPage.jsx';
+const BuilderPage = lazy(() => import('./components/BuilderPage.jsx'));
+const ManualPage = lazy(() => import('./components/ManualPage.jsx'));
+const OptimizerPage = lazy(() => import('./components/OptimizerPage.jsx'));
+const LibraryPage = lazy(() => import('./components/LibraryPage.jsx'));
+const SkuPage = lazy(() => import('./components/SkuPage.jsx'));
+const PortfolioPage = lazy(() => import('./components/PortfolioPage.jsx'));
+const AdminPage = lazy(() => import('./components/AdminPage.jsx'));
+const ProfilePage = lazy(() => import('./components/ProfilePage.jsx'));
+const ProductPage = lazy(() => import('./components/ProductPage.jsx'));
+const ToolsPage = lazy(() => import('./components/ToolsPage.jsx'));
+const AgedStorageFeePage = lazy(() => import('./components/AgedStorageFeePage.jsx'));
+const AbaPage = lazy(() => import('./components/AbaPage.jsx'));
 
 export default function App() {
   const [theme, toggleTheme] = useTheme();
@@ -159,10 +159,15 @@ export default function App() {
         */}
         {optimizerOpened && user.adOpt && (
           <div style={{ display: page === 'optimizer' ? 'block' : 'none' }}>
-            <OptimizerPage theme={theme} market={market} />
+            <Suspense fallback={null}>
+              <OptimizerPage theme={theme} market={market} />
+            </Suspense>
           </div>
         )}
-        {(!user.adOpt || page !== 'optimizer') && body}
+        {/* 除首页外的页面都按需加载,首屏只下载外壳和首页 */}
+        <Suspense fallback={null}>
+          {(!user.adOpt || page !== 'optimizer') && body}
+        </Suspense>
       </AppShell>
 
       {/* 广告优化那一页底部有它自己的操作条,右下角就不占位了 */}

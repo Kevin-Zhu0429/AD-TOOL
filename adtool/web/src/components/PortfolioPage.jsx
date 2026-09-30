@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import * as XLSX from 'xlsx';
 import { api } from '../api.js';
 import { isMixedPortfolio, portfolioSeriesKey } from '../portfolioMatch.js';
 import './LibraryPage.css';
@@ -95,13 +94,15 @@ export default function PortfolioPage({ market }) {
   async function importFile(file) {
     if (!file) return;
     try {
+      const XLSX = await import('xlsx');
       const workbook = XLSX.read(await file.arrayBuffer(), { type: 'array' });
       const sheet = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { header: 1, defval: '' });
       queueRows(mapRows(sheet));
     } catch (readError) { setMessage({ kind: 'err', text: `读取失败：${readError.message}` }); }
   }
 
-  function exportXlsx() {
+  async function exportXlsx() {
+    const XLSX = await import('xlsx');
     const rows = [COLS.map((column) => column.label), ...shown.map((item) => [item.portfolioId, item.name])];
     const sheet = XLSX.utils.aoa_to_sheet(rows);
     sheet['!cols'] = COLS.map((column) => ({ wch: column.width }));

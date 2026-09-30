@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import * as XLSX from 'xlsx';
 import { api } from '../api.js';
 import { copyText } from '../clipboard.js';
 import Icon from './Icon.jsx';
@@ -24,7 +23,8 @@ const DETAIL_GROUPS = [
   ['规格', ['yield', 'weight', 'size', 'parent', 'sku']],
 ];
 
-function parseWorkbook(buffer, fallbackMarket) {
+async function parseWorkbook(buffer, fallbackMarket) {
+  const XLSX = await import('xlsx');
   const workbook = XLSX.read(buffer, { type: 'array', cellDates: false });
   const preferred = workbook.SheetNames.filter((name) => /干净.*数据源|数据源.*干净/i.test(name));
   const names = [...preferred, ...workbook.SheetNames.filter((name) => !preferred.includes(name))];
@@ -348,7 +348,7 @@ export default function ProductPage({ market }) {
       if (!importedMonth) {
         throw new Error('文件名里找不到月份，请加入如“2026-08”“202608”或“2026年8月”后再上传');
       }
-      const parsed = parseWorkbook(await file.arrayBuffer(), market);
+      const parsed = await parseWorkbook(await file.arrayBuffer(), market);
       const importedMarkets = Object.keys(parsed.productsByMarketplace);
       const result = await api.importAllProducts(parsed.productsByMarketplace, importedMonth, file.name);
       if (!settings.own_brand && importedMarkets.length === 1) {
@@ -411,7 +411,8 @@ export default function ProductPage({ market }) {
     }
   }
 
-  function exportRows() {
+  async function exportRows() {
+    const XLSX = await import('xlsx');
     const rows = filtered.map((item) => Object.fromEntries(PRODUCT_COLUMNS.map(([label, field]) => [label, item[field] ?? ''])));
     const sheet = XLSX.utils.json_to_sheet(rows);
     const workbook = XLSX.utils.book_new();
