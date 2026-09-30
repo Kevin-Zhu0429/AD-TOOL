@@ -2,8 +2,10 @@ import express from 'express';
 import { createHash } from 'node:crypto';
 import { db, audit } from './db.js';
 import { requireLogin, canRead } from './auth.js';
-import { MARKETPLACES, regionOf } from './libs.js';
-import { ABA_COLUMNS, BRAND_COLUMNS, BRAND_SOURCE_COLUMNS, brandRates, ABA_PAGE_SIZES, abaMatcher, aggregateAbaRows, parseAbaReport } from '../../shared/aba.js';
+import { MARKETPLACES } from './libs.js';
+import { parseAbaReport } from '../../shared/aba.js';
+import { runTask, dataGeneration } from './workers/pool.js';
+import { viewKey } from './workers/tasks.js';
 import { abaAsinRouter } from './abaAsin.js';
 
 export const abaRouter = express.Router();
@@ -64,70 +66,13 @@ abaRouter.post('/import', (req, res) => {
   res.json({ reports: result });
 });
 
-abaRouter.get('/', (req, res) => {
-  const userId = req.session.user.id;
-  // No owner/scope override: every query starts with the current account.
-  const reports = db.prepare(`SELECT r.id, r.brand, r.week_start, r.week_end, r.week_number, r.source_file, r.updated_at, r.row_count
-    FROM aba_reports r WHERE r.user_id=? AND r.marketplace=? ORDER BY r.week_end DESC, r.brand`).all(userId, req.abaMarket);
-  const brands = [...new Set(reports.map((r) => r.brand))];
-  const requestedBrand = String(req.query.brand ?? '');
-  const brand = brands.find((b) => b.toLowerCase() === requestedBrand.toLowerCase()) ?? (requestedBrand ? '' : brands[0] ?? '');
-  const available = reports.filter((r) => r.brand === brand);
-  const weeks = req.query.weeks === undefined ? available.slice(0, 1).map((r) => r.week_end) : String(req.query.weeks).split(',');
-  const selected = available.filter((r) => weeks.includes(r.week_end));
-  const q = String(req.query.q ?? '').trim().slice(0, 1000);
-  const dRows = db.prepare("SELECT brand, term, series, printer FROM lib_items WHERE lib='D' AND scope=?").all(regionOf(req.abaMarket).id);
-  const view = req.query.view === 'printers' ? 'printers' : 'queries';
-  const wordType = ['printer', 'cartridge'].includes(req.query.wordType) ? req.query.wordType : 'all';
-  const merged = req.query.merge !== '0' && selected.length > 1;
-  const match = abaMatcher(q, dRows, req.query.models !== '0', wordType);
-  const selectedIds = new Set(selected.map((r) => r.id));
-  const selectedById = new Map(selected.map((r) => [r.id, r]));
-  // Iterate on the server and return only one page; never send the account's entire history to the browser.
-  const rows = [];
-  if (selectedIds.size) {
-    const raw = db.prepare(`SELECT q.* FROM aba_queries q JOIN aba_reports r ON r.id=q.report_id
-      WHERE r.user_id=? AND r.marketplace=? AND r.brand=? AND r.week_end>=? AND r.week_end<=?`)
-      .iterate(userId, req.abaMarket, brand, selected.at(-1).week_end, selected[0].week_end);
-    for (const row of raw) {
-      if (!selectedIds.has(row.report_id)) continue;
-      const matching = match(row.query);
-      if (!matching.matches) continue;
-      if (req.query.group && matching.group.key !== req.query.group) continue;
-      const report = selectedById.get(row.report_id);
-      rows.push({ ...row, week_start: report.week_start, week_end: report.week_end, week_number: report.week_number,
-        recognition: matching.group.kind === 'other' ? '墨盒 KW 词' : matching.group.label,
-        linked: matching.linked, candidates: matching.candidates, group: matching.group });
-    }
+abaRouter.get('/', async (req, res) => {
+  // 匹配、聚合、排序都在 worker 线程里做,主线程只转发结果
+  const payload = { userId: req.session.user.id, market: req.abaMarket, query: { ...req.query }, generation: dataGeneration() };
+  try {
+    res.type('json').send(await runTask('abaView', payload, { key: viewKey('aba', payload) }));
+  } catch (error) {
+    if (!error.status) throw error;
+    res.status(error.status).json({ error: error.message });
   }
-  const items = (view === 'printers' ? aggregateAbaRows(rows, 'printer') : merged ? aggregateAbaRows(rows) : rows).map(brandRates);
-  const priceSortable = items.every((row) => (row.record_count ?? 1) === 1);
-  const allowedSort = [...ABA_COLUMNS.map((c) => c.key), ...BRAND_COLUMNS.map((c) => c.key), ...(view === 'printers' ? ['query_count'] : [])];
-  const sort = allowedSort.includes(req.query.sort) && (req.query.sort !== 'click_price' || priceSortable) ? req.query.sort : 'query_volume';
-  const direction = req.query.direction === 'asc' ? 'asc' : 'desc';
-  items.sort((a, b) => {
-    if (a[sort] === null && b[sort] !== null) return 1;
-    if (b[sort] === null && a[sort] !== null) return -1;
-    const comparison = typeof a[sort] === 'string' ? a[sort].localeCompare(b[sort], 'zh-CN') : (a[sort] ?? 0) - (b[sort] ?? 0);
-    return (direction === 'asc' ? comparison : -comparison) || b.week_end.localeCompare(a.week_end) || a.query.localeCompare(b.query);
-  });
-  const pageSize = ABA_PAGE_SIZES.includes(Number(req.query.pageSize)) ? Number(req.query.pageSize) : 100;
-  const pageCount = Math.max(1, Math.ceil(items.length / pageSize));
-  const page = Math.min(pageCount, Math.max(1, Math.floor(Number(req.query.page) || 1)));
-  const trend = selected.toReversed().map((r) => ({ week_start: r.week_start, week_end: r.week_end, week_number: r.week_number, query_volume: 0, impressions: 0, clicks: 0, purchases: 0, brand_impressions: 0, brand_clicks: 0, brand_purchases: 0, count: 0 }));
-  const byWeek = new Map(trend.map((r) => [r.week_end, r]));
-  for (const row of rows) {
-    const week = byWeek.get(row.week_end);
-    for (const key of ['query_volume', 'impressions', 'clicks', 'purchases']) week[key] += row[key];
-    BRAND_SOURCE_COLUMNS.forEach(({ key }) => { week[key] = week[key] == null || row[key] == null ? null : week[key] + row[key]; });
-    week.count++;
-  }
-  for (const week of trend) {
-    week.click_rate = week.query_volume ? week.clicks / week.query_volume * 100 : null;
-    Object.assign(week, brandRates(week));
-  }
-  res.json({ reports, brands, brand, selectedWeeks: selected.map((r) => r.week_end), items: items.slice((page - 1) * pageSize, page * pageSize),
-    total: items.length, recordCount: rows.length, queryCount: new Set(rows.map((r) => r.query)).size,
-    linkedCount: items.filter((r) => r.linked).length, page, pageSize, pageCount, sort, direction, trend,
-    view, wordType, merged, priceSortable, missingBrandData: rows.some((r) => BRAND_SOURCE_COLUMNS.some(({ key }) => r[key] == null)), hasModelLibrary: !!dRows.length });
 });

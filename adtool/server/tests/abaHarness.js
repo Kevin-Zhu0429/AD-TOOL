@@ -17,6 +17,7 @@ export async function startAbaTestServer() {
   const { portfolioRouter } = await import('../src/portfolios.js');
   const { captainRouter } = await import('../src/captain.js');
   const { agedFeesRouter } = await import('../src/agedFees.js');
+  const { bumpOnWrite } = await import('../src/workers/pool.js');
   const insertUser = db.prepare('INSERT INTO users (username, display_name, password_hash, role, marketplace, seen_version) VALUES (?, ?, ?, ?, ?, ?)');
   for (const [name, role, market] of [['aba-test', 'operator', 'ES'], ['aba-other', 'owner', 'ALL'], ['aba-de', 'operator', 'DE']]) {
     insertUser.run(name, name, bcrypt.hashSync('local-test-password', 4), role, market, '999.0.0');
@@ -24,6 +25,7 @@ export async function startAbaTestServer() {
   dRows.forEach((r, i) => db.prepare('INSERT INTO lib_items (lib, scope, brand, term, series, printer, dedupe) VALUES (?, ?, ?, ?, ?, ?, ?)')
     .run('D', 'EU', r.brand, r.term, r.series, r.printer, `aba-test-${i}`));
   const app = express();
+  app.use(bumpOnWrite);
   app.use(express.json({ limit: '50mb' }));
   app.use(session({ secret: 'aba-test-only', resave: false, saveUninitialized: false }));
   app.use('/api/auth', authRouter);
