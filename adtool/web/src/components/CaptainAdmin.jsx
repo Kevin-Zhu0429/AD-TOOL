@@ -6,7 +6,7 @@ const formatTime = (value) => value
   ? new Date(Number(value) * 1000).toLocaleString('zh-CN', { hour12: false })
   : '尚未同步';
 const brandKey = (value) => String(value ?? '').trim().toLowerCase();
-const REGION_LABELS = { eu: '欧洲', na: '北美', fe: '远东' };
+const REGION_LABELS = { eu: '欧洲', na: '北美', fe: '澳洲' };
 const inferredBrand = (group) => {
   const name = String(group.groupName ?? '').trim();
   const withoutEurope = name.replace(/[_-]EU(?:[_-]UK)?$/i, '');

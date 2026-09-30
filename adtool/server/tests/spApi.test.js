@@ -58,7 +58,7 @@ test('incomplete brand settings are reported instead of guessed', () => {
     'PG 缺少 BRAND2_LWA_CLIENT_SECRET',
     'CY 的 BRAND3_MARKETS 里 MX 网站不支持，已忽略',
     'CY 北美账号缺少 BRAND3_SELLER_ID_NA',
-    'CY 的 US、CA 没有对应的北美账号授权，读取店铺时会跳过',
+    'CY 的 US、CA 没有对应的北美账号授权（要填 BRAND3_LWA_REFRESH_TOKEN_NA 和 BRAND3_SELLER_ID_NA），读取店铺时会跳过',
     'BRAND4_NAME 和前面的品牌重名（cy），BRAND4 的配置先不用',
     'CE 还没有填任何区域的 Refresh Token 和卖家编号',
     'CC 填了北美账号，但 BRAND6_MARKETS 里没有北美站点，这个账号不会读取',
@@ -66,6 +66,37 @@ test('incomplete brand settings are reported instead of guessed', () => {
   assert.deepEqual(brands.map((brand) => [brand.name, brand.markets]), [
     ['CY', ['ES', 'UK', 'US', 'CA']],
     ['CC', ['ES']],
+  ]);
+});
+
+test('AU accounts use the _AU suffix (or Amazon\'s _FE) and typos are named', () => {
+  const app = (n) => ({ [`BRAND${n}_LWA_CLIENT_ID`]: 'id', [`BRAND${n}_LWA_CLIENT_SECRET`]: 'secret' });
+  const { brands, accounts, issues } = readSpApiConfig({
+    BRAND1_NAME: 'CC', ...app(1), BRAND1_MARKETS: 'ES,US,AU',
+    BRAND1_LWA_REFRESH_TOKEN_EU: 'r-eu', BRAND1_SELLER_ID_EU: 'CCEU',
+    BRAND1_LWA_REFRESH_TOKEN_NA: 'r-na', BRAND1_SELLER_ID_NA: 'CCNA',
+    BRAND1_LWA_REFRESH_TOKEN_AU: 'r-au', BRAND1_SELLER_ID_AU: 'ccau',
+    BRAND2_NAME: 'PG', ...app(2), BRAND2_MARKETS: 'AU',
+    BRAND2_LWA_REFRESH_TOKEN_FE: 'r-fe', BRAND2_SELLER_ID_FE: 'PGFE',
+    // 按国家写了后缀:不认识,AU 也就没有授权
+    BRAND3_NAME: 'CY', ...app(3), BRAND3_MARKETS: 'ES,AU',
+    BRAND3_LWA_REFRESH_TOKEN_EU: 'r', BRAND3_SELLER_ID_EU: 'CYEU',
+    BRAND3_LWA_REFRESH_TOKEN_AUS: 'r', BRAND3_SELLER_ID_AUS: 'CYAU',
+    // 澳洲只填了 token,提示里用他在用的 _AU
+    BRAND4_NAME: 'CE', ...app(4), BRAND4_MARKETS: 'AU', BRAND4_LWA_REFRESH_TOKEN_AU: 'r',
+  });
+  assert.deepEqual(accounts.map(({ brand, region, sellerId, markets }) => [brand, region, sellerId, markets]), [
+    ['CC', 'eu', 'CCEU', ['ES']],
+    ['CC', 'na', 'CCNA', ['US']],
+    ['CC', 'fe', 'CCAU', ['AU']],
+    ['PG', 'fe', 'PGFE', ['AU']],
+    ['CY', 'eu', 'CYEU', ['ES']],
+  ]);
+  assert.deepEqual(brands.find((brand) => brand.name === 'CC').accounts.map((account) => account.region), ['eu', 'na', 'fe']);
+  assert.deepEqual(issues, [
+    'CY 的 BRAND3_LWA_REFRESH_TOKEN_AUS、BRAND3_SELLER_ID_AUS 不认识，已忽略（区域后缀只能是 EU / NA / AU）',
+    'CY 的 AU 没有对应的澳洲账号授权（要填 BRAND3_LWA_REFRESH_TOKEN_AU 和 BRAND3_SELLER_ID_AU），读取店铺时会跳过',
+    'CE 澳洲账号缺少 BRAND4_SELLER_ID_AU',
   ]);
 });
 

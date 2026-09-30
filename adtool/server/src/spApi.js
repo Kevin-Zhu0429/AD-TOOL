@@ -1,6 +1,6 @@
 // 亚马逊 SP-API 客户端:用 refresh token 换 access token、按区域选接口地址、限速和重试。
 // 凭证只放环境变量,按品牌编号配置(BRAND1_…、BRAND2_…),每个品牌有自己的开发者应用,
-// 欧洲 / 北美 / 远东账号各一套 Refresh Token 和卖家编号,写法见 server/.env.example。
+// 欧洲 / 北美 / 澳洲账号各一套 Refresh Token 和卖家编号,写法见 server/.env.example。
 // 2023 年 10 月起 SP-API 不再需要 AWS 签名,请求头带 x-amz-access-token 即可。
 
 const LWA_URL = 'https://api.amazon.com/auth/o2/token';
@@ -42,7 +42,13 @@ const MAX_RETRIES = 4;
 const clean = (value) => String(value ?? '').trim();
 const sleep = (ms) => (ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve());
 
-export const REGION_LABELS = { eu: '欧洲', na: '北美', fe: '远东' };
+// 亚马逊把 AU 所在的区域叫远东区(FE),网站只做 AU,页面上就叫澳洲
+export const REGION_LABELS = { eu: '欧洲', na: '北美', fe: '澳洲' };
+
+// .env 变量名的区域后缀,第一个是文档里写的;澳洲写 _AU 或 _FE 都认
+const REGION_SUFFIXES = { eu: ['EU'], na: ['NA'], fe: ['AU', 'FE'] };
+const KNOWN_BRAND_KEYS = new Set(['NAME', 'MARKETS', 'LWA_CLIENT_ID', 'LWA_CLIENT_SECRET',
+  ...Object.values(REGION_SUFFIXES).flat().flatMap((suffix) => [`LWA_REFRESH_TOKEN_${suffix}`, `SELLER_ID_${suffix}`])]);
 
 /** 市场列表:逗号、空格都能分隔,GB 当 UK */
 function parseMarkets(value) {
@@ -55,7 +61,7 @@ function parseMarkets(value) {
  *   BRAND<n>_NAME                     品牌名,要和 SKU 库里的品牌一致(如 CC)
  *   BRAND<n>_MARKETS                  读取店铺时列出哪些站点,如 ES,DE,FR,IT,UK,US,CA;不填 = 全部
  *   BRAND<n>_LWA_CLIENT_ID / _SECRET  这个品牌开发者应用的 LWA 凭证
- *   BRAND<n>_LWA_REFRESH_TOKEN_<EU|NA|FE> + BRAND<n>_SELLER_ID_<EU|NA|FE>  各区域账号的授权
+ *   BRAND<n>_LWA_REFRESH_TOKEN_<EU|NA|AU> + BRAND<n>_SELLER_ID_<EU|NA|AU>  各区域账号的授权
  * 每个「品牌 × 区域」是一个卖家账号。填得不完整的不猜,原因放进 issues 给超级管理员看。
  */
 export function readSpApiConfig(env = process.env) {
@@ -82,6 +88,13 @@ export function readSpApiConfig(env = process.env) {
     }
     names.add(name.toLowerCase());
 
+    // 写错的变量名(比如按国家写成 _US、_UK)不会被读到,点名提示而不是悄悄忽略
+    const unknownKeys = Object.keys(env)
+      .filter((key) => key.startsWith(prefix) && !KNOWN_BRAND_KEYS.has(key.slice(prefix.length)));
+    if (unknownKeys.length) {
+      issues.push(`${label} 的 ${unknownKeys.join('、')} 不认识，已忽略（区域后缀只能是 EU / NA / AU）`);
+    }
+
     const clientId = read('LWA_CLIENT_ID');
     const clientSecret = read('LWA_CLIENT_SECRET');
     const missingApp = [!clientId && `${prefix}LWA_CLIENT_ID`, !clientSecret && `${prefix}LWA_CLIENT_SECRET`].filter(Boolean);
@@ -98,9 +111,13 @@ export function readSpApiConfig(env = process.env) {
     const brandAccounts = [];
     let incomplete = false;
     for (const region of Object.keys(REGION_HOSTS)) {
-      const suffix = region.toUpperCase();
-      const refreshToken = read(`LWA_REFRESH_TOKEN_${suffix}`);
-      const sellerId = read(`SELLER_ID_${suffix}`).toUpperCase();
+      const suffixes = REGION_SUFFIXES[region];
+      const pick = (key) => suffixes.map((item) => read(`${key}_${item}`)).find(Boolean) ?? '';
+      const refreshToken = pick('LWA_REFRESH_TOKEN');
+      const sellerId = pick('SELLER_ID').toUpperCase();
+      // 提示缺哪个变量时沿用用户已经在用的后缀
+      const suffix = suffixes.find((item) => read(`LWA_REFRESH_TOKEN_${item}`) || read(`SELLER_ID_${item}`))
+        ?? suffixes[0];
       if (!refreshToken && !sellerId) continue;
       if (!refreshToken || !sellerId) {
         const missing = refreshToken ? `${prefix}SELLER_ID_${suffix}` : `${prefix}LWA_REFRESH_TOKEN_${suffix}`;
@@ -126,7 +143,12 @@ export function readSpApiConfig(env = process.env) {
     const uncovered = markets.filter((market) => !configured.has(AMAZON_MARKETPLACES[market].region));
     if (uncovered.length) {
       const regions = [...new Set(uncovered.map((market) => AMAZON_MARKETPLACES[market].region))];
-      issues.push(`${label} 的 ${uncovered.join('、')} 没有对应的${regions.map((region) => REGION_LABELS[region]).join('、')}账号授权，读取店铺时会跳过`);
+      const needed = regions.map((region) => {
+        const suffix = REGION_SUFFIXES[region][0];
+        return `${prefix}LWA_REFRESH_TOKEN_${suffix} 和 ${prefix}SELLER_ID_${suffix}`;
+      }).join('；');
+      issues.push(`${label} 的 ${uncovered.join('、')} 没有对应的${regions.map((region) => REGION_LABELS[region]).join('、')}账号授权`
+        + `（要填 ${needed}），读取店铺时会跳过`);
     }
     brands.push({ name, markets, accounts: brandAccounts.map(({ region, sellerId }) => ({ region, sellerId })) });
     accounts.push(...brandAccounts);
