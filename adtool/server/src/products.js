@@ -2,6 +2,8 @@ import express from 'express';
 import { db, audit } from './db.js';
 import { canRead, requireLogin } from './auth.js';
 import { MARKETPLACES } from './libs.js';
+import { cleanProduct, cleanText, rowToProduct } from './services/products.js';
+import { runTask, respondWithTask } from './workers/pool.js';
 
 export const productRouter = express.Router();
 
@@ -27,10 +29,6 @@ function authorizeMarket(req, res) {
   return marketplace;
 }
 
-function cleanText(value, max = 5000) {
-  return String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
-}
-
 function cleanDataMonth(value, allowLegacy = false) {
   const month = cleanText(value, 20);
   if (/^(?:19|20)\d{2}-(?:0[1-9]|1[0-2])$/.test(month)) return month;
@@ -45,90 +43,6 @@ function latestDataMonth(marketplace) {
   ).pluck().get(marketplace) ?? '';
 }
 
-function cleanProduct(input) {
-  if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
-  const product = { ...input };
-  const asin = cleanText(product.asin, 24).toUpperCase();
-  if (!asin) return null;
-  product.asin = asin;
-  product.brand = cleanText(product.brand, 120);
-  product.model = cleanText(product.model, 120);
-  product.color_grp = cleanText(product.color_grp, 40);
-  product._manual = Array.isArray(product._manual)
-    ? product._manual.filter((key) => key === 'brand' || key === 'color_grp')
-    : [];
-  for (const key of Object.keys(product)) {
-    if (typeof product[key] === 'string') product[key] = cleanText(product[key]);
-  }
-  return product;
-}
-
-function rowToProduct(row) {
-  try {
-    return JSON.parse(row.data_json);
-  } catch {
-    return { asin: row.asin, brand: row.brand, model: row.model, color_grp: row.color_group };
-  }
-}
-
-function importProductsForMarket(marketplace, rawProducts, dataMonth, sourceFile, userId) {
-  const incoming = new Map();
-  let skipped = 0;
-  for (const raw of rawProducts) {
-    const product = cleanProduct(raw);
-    if (!product) {
-      skipped += 1;
-      continue;
-    }
-    incoming.set(product.asin, product);
-  }
-
-  const current = new Map(
-    db.prepare('SELECT * FROM products WHERE marketplace = ? AND data_month = ?').all(marketplace, dataMonth)
-      .map((row) => [row.asin, rowToProduct(row)])
-  );
-  const upsert = db.prepare(
-    `INSERT INTO products
-       (marketplace, data_month, source_file, asin, brand, model, color_group, data_json, created_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(marketplace, data_month, asin) DO UPDATE SET
-       source_file = excluded.source_file,
-       brand = excluded.brand,
-       model = excluded.model,
-       color_group = excluded.color_group,
-       data_json = excluded.data_json,
-       updated_at = datetime('now', 'localtime')`
-  );
-
-  let added = 0;
-  let updated = 0;
-  for (const [asin, product] of incoming) {
-    const old = current.get(asin);
-    if (old) {
-      const manual = new Set(old._manual ?? []);
-      for (const field of ['brand', 'color_grp']) {
-        if (manual.has(field) && cleanText(old[field])) product[field] = old[field];
-      }
-      product._manual = [...manual];
-      updated += 1;
-    } else {
-      added += 1;
-    }
-    upsert.run(
-      marketplace, dataMonth, sourceFile, asin, product.brand, product.model, product.color_grp,
-      JSON.stringify(product), userId
-    );
-  }
-  return { added, updated, skipped, total: incoming.size, received: rawProducts.length };
-}
-
-const saveMarketImports = db.transaction((entries, dataMonth, sourceFile, userId) => Object.fromEntries(
-  entries.map(([marketplace, products]) => [
-    marketplace,
-    importProductsForMarket(marketplace, products, dataMonth, sourceFile, userId),
-  ])
-));
-
 function importTotals(results) {
   return Object.values(results).reduce((totals, result) => ({
     added: totals.added + result.added,
@@ -141,31 +55,18 @@ function importTotals(results) {
 
 productRouter.use(requireProductIntel);
 
-productRouter.get('/', (req, res) => {
+productRouter.get('/', async (req, res) => {
   const marketplace = authorizeMarket(req, res);
   if (!marketplace) return;
   const requestedMonth = cleanDataMonth(req.query.dataMonth, true);
   if (req.query.dataMonth && !requestedMonth) {
     return res.status(400).json({ error: '数据月份格式不正确' });
   }
-  const months = db.prepare(
-    `SELECT data_month AS month, COUNT(*) AS count, MAX(source_file) AS source_file
-     FROM products WHERE marketplace = ? GROUP BY data_month
-     ORDER BY data_month = 'legacy', data_month DESC`
-  ).all(marketplace);
-  const dataMonth = requestedMonth && months.some((item) => item.month === requestedMonth)
-    ? requestedMonth
-    : months[0]?.month || '';
-  const products = db.prepare(
-    'SELECT * FROM products WHERE marketplace = ? AND data_month = ? ORDER BY id'
-  ).all(marketplace, dataMonth).map(rowToProduct);
-  const settings = db.prepare(
-    'SELECT own_brand, min_sales FROM product_settings WHERE marketplace = ?'
-  ).get(marketplace) ?? { own_brand: '', min_sales: 100 };
-  res.json({ products, settings, months, dataMonth });
+  // 整月产品(最多 2 万行)的 JSON 解析放在 worker 线程里
+  await respondWithTask(res, 'productsList', { marketplace, requestedMonth });
 });
 
-productRouter.post('/import', (req, res) => {
+productRouter.post('/import', async (req, res) => {
   const marketplace = authorizeMarket(req, res);
   if (!marketplace) return;
   if (!Array.isArray(req.body?.products) || req.body.products.length > 20_000) {
@@ -174,17 +75,13 @@ productRouter.post('/import', (req, res) => {
   const dataMonth = cleanDataMonth(req.body?.dataMonth);
   if (!dataMonth) return res.status(400).json({ error: '请提供文件名中的数据月份' });
   const sourceFile = cleanText(req.body?.sourceFile, 255);
-  const results = saveMarketImports(
-    [[marketplace, req.body.products]], dataMonth, sourceFile, req.session.user.id
-  );
-  const result = results[marketplace];
-  audit(req.session.user.id, marketplace, 'import', 'products', null, {
-    ...result, dataMonth, sourceFile,
+  const results = await runTask('productsImport', {
+    entries: [[marketplace, req.body.products]], dataMonth, sourceFile, userId: req.session.user.id,
   });
-  res.json({ ...result, dataMonth });
+  res.json({ ...results[marketplace], dataMonth });
 });
 
-productRouter.post('/import-all', (req, res) => {
+productRouter.post('/import-all', async (req, res) => {
   const groups = req.body?.productsByMarketplace;
   if (!groups || typeof groups !== 'object' || Array.isArray(groups)) {
     return res.status(400).json({ error: '分市场产品数据格式不正确' });
@@ -213,12 +110,9 @@ productRouter.post('/import-all', (req, res) => {
   const dataMonth = cleanDataMonth(req.body?.dataMonth);
   if (!dataMonth) return res.status(400).json({ error: '无法从文件名识别数据月份' });
   const sourceFile = cleanText(req.body?.sourceFile, 255);
-  const results = saveMarketImports([...combined], dataMonth, sourceFile, req.session.user.id);
-  for (const [marketplace, result] of Object.entries(results)) {
-    audit(req.session.user.id, marketplace, 'import', 'products', null, {
-      ...result, dataMonth, sourceFile,
-    });
-  }
+  const results = await runTask('productsImport', {
+    entries: [...combined], dataMonth, sourceFile, userId: req.session.user.id,
+  });
   res.json({ markets: results, totals: importTotals(results), dataMonth });
 });
 

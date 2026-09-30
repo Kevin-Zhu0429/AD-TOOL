@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DB_PATH, dataDir, openDb } from './dbConnect.js';
+import { DB_PATH, dataDir, openDb, writeAudit } from './dbConnect.js';
 import { dedupeKey, libOf, regionOf } from './libs.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -144,21 +144,9 @@ function migrate() {
   }
 }
 
-const insertAudit = db.prepare(
-  `INSERT INTO audit_log (user_id, marketplace, action, entity, entity_id, detail)
-   VALUES (?, ?, ?, ?, ?, ?)`
-);
-
 /** 写一条操作留痕 */
 export function audit(userId, marketplace, action, entity, entityId, detail) {
-  insertAudit.run(
-    userId ?? null,
-    marketplace ?? null,
-    action,
-    entity,
-    entityId ?? null,
-    detail ? JSON.stringify(detail) : null
-  );
+  writeAudit(db, userId, marketplace, action, entity, entityId, detail);
 }
 
 console.log(`[db] ${DB_PATH}`);
