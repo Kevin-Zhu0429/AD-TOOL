@@ -15,11 +15,31 @@ fs.mkdirSync(DATA_DIR, { recursive: true });
 
 export const DB_PATH = path.join(DATA_DIR, 'adtool.db');
 export const dataDir = DATA_DIR;
-export const db = new Database(DB_PATH);
+
+/**
+ * 打开一个数据库连接并套上统一的 pragma。主线程和以后的 worker 线程都走这里,
+ * 保证每个连接设置一致(foreign_keys 这类 pragma 是按连接生效的,漏一个就会静默失效)。
+ */
+export function openDb({ readonly = false } = {}) {
+  const conn = new Database(DB_PATH, { readonly });
+  if (!readonly) conn.pragma('journal_mode = WAL');
+  conn.pragma('synchronous = NORMAL');   // WAL 下安全:断电最多丢最后一个事务,不会损坏库
+  conn.pragma('busy_timeout = 5000');    // 别的连接在写时最多等 5 秒,而不是直接报 SQLITE_BUSY
+  conn.pragma('foreign_keys = ON');
+  conn.pragma('cache_size = -32000');    // 32 MB 页缓存
+  conn.pragma('temp_store = MEMORY');
+  conn.pragma('mmap_size = 268435456');  // 256 MB 内存映射读
+  return conn;
+}
+
+export const db = openDb();
 
 const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
 db.exec(schema);
 migrate();
+db.pragma('optimize');
+// 定期让 SQLite 按实际查询更新统计信息;unref 不挡进程退出
+setInterval(() => db.pragma('optimize'), 6 * 60 * 60 * 1000).unref();
 
 /**
  * 老库升级 —— 每次启动跑一遍,已经改过的自动跳过。
@@ -34,6 +54,13 @@ function migrate() {
   const abaColumns = db.prepare('PRAGMA table_info(aba_queries)').all().map((c) => c.name);
   for (const column of ['brand_impressions', 'brand_clicks', 'brand_purchases']) {
     if (!abaColumns.includes(column)) db.exec(`ALTER TABLE aba_queries ADD COLUMN ${column} INTEGER CHECK(${column} >= 0)`);
+  }
+  // 报告行数在导入时写好,报告列表就不用每份都 count(*) 一遍
+  for (const [table, rows] of [['aba_reports', 'aba_queries'], ['aba_asin_reports', 'aba_asin_queries']]) {
+    if (!db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === 'row_count')) {
+      db.exec(`ALTER TABLE ${table} ADD COLUMN row_count INTEGER NOT NULL DEFAULT 0;
+        UPDATE ${table} SET row_count = (SELECT count(*) FROM ${rows} q WHERE q.report_id = ${table}.id);`);
+    }
   }
   if (!db.prepare('PRAGMA table_info(sku_items)').all().some((c) => c.name === 'asin')) {
     db.exec('ALTER TABLE sku_items ADD COLUMN asin TEXT');
@@ -140,12 +167,14 @@ function migrate() {
   }
 }
 
+const insertAudit = db.prepare(
+  `INSERT INTO audit_log (user_id, marketplace, action, entity, entity_id, detail)
+   VALUES (?, ?, ?, ?, ?, ?)`
+);
+
 /** 写一条操作留痕 */
 export function audit(userId, marketplace, action, entity, entityId, detail) {
-  db.prepare(
-    `INSERT INTO audit_log (user_id, marketplace, action, entity, entity_id, detail)
-     VALUES (?, ?, ?, ?, ?, ?)`
-  ).run(
+  insertAudit.run(
     userId ?? null,
     marketplace ?? null,
     action,

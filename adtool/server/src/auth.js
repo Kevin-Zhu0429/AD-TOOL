@@ -540,10 +540,12 @@ authRouter.get('/audit', requireRole('owner'), (req, res) => {
   const stats = db.prepare(
     `SELECT u.id, u.username, u.display_name, u.role, u.is_active,
             SUM(CASE WHEN a.created_at >= datetime('now', 'localtime', '-7 days') THEN 1 ELSE 0 END) AS seven_day,
-            SUM(CASE WHEN a.created_at >= datetime('now', 'localtime', '-30 days') THEN 1 ELSE 0 END) AS thirty_day,
-            MAX(a.created_at) AS last_action_at
+            COUNT(a.id) AS thirty_day,
+            (SELECT MAX(created_at) FROM audit_log WHERE user_id = u.id) AS last_action_at
        FROM users u
+       -- 只 join 最近 30 天,走 idx_audit_user_time 做范围扫描,不再扫每个人的全部历史
        LEFT JOIN audit_log a ON a.user_id = u.id
+                            AND a.created_at >= datetime('now', 'localtime', '-30 days')
       GROUP BY u.id
       ORDER BY seven_day DESC, thirty_day DESC, u.id`
   ).all();

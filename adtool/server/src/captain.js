@@ -436,6 +436,15 @@ function allActiveSources() {
   ).all();
 }
 
+const markSourceOk = db.prepare(
+  `UPDATE captain_channel_bindings SET last_sync_at = ?, last_sync_status = 'ok',
+          last_sync_detail = ?, updated_at = datetime('now', 'localtime') WHERE id = ?`
+);
+const markSourceError = db.prepare(
+  `UPDATE captain_channel_bindings SET last_sync_status = 'error', last_sync_detail = ?,
+          updated_at = datetime('now', 'localtime') WHERE id = ?`
+);
+
 async function refreshSources(sources) {
   const now = Math.floor(Date.now() / 1000);
   const errors = [];
@@ -446,20 +455,14 @@ async function refreshSources(sources) {
       const items = await fetchBindingInventory(source, now);
       db.transaction(() => {
         for (const item of items) upsertSnapshot.run({ bindingId: source.id, ...item });
-        db.prepare(
-          `UPDATE captain_channel_bindings SET last_sync_at = ?, last_sync_status = 'ok',
-                  last_sync_detail = ?, updated_at = datetime('now', 'localtime') WHERE id = ?`
-        ).run(now, `读取 ${items.length} 个 SKU`, source.id);
+        markSourceOk.run(now, `读取 ${items.length} 个 SKU`, source.id);
       })();
       fetched += items.length;
       succeeded += 1;
     } catch (error) {
       const message = clean(error.message).slice(0, 300) || '同步失败';
       errors.push(`${source.channel_name}：${message}`);
-      db.prepare(
-        `UPDATE captain_channel_bindings SET last_sync_status = 'error', last_sync_detail = ?,
-                updated_at = datetime('now', 'localtime') WHERE id = ?`
-      ).run(message, source.id);
+      markSourceError.run(message, source.id);
     }
   }
   return { sources: sources.length, succeeded, failed: errors.length, fetched, errors };

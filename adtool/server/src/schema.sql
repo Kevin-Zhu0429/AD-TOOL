@@ -230,6 +230,8 @@ CREATE TABLE IF NOT EXISTS sku_items (
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_sku_unique ON sku_items (user_id, dedupe);
 CREATE INDEX IF NOT EXISTS idx_sku_user ON sku_items (user_id, country);
+-- 船长同步按「账号 + 国家 + 小写 SKU」更新库存;表达式必须和 captain.js 里的 WHERE 一字不差
+CREATE INDEX IF NOT EXISTS idx_sku_user_country_key ON sku_items (user_id, country, lower(trim(sku)));
 
 -- ---------- 船长 BI 店铺绑定与库存快照 ----------
 -- API 凭证只放环境变量；兼容表保存真实库存来源及旧版单账号绑定。
@@ -336,6 +338,7 @@ CREATE TABLE IF NOT EXISTS sku_stock_events (
 
 CREATE INDEX IF NOT EXISTS idx_sku_stock_events_sku ON sku_stock_events (user_id, country, sku_key, id);
 CREATE INDEX IF NOT EXISTS idx_sku_stock_events_sync ON sku_stock_events (sync_id);
+CREATE INDEX IF NOT EXISTS idx_sku_stock_events_user_time ON sku_stock_events (user_id, created_at);
 
 -- ---------- 广告组合库 ----------
 -- 广告组合编号由亚马逊账号和站点共同决定，因此按用户 + 站点隔离。

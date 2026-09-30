@@ -27,22 +27,22 @@ abaAsinRouter.post('/import', (req, res) => {
     if (reports.length > 500) throw new Error('每批最多导入 500 份 ASIN 周报');
   } catch (e) { return res.status(400).json({ error: e.message }); }
   const userId = req.session.user.id;
+  const find = db.prepare('SELECT id, content_hash FROM aba_asin_reports WHERE user_id=? AND marketplace=? AND asin=? AND week_end=?');
+  const upsertReport = db.prepare(`INSERT INTO aba_asin_reports (user_id, marketplace, asin, week_start, week_end, week_number, source_file, content_hash, row_count)
+    VALUES (@user_id, @marketplace, @asin, @week_start, @week_end, @week_number, @source_file, @content_hash, @row_count)
+    ON CONFLICT(user_id, marketplace, asin, week_end) DO UPDATE SET
+    week_start=excluded.week_start, week_number=excluded.week_number, source_file=excluded.source_file,
+    content_hash=excluded.content_hash, row_count=excluded.row_count, updated_at=datetime('now') RETURNING id`);
+  const clearQueries = db.prepare('DELETE FROM aba_asin_queries WHERE report_id=?');
+  const insert = db.prepare(`INSERT INTO aba_asin_queries (report_id, query, ${ASIN_COUNT_KEYS.join(',')})
+    VALUES (@report_id, @query, ${ASIN_COUNT_KEYS.map((k) => `@${k}`).join(',')})`);
   const result = db.transaction(() => {
     const result = [];
-    const insert = db.prepare(`INSERT INTO aba_asin_queries (report_id, query, ${ASIN_COUNT_KEYS.join(',')})
-      VALUES (@report_id, @query, ${ASIN_COUNT_KEYS.map((k) => `@${k}`).join(',')})`);
     for (const report of reports) {
-      const find = db.prepare('SELECT id, content_hash FROM aba_asin_reports WHERE user_id=? AND marketplace=? AND asin=? AND week_end=?');
-      const args = [userId, req.abaMarket, report.asin, report.week_end];
-      const previous = find.get(...args);
+      const previous = find.get(userId, req.abaMarket, report.asin, report.week_end);
       if (previous?.content_hash !== report.content_hash) {
-        db.prepare(`INSERT INTO aba_asin_reports (user_id, marketplace, asin, week_start, week_end, week_number, source_file, content_hash)
-          VALUES (@user_id, @marketplace, @asin, @week_start, @week_end, @week_number, @source_file, @content_hash)
-          ON CONFLICT(user_id, marketplace, asin, week_end) DO UPDATE SET
-          week_start=excluded.week_start, week_number=excluded.week_number, source_file=excluded.source_file,
-          content_hash=excluded.content_hash, updated_at=datetime('now')`).run({ ...report, user_id: userId });
-        const { id } = find.get(...args);
-        db.prepare('DELETE FROM aba_asin_queries WHERE report_id=?').run(id);
+        const { id } = upsertReport.get({ ...report, user_id: userId, row_count: report.rows.length });
+        clearQueries.run(id);
         for (const row of report.rows) insert.run({ ...row, report_id: id });
       }
       result.push({ asin: report.asin, week_end: report.week_end, count: report.rows.length,
@@ -56,8 +56,7 @@ abaAsinRouter.post('/import', (req, res) => {
 
 abaAsinRouter.get('/', (req, res) => {
   const userId = req.session.user.id;
-  const reports = db.prepare(`SELECT r.id, r.asin, r.week_start, r.week_end, r.week_number, r.updated_at,
-    (SELECT count(*) FROM aba_asin_queries q WHERE q.report_id=r.id) AS row_count
+  const reports = db.prepare(`SELECT r.id, r.asin, r.week_start, r.week_end, r.week_number, r.updated_at, r.row_count
     FROM aba_asin_reports r WHERE r.user_id=? AND r.marketplace=? ORDER BY r.week_end DESC, r.asin`).all(userId, req.abaMarket);
   const skuItems = db.prepare(`SELECT id, asin, sku, brand, model, set_group AS setGroup FROM sku_items
     WHERE user_id=? AND country=? AND asin IS NOT NULL ORDER BY sku`).all(userId, req.abaMarket);
