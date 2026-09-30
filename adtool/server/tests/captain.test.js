@@ -56,6 +56,21 @@ test('Amazon SP-API shared EU inventory is assigned to separate users by country
       data: await response.json(),
     };
   }
+  // 同步在后台跑:开始后轮询到结束,返回 { status, data },data 是同步结果;没能开始的原样返回
+  async function sync(route, cookie) {
+    const started = await call(route, cookie, 'POST');
+    if (started.status !== 202) return started;
+    assert.equal(started.data.job.status, 'running');
+    for (;;) {
+      const { data } = await call(route, cookie);
+      if (data.job.status !== 'running') {
+        assert.equal(data.job.id, started.data.job.id);
+        assert.equal(data.job.status, 'done', data.job.error);
+        return { status: 200, data: data.job.result };
+      }
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+  }
   const login = async (username) => (
     await call('/auth/login', '', 'POST', { username, password: 'local-test-password' })
   ).cookie;
@@ -112,6 +127,10 @@ test('Amazon SP-API shared EU inventory is assigned to separate users by country
   let rejectTokenOnce = false;
   let throttleOnce = false;
   let lwaCalls = 0;
+  // 设了 hold 时库存请求先卡住,用来看同步进行中的状态和并发数
+  let hold = null;
+  let inFlight = 0;
+  let maxInFlight = 0;
   const quantityOverrides = new Map();
   const inventoryCalls = new Map();
   global.fetch = async (input, options = {}) => {
@@ -154,6 +173,13 @@ test('Amazon SP-API shared EU inventory is assigned to separate users by country
       const channel = `${seller}-${countryOf[marketplaceId].toLowerCase()}`;
       inventoryCalls.set(channel, (inventoryCalls.get(channel) ?? 0) + 1);
       if (channel === failingChannel) throw new TypeError('temporary remote failure');
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      try {
+        if (hold) await hold.promise;
+      } finally {
+        inFlight -= 1;
+      }
       const quantities = {
         'hp-de': [15, 1], 'hp-es': [15, 1], 'hp-fr': [15, 1], 'hp-it': [15, 1],
         'hp-uk': [7, 4], 'hp-us': [99, 5],
@@ -251,7 +277,7 @@ test('Amazon SP-API shared EU inventory is assigned to separate users by country
     { country: 'ES', userId: users['aba-test'] },
   ]);
   assert.equal(partialBinding.assignments, 1);
-  assert.equal((await call('/captain/sync', deCookie, 'POST')).status, 400);
+  assert.equal((await sync('/captain/sync', deCookie)).status, 400);
   assert.deepEqual(
     (await call('/captain/status', esCookie)).data.bindings.map((row) => row.country),
     ['ES'],
@@ -266,7 +292,7 @@ test('Amazon SP-API shared EU inventory is assigned to separate users by country
   await saveGroup(ukGroup, [{ country: 'UK', userId: users['aba-test'] }]);
   await saveGroup(usGroup, [{ country: 'US', userId: users['aba-test'] }]);
 
-  const esSync = await call('/captain/sync', esCookie, 'POST');
+  const esSync = await sync('/captain/sync', esCookie);
   assert.equal(esSync.status, 200);
   assert.deepEqual(esSync.data.errors, []);
   assert.equal(esSync.data.succeeded, 6);
@@ -289,15 +315,41 @@ test('Amazon SP-API shared EU inventory is assigned to separate users by country
     "SELECT stock FROM sku_items WHERE user_id = ? AND country = 'US' AND brand = 'HP'"
   ).get(users['aba-test']).stock, 99);
 
-  const deSync = await call('/captain/sync', deCookie, 'POST');
+  const deSync = await sync('/captain/sync', deCookie);
   assert.equal(deSync.status, 200);
   assert.equal(deSync.data.sources, 4);
   assert.equal(server.db.prepare(
     "SELECT stock FROM sku_items WHERE user_id = ? AND country = 'DE' AND brand = 'HP'"
   ).get(users['aba-de']).stock, 15);
 
+  // 统一同步进行中:再点一次拿到同一个任务;账号自己点同步要等它跑完;进度按店铺数走
   inventoryCalls.clear();
-  const allSync = await call('/captain/sync-all', ownerCookie, 'POST');
+  maxInFlight = 0;
+  let release;
+  hold = { promise: new Promise((resolve) => { release = resolve; }) };
+  const running = await call('/captain/sync-all', ownerCookie, 'POST');
+  assert.equal(running.status, 202);
+  assert.equal((await call('/captain/sync-all', ownerCookie, 'POST')).data.job.id, running.data.job.id);
+  assert.equal((await call('/captain/sync', esCookie, 'POST')).status, 409);
+  assert.equal((await call('/captain/sync-all', esCookie)).status, 403);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const progress = (await call('/captain/sync-all', ownerCookie)).data.job.progress;
+  assert.deepEqual({ phase: progress.phase, done: progress.done, total: progress.total }, { phase: 'fetch', done: 0, total: 6 });
+  // HP 欧洲和 HP 北美是两个卖家账号,同时读;同一个账号的店铺排队读
+  assert.equal(inFlight, 2);
+  hold = null;
+  release();
+  let allSync;
+  for (;;) {
+    const { data } = await call('/captain/sync-all', ownerCookie);
+    if (data.job.status !== 'running') {
+      assert.equal(data.job.status, 'done', data.job.error);
+      allSync = { status: 200, data: data.job.result };
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.equal(maxInFlight, 2);
   assert.equal(allSync.status, 200);
   assert.equal(allSync.data.users, 3);
   assert.equal(allSync.data.sources, 6);
@@ -315,8 +367,8 @@ test('Amazon SP-API shared EU inventory is assigned to separate users by country
   const admin = await call('/captain/admin', ownerCookie);
   assert.equal(admin.data.assignments.length, 6);
   assert.deepEqual(admin.data.brands, [
-    { name: 'HP', markets: [], accounts: [{ region: 'eu', sellerId: 'HPEU' }, { region: 'na', sellerId: 'HPNA' }] },
-    { name: 'CC', markets: ['ES', 'DE', 'FR', 'IT'], accounts: [{ region: 'eu', sellerId: 'CCEU' }] },
+    { name: 'HP', markets: [], accounts: [{ slot: 'eu', sellerId: 'HPEU' }, { slot: 'na', sellerId: 'HPNA' }] },
+    { name: 'CC', markets: ['ES', 'DE', 'FR', 'IT'], accounts: [{ slot: 'eu', sellerId: 'CCEU' }] },
   ]);
   assert.deepEqual(admin.data.configIssues, ['PG 欧洲账号缺少 BRAND5_SELLER_ID_EU']);
   assert.doesNotMatch(JSON.stringify(admin.data), /Atzr|hp-secret|cc-secret/);
@@ -325,7 +377,7 @@ test('Amazon SP-API shared EU inventory is assigned to separate users by country
   const lwaBefore = lwaCalls;
   rejectTokenOnce = true;
   throttleOnce = true;
-  const retried = await call('/captain/sync', deCookie, 'POST');
+  const retried = await sync('/captain/sync', deCookie);
   assert.equal(retried.status, 200);
   assert.equal(retried.data.failed, 0);
   assert.equal(lwaCalls, lwaBefore + 1);
@@ -335,7 +387,7 @@ test('Amazon SP-API shared EU inventory is assigned to separate users by country
 
   failingChannel = 'hp-es';
   inventoryCalls.clear();
-  const partial = await call('/captain/sync', esCookie, 'POST');
+  const partial = await sync('/captain/sync', esCookie);
   assert.equal(partial.status, 200);
   assert.equal(partial.data.failed, 1);
   assert.match(partial.data.errors[0], /^HP_ES：连不上亚马逊接口：temporary remote failure/);
@@ -357,12 +409,12 @@ test('Amazon SP-API shared EU inventory is assigned to separate users by country
 
   // 库存变动:这次同步 US 从 99 变 0 = 新断货;下次从 0 变 25 = 补货
   failingChannel = '';
-  const quietSync = await call('/captain/sync', esCookie, 'POST');
+  const quietSync = await sync('/captain/sync', esCookie);
   assert.equal(quietSync.data.stockSync.outCount, 0);
   assert.equal(quietSync.data.stockSync.restockCount, 0);
 
   quantityOverrides.set('hp-us', [0, 3]);
-  const outSync = await call('/captain/sync', esCookie, 'POST');
+  const outSync = await sync('/captain/sync', esCookie);
   assert.equal(outSync.status, 200);
   assert.equal(outSync.data.stockSync.outCount, 1);
   assert.equal(outSync.data.stockSync.restockCount, 0);
@@ -380,7 +432,7 @@ test('Amazon SP-API shared EU inventory is assigned to separate users by country
   assert.equal(list.data.items.find((item) => item.country === 'ES' && item.brand === 'HP').stockEvent, undefined);
 
   // 同步没变化:本次结果清零,但表格里仍标着还成立的新断货
-  await call('/captain/sync', esCookie, 'POST');
+  await sync('/captain/sync', esCookie);
   list = await call('/sku', esCookie);
   assert.equal(list.data.stockSync.outCount, 0);
   assert.equal(usRow().stockEvent.kind, 'out');
@@ -391,7 +443,7 @@ test('Amazon SP-API shared EU inventory is assigned to separate users by country
   assert.ok(deList.data.items.every((item) => !item.stockEvent));
 
   quantityOverrides.set('hp-us', [25, 0]);
-  const backSync = await call('/captain/sync', esCookie, 'POST');
+  const backSync = await sync('/captain/sync', esCookie);
   assert.equal(backSync.data.stockSync.outCount, 0);
   assert.equal(backSync.data.stockSync.restockCount, 1);
   assert.equal(backSync.data.stockSync.restocked[0].prevStock, 0);
@@ -408,7 +460,7 @@ test('Amazon SP-API shared EU inventory is assigned to separate users by country
   // 超级管理员统一同步:按账号汇总新断货 / 补货数量
   quantityOverrides.set('hp-us', [0, 0]);
   assert.equal((await call(`/sku/${usId}`, esCookie, 'PATCH', { stock: '5' })).status, 200);
-  const allOut = await call('/captain/sync-all', ownerCookie, 'POST');
+  const allOut = await sync('/captain/sync-all', ownerCookie);
   assert.equal(allOut.status, 200);
   assert.equal(allOut.data.outOfStock, 1);
   assert.equal(allOut.data.results.find((row) => row.userId === users['aba-test']).outOfStock, 1);

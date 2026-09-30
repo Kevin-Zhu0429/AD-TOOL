@@ -45,6 +45,34 @@ async function importAgedFees(rows, date, scenario, sourceFile, onProgress) {
   }
 }
 
+const SYNC_POLL_MS = 1500;
+
+/**
+ * 库存同步在服务器后台跑:start 时先 POST 开始(已经在跑就接着看),之后每 1.5 秒问一次进度,
+ * 跑完返回结果。不 start 时只接着看正在跑的任务(页面刷新后用),没有在跑的返回 null。
+ * signal 取消后不再轮询,服务器上的同步照样跑完。
+ */
+async function followSyncJob(path, { start = false, onProgress, signal } = {}) {
+  let { job } = await request(path, start ? { method: 'POST', signal } : { signal });
+  if (!job || (!start && job.status !== 'running')) return null;
+  while (job.status === 'running') {
+    onProgress?.(job.progress);
+    await new Promise((resolve) => setTimeout(resolve, SYNC_POLL_MS));
+    ({ job } = await request(path, { signal }));
+    if (!job) throw new Error('同步任务找不到了（服务器可能重启过），请重新同步');
+  }
+  if (job.status === 'error') throw new Error(job.error || '同步失败');
+  return job.result;
+}
+
+/** 同步进度的一句话:先按店铺数读亚马逊,读完再写 SKU 库 */
+export function syncProgressText(progress) {
+  if (progress?.phase === 'apply') return '店铺已读完，正在写入 SKU 库…';
+  if (!progress?.total) return '正在同步亚马逊库存…';
+  return `正在读取亚马逊库存 ${progress.done}/${progress.total} 家店铺`
+    + (progress.current ? `（刚完成 ${progress.current}）` : '');
+}
+
 /** 操作明细的筛选和翻页参数;all / 空值不带 */
 function auditQuery({ userId, days, before } = {}) {
   const q = new URLSearchParams();
@@ -116,7 +144,8 @@ export const api = {
 
   // ---------- 亚马逊 SP-API 库存同步(接口路径沿用 captain) ----------
   captainStatus: () => request('/captain/status'),
-  syncCaptainInventory: () => request('/captain/sync', { method: 'POST' }),
+  syncCaptainInventory: (options) => followSyncJob('/captain/sync', { ...options, start: true }),
+  resumeCaptainSync: (options) => followSyncJob('/captain/sync', options),
   captainAdmin: () => request('/captain/admin'),
   discoverCaptainChannels: () => request('/captain/discover', { method: 'POST' }),
   saveCaptainBinding: (body) => request('/captain/bindings', { method: 'POST', body }),
@@ -124,7 +153,8 @@ export const api = {
     request(`/captain/bindings/${id}`, { method: 'PATCH', body: { enabled } }),
   toggleCaptainAssignment: (id, enabled) =>
     request(`/captain/assignments/${id}`, { method: 'PATCH', body: { enabled } }),
-  syncAllCaptainInventory: () => request('/captain/sync-all', { method: 'POST' }),
+  syncAllCaptainInventory: (options) => followSyncJob('/captain/sync-all', { ...options, start: true }),
+  resumeCaptainSyncAll: (options) => followSyncJob('/captain/sync-all', options),
 
   // ---------- 广告组合库（每个账号、每个站点各一份） ----------
   portfolios: (marketplace) => request(`/portfolio?marketplace=${encodeURIComponent(marketplace)}`),

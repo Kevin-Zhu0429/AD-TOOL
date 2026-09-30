@@ -42,13 +42,22 @@ const MAX_RETRIES = 4;
 const clean = (value) => String(value ?? '').trim();
 const sleep = (ms) => (ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve());
 
-// 亚马逊把 AU 所在的区域叫远东区(FE),网站只做 AU,页面上就叫澳洲
-export const REGION_LABELS = { eu: '欧洲', na: '北美', fe: '澳洲' };
-
-// .env 变量名的区域后缀,第一个是文档里写的;澳洲写 _AU 或 _FE 都认
-const REGION_SUFFIXES = { eu: ['EU'], na: ['NA'], fe: ['AU', 'FE'] };
+/**
+ * 一个品牌下可以配的卖家账号。region 决定走哪个接口地址,markets 是这个账号能管的站点。
+ * AE 在亚马逊属于欧洲区:单独填了 _AE 就用中东账号,没填就跟着欧洲账号读。
+ * AU 属于亚马逊的远东区(FE),变量后缀写 _AU 或 _FE 都认;每组后缀的第一个是文档里写的。
+ */
+const ACCOUNT_SLOTS = [
+  { slot: 'eu', label: '欧洲', region: 'eu', suffixes: ['EU'], markets: ['ES', 'DE', 'FR', 'IT', 'UK', 'AE'] },
+  { slot: 'na', label: '北美', region: 'na', suffixes: ['NA'], markets: ['US', 'CA'] },
+  { slot: 'ae', label: '中东', region: 'eu', suffixes: ['AE'], markets: ['AE'] },
+  { slot: 'au', label: '澳洲', region: 'fe', suffixes: ['AU', 'FE'], markets: ['AU'] },
+];
+export const SLOT_LABELS = Object.fromEntries(ACCOUNT_SLOTS.map((item) => [item.slot, item.label]));
+// 一个站点能归好几个账号时(AE 可以归欧洲也可以归中东),管得越少的越具体,优先
+const SLOTS_BY_SPECIFICITY = [...ACCOUNT_SLOTS].sort((a, b) => a.markets.length - b.markets.length);
 const KNOWN_BRAND_KEYS = new Set(['NAME', 'MARKETS', 'LWA_CLIENT_ID', 'LWA_CLIENT_SECRET',
-  ...Object.values(REGION_SUFFIXES).flat().flatMap((suffix) => [`LWA_REFRESH_TOKEN_${suffix}`, `SELLER_ID_${suffix}`])]);
+  ...ACCOUNT_SLOTS.flatMap((item) => item.suffixes).flatMap((suffix) => [`LWA_REFRESH_TOKEN_${suffix}`, `SELLER_ID_${suffix}`])]);
 
 /** 市场列表:逗号、空格都能分隔,GB 当 UK */
 function parseMarkets(value) {
@@ -61,8 +70,8 @@ function parseMarkets(value) {
  *   BRAND<n>_NAME                     品牌名,要和 SKU 库里的品牌一致(如 CC)
  *   BRAND<n>_MARKETS                  读取店铺时列出哪些站点,如 ES,DE,FR,IT,UK,US,CA;不填 = 全部
  *   BRAND<n>_LWA_CLIENT_ID / _SECRET  这个品牌开发者应用的 LWA 凭证
- *   BRAND<n>_LWA_REFRESH_TOKEN_<EU|NA|AU> + BRAND<n>_SELLER_ID_<EU|NA|AU>  各区域账号的授权
- * 每个「品牌 × 区域」是一个卖家账号。填得不完整的不猜,原因放进 issues 给超级管理员看。
+ *   BRAND<n>_LWA_REFRESH_TOKEN_<EU|NA|AE|AU> + BRAND<n>_SELLER_ID_<EU|NA|AE|AU>  各账号的授权
+ * 每组后缀是一个卖家账号。填得不完整的不猜,原因放进 issues 给超级管理员看。
  */
 export function readSpApiConfig(env = process.env) {
   const numbers = [...new Set(Object.keys(env)
@@ -92,7 +101,7 @@ export function readSpApiConfig(env = process.env) {
     const unknownKeys = Object.keys(env)
       .filter((key) => key.startsWith(prefix) && !KNOWN_BRAND_KEYS.has(key.slice(prefix.length)));
     if (unknownKeys.length) {
-      issues.push(`${label} 的 ${unknownKeys.join('、')} 不认识，已忽略（区域后缀只能是 EU / NA / AU）`);
+      issues.push(`${label} 的 ${unknownKeys.join('、')} 不认识，已忽略（账号后缀只能是 EU / NA / AE / AU）`);
     }
 
     const clientId = read('LWA_CLIENT_ID');
@@ -108,61 +117,72 @@ export function readSpApiConfig(env = process.env) {
     if (unknown.length) issues.push(`${label} 的 ${prefix}MARKETS 里 ${unknown.join('、')} 网站不支持，已忽略`);
     const markets = requested.filter((market) => AMAZON_MARKETPLACES[market]);
 
-    const brandAccounts = [];
+    const filled = [];
     let incomplete = false;
-    for (const region of Object.keys(REGION_HOSTS)) {
-      const suffixes = REGION_SUFFIXES[region];
-      const pick = (key) => suffixes.map((item) => read(`${key}_${item}`)).find(Boolean) ?? '';
+    for (const def of ACCOUNT_SLOTS) {
+      const pick = (key) => def.suffixes.map((item) => read(`${key}_${item}`)).find(Boolean) ?? '';
       const refreshToken = pick('LWA_REFRESH_TOKEN');
       const sellerId = pick('SELLER_ID').toUpperCase();
       // 提示缺哪个变量时沿用用户已经在用的后缀
-      const suffix = suffixes.find((item) => read(`LWA_REFRESH_TOKEN_${item}`) || read(`SELLER_ID_${item}`))
-        ?? suffixes[0];
+      const suffix = def.suffixes.find((item) => read(`LWA_REFRESH_TOKEN_${item}`) || read(`SELLER_ID_${item}`))
+        ?? def.suffixes[0];
       if (!refreshToken && !sellerId) continue;
       if (!refreshToken || !sellerId) {
         const missing = refreshToken ? `${prefix}SELLER_ID_${suffix}` : `${prefix}LWA_REFRESH_TOKEN_${suffix}`;
-        issues.push(`${label} ${REGION_LABELS[region]}账号缺少 ${missing}`);
+        issues.push(`${label} ${def.label}账号缺少 ${missing}`);
         incomplete = true;
         continue;
       }
-      const regionMarkets = markets.filter((market) => AMAZON_MARKETPLACES[market].region === region);
-      if (markets.length && !regionMarkets.length) {
-        issues.push(`${label} 填了${REGION_LABELS[region]}账号，但 ${prefix}MARKETS 里没有${REGION_LABELS[region]}站点，这个账号不会读取`);
+      filled.push({ def, refreshToken, sellerId });
+    }
+    if (!filled.length) {
+      if (!incomplete) issues.push(`${label} 还没有填任何账号的 Refresh Token 和卖家编号`);
+      continue;
+    }
+
+    const ownerOf = (market) => SLOTS_BY_SPECIFICITY
+      .map((def) => filled.find((item) => item.def === def))
+      .find((item) => item?.def.markets.includes(market));
+    const brandAccounts = [];
+    for (const item of filled) {
+      const owned = item.def.markets.filter((market) => ownerOf(market) === item);
+      const accountMarkets = markets.length ? owned.filter((market) => markets.includes(market)) : owned;
+      if (markets.length && !accountMarkets.length) {
+        issues.push(`${label} 填了${item.def.label}账号，但 ${prefix}MARKETS 里没有它管的站点，这个账号不会读取`);
       }
       brandAccounts.push({
-        brand: name, region, sellerId, refreshToken, clientId, clientSecret,
-        markets: regionMarkets,
+        brand: name, slot: item.def.slot, region: item.def.region, sellerId: item.sellerId,
+        refreshToken: item.refreshToken, clientId, clientSecret,
+        markets: accountMarkets,
         allMarkets: !markets.length,
       });
     }
-    if (!brandAccounts.length) {
-      if (!incomplete) issues.push(`${label} 还没有填任何区域的 Refresh Token 和卖家编号`);
-      continue;
-    }
-    const configured = new Set(brandAccounts.map((account) => account.region));
-    const uncovered = markets.filter((market) => !configured.has(AMAZON_MARKETPLACES[market].region));
+
+    const uncovered = markets.filter((market) => !ownerOf(market));
     if (uncovered.length) {
-      const regions = [...new Set(uncovered.map((market) => AMAZON_MARKETPLACES[market].region))];
-      const needed = regions.map((region) => {
-        const suffix = REGION_SUFFIXES[region][0];
-        return `${prefix}LWA_REFRESH_TOKEN_${suffix} 和 ${prefix}SELLER_ID_${suffix}`;
-      }).join('；');
-      issues.push(`${label} 的 ${uncovered.join('、')} 没有对应的${regions.map((region) => REGION_LABELS[region]).join('、')}账号授权`
+      const slots = [...new Set(uncovered.map((market) => SLOTS_BY_SPECIFICITY.find((def) => def.markets.includes(market))))];
+      const needed = slots.map((def) => (
+        `${prefix}LWA_REFRESH_TOKEN_${def.suffixes[0]} 和 ${prefix}SELLER_ID_${def.suffixes[0]}`
+      )).join('；');
+      issues.push(`${label} 的 ${uncovered.join('、')} 没有对应的${slots.map((def) => def.label).join('、')}账号授权`
         + `（要填 ${needed}），读取店铺时会跳过`);
     }
-    brands.push({ name, markets, accounts: brandAccounts.map(({ region, sellerId }) => ({ region, sellerId })) });
+    brands.push({ name, markets, accounts: brandAccounts.map(({ slot, sellerId }) => ({ slot, sellerId })) });
     accounts.push(...brandAccounts);
   }
   return { brands, accounts, issues };
 }
 
-/** 配置完整的卖家账号(品牌 × 区域) */
+/** 配置完整的卖家账号 */
 export function spApiAccounts(env = process.env) {
   return readSpApiConfig(env).accounts;
 }
 
-export function findSpApiAccount(sellerId, region) {
-  return spApiAccounts().find((account) => account.sellerId === sellerId && account.region === region) ?? null;
+/** 同步时按店铺编号里的卖家和站点找回账号;MARKETS 后来删了这个站点也照样能找到 */
+export function findSpApiAccount(sellerId, country) {
+  const region = AMAZON_MARKETPLACES[country]?.region;
+  const candidates = spApiAccounts().filter((account) => account.sellerId === sellerId && account.region === region);
+  return candidates.find((account) => account.markets.includes(country)) ?? candidates[0] ?? null;
 }
 
 // 亚马逊的 HTTP 状态放在 upstreamStatus,不叫 status:路由会把 error.status 原样回给浏览器

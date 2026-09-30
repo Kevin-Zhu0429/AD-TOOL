@@ -46,6 +46,8 @@ const { spApiTiming } = await import('../../server/src/spApi.js');
 spApiTiming.minIntervalMs = 0;
 const MARKETPLACE = { ES: 'A1RKKUPIHCS9HS', DE: 'A1PA6795UKMFR9', FR: 'A13V1IB3VIYZZH' };
 const countryOf = Object.fromEntries(Object.entries(MARKETPLACE).map(([country, id]) => [id, country]));
+// 设了 hold 时库存请求先卡住,模拟店铺多、同步要很久
+let hold = null;
 global.fetch = async (input, options = {}) => {
   const url = new URL(String(input));
   if (url.host === 'api.amazon.com') {
@@ -63,6 +65,7 @@ global.fetch = async (input, options = {}) => {
     // 只有 HP 分配了负责人,CC 的店铺不该被拉
     assert.equal(token, 'token-browser-hp');
     assert.ok(countryOf[url.searchParams.get('marketplaceIds')]);
+    if (hold) await hold;
     return Response.json({ payload: { inventorySummaries: [{
       sellerSku: 'BROWSER-SKU', asin: 'B012345678',
       inventoryDetails: {
@@ -134,7 +137,17 @@ try {
   assert.match(await skuRow.innerText(), /已补货/);
   if (process.env.SCREENSHOT_DIR) await page.screenshot({ path: `${process.env.SCREENSHOT_DIR}/sku-stock-change.png`, fullPage: true });
 
+  // 同步很慢时页面显示进度,不会等到网关超时;刷新页面后接着显示,跑完照常出结果
+  let release;
+  hold = new Promise((resolve) => { release = resolve; });
   await page.getByRole('button', { name: '同步亚马逊库存', exact: true }).click();
+  await page.getByText('正在读取亚马逊库存 0/3 家店铺').waitFor();
+  await page.reload();
+  await page.locator('.topnav').getByRole('button', { name: 'SKU 库', exact: true }).click();
+  await page.getByText('正在读取亚马逊库存 0/3 家店铺').waitFor();
+  assert.equal(await page.getByRole('button', { name: '正在同步…', exact: true }).isDisabled(), true);
+  hold = null;
+  release();
   await page.getByText(/已更新 1 行，读取 3 个库存 SKU；新断货 0 个，补货 0 个/).waitFor();
   assert.match(await skuRow.innerText(), /20/);
   assert.match(await skuRow.innerText(), /1/);

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { api } from '../api.js';
+import { api, syncProgressText } from '../api.js';
 import {
   isNewlyOutOfStock, isOutOfStock, isRestocked, isZeroStock, stockEventDate,
 } from '../skuMatch.js';
@@ -139,6 +139,10 @@ export default function SkuPage({ market }) {
   const [syncBusy, setSyncBusy] = useState(false);
   const [syncMsg, setSyncMsg] = useState(null);
   const filterRef = useRef(null);
+  const syncAbort = useRef(null);
+  // 同步可能跑好几分钟,跑完时按当时所在的页签刷新,而不是点同步那一刻的
+  const scopeRef = useRef(scope);
+  scopeRef.current = scope;
 
   async function load(next = scope) {
     setError('');
@@ -244,12 +248,25 @@ export default function SkuPage({ market }) {
     }, '已保存');
   }
 
-  async function syncCaptain() {
-    setSyncBusy(true);
-    setSyncMsg(null);
+  async function syncCaptain({ resume = false } = {}) {
+    const signal = syncAbort.current?.signal;
+    // 接着看的时候,只有服务器上确实有同步在跑才占用按钮、显示进度
+    let following = !resume;
+    if (following) {
+      setSyncBusy(true);
+      setSyncMsg(null);
+    }
+    const onProgress = (progress) => {
+      following = true;
+      setSyncBusy(true);
+      setSyncMsg({ kind: 'info', text: syncProgressText(progress) });
+    };
     try {
-      const result = await api.syncCaptainInventory();
-      await Promise.all([load(scope), loadCaptain()]);
+      const result = resume
+        ? await api.resumeCaptainSync({ onProgress, signal })
+        : await api.syncCaptainInventory({ onProgress, signal });
+      if (!result) return;
+      await Promise.all([load(scopeRef.current), loadCaptain()]);
       window.dispatchEvent(new CustomEvent('adtool:sku-inventory-updated'));
       const stock = result.stockSync;
       const text = `已更新 ${result.updated} 行，读取 ${result.fetched} 个库存 SKU` +
@@ -258,11 +275,19 @@ export default function SkuPage({ market }) {
         (result.failed ? `，${result.failed} 家店铺失败` : '');
       setSyncMsg({ kind: result.failed ? 'warn' : 'ok', text });
     } catch (e) {
+      if (signal?.aborted || !following) return;
       setSyncMsg({ kind: 'err', text: e.message });
     } finally {
-      setSyncBusy(false);
+      if (!signal?.aborted) setSyncBusy(false);
     }
   }
+  // 刷新页面前点过同步、服务器还没跑完的,接着显示进度
+  useEffect(() => {
+    const controller = new AbortController();
+    syncAbort.current = controller;
+    syncCaptain({ resume: true });
+    return () => controller.abort();
+  }, []);
 
   async function downloadTemplate() {
     const XLSX = await import('xlsx');
@@ -411,7 +436,7 @@ export default function SkuPage({ market }) {
               <button
                 className="btn primary captain-sync-button"
                 disabled={syncBusy || !captain?.configured || !captain?.bindings?.some((binding) => binding.enabled)}
-                onClick={syncCaptain}
+                onClick={() => syncCaptain()}
               >
                 {syncBusy ? '正在同步…' : '同步亚马逊库存'}
               </button>
