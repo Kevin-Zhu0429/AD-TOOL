@@ -1,9 +1,14 @@
 import { createServer } from '../web/node_modules/vite/dist/node/index.js';
 import { startAbaTestServer } from '../server/tests/abaHarness.js';
 
-process.env.CAPTAIN_CLIENT_ID = 'preview-client';
-process.env.CAPTAIN_CLIENT_SECRET = 'preview-secret';
-process.env.CAPTAIN_INITIAL_LOOKBACK_DAYS = '1';
+Object.assign(process.env, {
+  BRAND1_NAME: 'CY',
+  BRAND1_MARKETS: 'ES,DE,FR,IT,UK',
+  BRAND1_LWA_CLIENT_ID: 'preview-client',
+  BRAND1_LWA_CLIENT_SECRET: 'preview-secret',
+  BRAND1_LWA_REFRESH_TOKEN_EU: 'Atzr|preview',
+  BRAND1_SELLER_ID_EU: 'PREVIEWSELLER',
+});
 
 const originalFetch = global.fetch;
 const backend = await startAbaTestServer();
@@ -16,33 +21,24 @@ for (const country of ['ES', 'DE', 'FR', 'IT', 'UK']) {
   ).run(operator.id, country, `${country}|cy-preview-sku`);
 }
 
-global.fetch = async (input, options = {}) => {
+const MARKETPLACES = ['A1RKKUPIHCS9HS', 'A1PA6795UKMFR9', 'A13V1IB3VIYZZH', 'APJ6JRA9NG5V4', 'A1F83G8C2ARO7P'];
+global.fetch = async (input) => {
   const url = new URL(String(input));
-  if (url.pathname === '/oauth2/token') return Response.json({ access_token: 'preview-token', expires_in: 3600 });
-  if (url.pathname === '/v1/open_user/get_site_list') {
-    return Response.json({ code: 200, data: [
-      { site_id: 1, code: 'ES' }, { site_id: 2, code: 'DE' },
-      { site_id: 3, code: 'FR' }, { site_id: 4, code: 'IT' }, { site_id: 5, code: 'UK' },
-    ] });
+  if (url.host === 'api.amazon.com') return Response.json({ access_token: 'preview-token', expires_in: 3600 });
+  if (url.pathname === '/sellers/v1/marketplaceParticipations') {
+    return Response.json({ payload: MARKETPLACES.map((id) => ({
+      marketplace: { id }, participation: { isParticipating: true, hasSuspendedListings: false },
+    })) });
   }
-  if (url.pathname === '/v1/open_user/get_channel_list') {
-    const data = [
-      { title: 'CY_EU_DE', site_id: 2, open_channel_id: 'preview-de', status: 1 },
-      { title: 'CY_EU_ES', site_id: 1, open_channel_id: 'preview-es', status: 1 },
-      { title: 'CY_EU_FR', site_id: 3, open_channel_id: 'preview-fr', status: 1 },
-      { title: 'CY_EU_IT', site_id: 4, open_channel_id: 'preview-it', status: 1 },
-      { title: 'CY_EU_UK', site_id: 5, open_channel_id: 'preview-uk', status: 1 },
-    ];
-    return Response.json({ code: 200, max_result: data.length, data });
+  if (url.pathname === '/fba/inventory/v1/summaries') {
+    return Response.json({ payload: { inventorySummaries: [{
+      sellerSku: 'CY-PREVIEW-SKU',
+      inventoryDetails: {
+        fulfillableQuantity: 10, inboundShippedQuantity: 1, inboundReceivingQuantity: 2, inboundWorkingQuantity: 0,
+      },
+    }] } });
   }
-  if (url.pathname === '/v1/open_fba/inventory_list') {
-    return Response.json({ code: 200, max_result: 1, data: [{
-      SKU: 'CY-PREVIEW-SKU', fulfillable_quantity: 10,
-      inbound_shipped_quantity: 1, inbound_receiving_quantity: 2,
-      inbound_working_quantity: 0, is_delete: 0,
-    }] });
-  }
-  throw new Error(`Unexpected Captain request: ${url.pathname}`);
+  throw new Error(`Unexpected Amazon request: ${url.pathname}`);
 };
 
 const vite = await createServer({

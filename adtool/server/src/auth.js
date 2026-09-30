@@ -458,7 +458,7 @@ authRouter.delete('/users/:id', requireRole('owner'), (req, res) => {
     // 旧版 SKU 外键没有 ON DELETE CASCADE，显式清理账号私有 SKU。
     db.prepare('DELETE FROM sku_items WHERE user_id = ?').run(id);
 
-    // ABA、广告组合、船长绑定及分配由外键级联清理。
+    // ABA、广告组合、库存店铺绑定及分配由外键级联清理。
     db.prepare('DELETE FROM users WHERE id = ?').run(id);
     // 删除账号的旧版库存绑定后，不保留没有任何库存来源的空店铺组。
     const deleteEmptyCaptainGroup = db.prepare(

@@ -6,6 +6,7 @@ const formatTime = (value) => value
   ? new Date(Number(value) * 1000).toLocaleString('zh-CN', { hour12: false })
   : '尚未同步';
 const brandKey = (value) => String(value ?? '').trim().toLowerCase();
+const REGION_LABELS = { eu: '欧洲', na: '北美', fe: '远东' };
 const inferredBrand = (group) => {
   const name = String(group.groupName ?? '').trim();
   const withoutEurope = name.replace(/[_-]EU(?:[_-]UK)?$/i, '');
@@ -111,10 +112,11 @@ export default function CaptainAdmin({ users }) {
       })));
       const channelCount = groups.reduce((sum, group) => sum + group.channels.length, 0);
       setMessage({
-        kind: groups.length ? 'ok' : 'warn',
-        text: groups.length
+        kind: groups.length && !result.errors?.length ? 'ok' : 'warn',
+        text: (groups.length
           ? `已读取 ${groups.length} 个库存店铺，包含 ${channelCount} 个真实站点`
-          : '船长账号下没有可用店铺',
+          : '亚马逊卖家账号下没有网站支持的站点')
+          + (result.errors?.length ? `；以下账号读取失败：${result.errors.join('；')}` : ''),
       });
     } catch (error) {
       setMessage({ kind: 'err', text: error.message });
@@ -196,7 +198,7 @@ export default function CaptainAdmin({ users }) {
     }
   }
 
-  if (!settings) return <div className="card captain-admin-loading">正在读取船长库存设置…</div>;
+  if (!settings) return <div className="card captain-admin-loading">正在读取亚马逊库存设置…</div>;
   const currentRows = [...(settings.assignments ?? []), ...(settings.legacyBindings ?? [])];
   const hasEnabled = currentRows.some((row) => row.enabled);
 
@@ -204,7 +206,18 @@ export default function CaptainAdmin({ users }) {
     <div className="captain-admin stack">
       {!settings.configured && (
         <div className="note warn" role="status">
-          服务器尚未配置船长 APPID 和密钥。请先填写 .env，再重新构建并启动服务。
+          服务器尚未配置亚马逊 SP-API。请先在 .env 按品牌填写 BRAND1_NAME、BRAND1_LWA_CLIENT_ID 等
+          （写法见 server/.env.example），再重启服务。
+        </div>
+      )}
+      {settings.configIssues?.length > 0 && (
+        <div className="note warn" role="status">
+          <div>
+            .env 里的亚马逊配置需要检查：
+            <ul className="captain-issues">
+              {settings.configIssues.map((issue) => <li key={issue}>{issue}</li>)}
+            </ul>
+          </div>
         </div>
       )}
       {message && <div className={`note ${message.kind}`} role={message.kind === 'err' ? 'alert' : 'status'}>{message.text}</div>}
@@ -216,10 +229,17 @@ export default function CaptainAdmin({ users }) {
             一个库存店铺组先选择 SKU 品牌，再按需要选择一个或多个国家负责人；未上传 SKU 的国家可以留空，
             不会阻塞已选择的国家。欧洲组使用同一份共享库存，UK 仍单独分配。
           </p>
+          {settings.brands?.length > 0 && (
+            <p className="hint captain-accounts">
+              已配置品牌：{settings.brands.map((brand) => (
+                `${brand.name}（${brand.accounts.map((account) => `${REGION_LABELS[account.region]} ${account.sellerId}`).join(' · ')}）`
+              )).join('、')}
+            </p>
+          )}
         </div>
         <div className="row wrap captain-actions">
           <button className="btn" disabled={!settings.configured || !!busy} onClick={discover}>
-            {busy === 'discover' ? '正在读取…' : '读取船长店铺'}
+            {busy === 'discover' ? '正在读取…' : '读取亚马逊店铺'}
           </button>
           <button className="btn primary" disabled={!settings.configured || !!busy || !hasEnabled} onClick={syncAll}>
             {busy === 'sync' ? '正在同步…' : '同步全部库存'}
@@ -232,7 +252,7 @@ export default function CaptainAdmin({ users }) {
         <div className="scroll captain-table-scroll">
           <table className="tbl">
             <thead>
-              <tr><th>船长库存店铺</th><th>范围</th><th>SKU 库品牌</th><th>各国家负责人</th><th>状态</th><th /></tr>
+              <tr><th>亚马逊库存店铺</th><th>范围</th><th>SKU 库品牌</th><th>各国家负责人</th><th>状态</th><th /></tr>
             </thead>
             <tbody>
               {channelGroups.map((group) => {
@@ -304,7 +324,7 @@ export default function CaptainAdmin({ users }) {
                 );
               })}
               {!channelGroups.length && (
-                <tr><td colSpan={6} className="empty">点击“读取船长店铺”后在这里按国家分配负责人</td></tr>
+                <tr><td colSpan={6} className="empty">点击“读取亚马逊店铺”后在这里按国家分配负责人</td></tr>
               )}
             </tbody>
           </table>

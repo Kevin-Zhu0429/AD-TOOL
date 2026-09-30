@@ -84,7 +84,7 @@ const tasks = {
   productsImport(db, payload) {
     return importProducts(db, payload);
   },
-  // ---------- 船长同步:快照写库 + 回写 SKU 库存(返回对象,主线程要拼汇总) ----------
+  // ---------- 库存同步:快照写库 + 回写 SKU 库存(返回对象,主线程要拼汇总) ----------
   captainSaveSnapshots(db, payload) {
     saveSnapshots(db, payload);
     return null;

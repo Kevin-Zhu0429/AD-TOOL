@@ -1,18 +1,20 @@
+// 库存同步(历史上接的是船长 BI,所以文件、路由和表名还叫 captain)。
+// 数据源现在是亚马逊 SP-API:店铺 = 卖家账号 × 站点,库存来自 FBA 库存接口。
+// 店铺组、国家负责人分配、回写 SKU 库和断货 / 补货记录的逻辑与数据源无关,保持不变。
 import express from 'express';
 import { db, audit } from './db.js';
 import { requireLogin, requireRole } from './auth.js';
 import { MARKETPLACES, REGIONS } from './libs.js';
 import { runTask } from './workers/pool.js';
+import {
+  AMAZON_MARKETPLACES, REGION_LABELS, countryOfMarketplace, findSpApiAccount, readSpApiConfig, spApiAccounts, spApiGet,
+} from './spApi.js';
 
-const DEFAULT_BASE = 'https://openapi.captainbi.com';
-const PAGE_SIZE = 100;
-const WINDOW_SECONDS = 30 * 24 * 60 * 60;
-const SYNC_OVERLAP_SECONDS = 5 * 60;
+// FBA 库存接口每页 50 条;一万页足够任何店铺,防止接口一直给 nextToken 死循环
+const MAX_PAGES = 10_000;
 const EU_MARKETS = REGIONS.find((region) => region.id === 'EU')?.markets ?? [];
 const CONTINENTAL_EU_MARKETS = EU_MARKETS.filter((country) => country !== 'UK');
 const runningUsers = new Set();
-
-let tokenCache = null;
 
 export const captainRouter = express.Router();
 captainRouter.use(requireLogin);
@@ -28,150 +30,96 @@ const intOf = (value) => {
   return Number.isFinite(number) && number > 0 ? Math.round(number) : 0;
 };
 
-function config() {
-  return {
-    base: clean(process.env.CAPTAIN_API_BASE) || DEFAULT_BASE,
-    clientId: clean(process.env.CAPTAIN_CLIENT_ID),
-    clientSecret: clean(process.env.CAPTAIN_CLIENT_SECRET),
-  };
-}
-
 function isConfigured() {
-  const value = config();
-  return !!(value.clientId && value.clientSecret);
+  return spApiAccounts().length > 0;
 }
 
 function requireConfigured() {
   if (!isConfigured()) {
-    const error = new Error('船长 API 还没有配置，请先在服务器 .env 填写 APPID 和密钥');
+    const error = new Error('亚马逊 SP-API 还没有配置，请先在服务器 .env 按品牌填写 BRAND1_NAME、LWA Client ID / Secret、Refresh Token 和卖家编号');
     error.status = 503;
     throw error;
   }
 }
 
-function apiError(payload, fallback) {
-  return clean(payload?.msg || payload?.message || payload?.error_description || payload?.error) || fallback;
+/** 给页面看的品牌配置和配置问题,不带任何密钥 */
+function configSummary() {
+  const { brands, issues } = readSpApiConfig();
+  return { brands, configIssues: issues };
 }
 
-async function readJson(response) {
-  const payload = await response.json().catch(() => null);
-  if (!response.ok) {
-    const error = new Error(apiError(payload, `船长 API 请求失败 (${response.status})`));
-    error.status = response.status;
-    throw error;
-  }
-  if (!payload || typeof payload !== 'object') throw new Error('船长 API 返回了无法识别的数据');
-  if (payload.code !== undefined && Number(payload.code) !== 200) {
-    throw new Error(apiError(payload, `船长 API 返回错误码 ${payload.code}`));
-  }
-  return payload;
+/** 店铺编号:spapi:<卖家编号>:<marketplaceId>,同步时靠它找回账号和站点 */
+const channelIdOf = (sellerId, marketplaceId) => `spapi:${sellerId}:${marketplaceId}`;
+
+function parseChannelId(openChannelId) {
+  const [prefix, sellerId, marketplaceId] = clean(openChannelId).split(':');
+  const country = countryOfMarketplace(marketplaceId);
+  if (prefix !== 'spapi' || !sellerId || !country) return null;
+  return { sellerId, marketplaceId, country, region: AMAZON_MARKETPLACES[country].region };
 }
 
-async function accessToken(force = false) {
-  requireConfigured();
-  if (!force && tokenCache?.expiresAt > Date.now() + 30_000) return tokenCache.value;
+const accountLabel = (account) => `${account.brand} ${REGION_LABELS[account.region]}`;
 
-  const { base, clientId, clientSecret } = config();
-  const body = new URLSearchParams({
-    grant_type: 'client_credentials',
-    client_id: clientId,
-    client_secret: clientSecret,
-    scope: 'all',
-  });
-  const response = await fetch(`${base.replace(/\/$/, '')}/oauth2/token`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body,
-    signal: AbortSignal.timeout(30_000),
-  });
-  const payload = await readJson(response);
-  const value = clean(payload.access_token ?? payload.data?.access_token);
-  if (!value) throw new Error('船长 API 没有返回 access_token，请核对 APPID 和密钥');
-  const expiresIn = Math.max(60, intOf(payload.expires_in ?? payload.data?.expires_in) || 3600);
-  tokenCache = { value, expiresAt: Date.now() + Math.max(30, expiresIn - 60) * 1000 };
-  return value;
-}
-
-async function captainGet(path, query = {}, extraHeaders = {}) {
-  const { base } = config();
-  const url = new URL(`${base.replace(/\/$/, '')}${path}`);
-  for (const [key, value] of Object.entries(query)) {
-    if (value !== undefined && value !== null && value !== '') url.searchParams.set(key, String(value));
-  }
-
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    const token = await accessToken(attempt > 0);
-    const response = await fetch(url, {
-      headers: { authorization: `Bearer ${token}`, ...extraHeaders },
-      signal: AbortSignal.timeout(30_000),
+/** 一个卖家账号(品牌 × 区域)开通了的站点,再按 BRAND<n>_MARKETS 过滤 */
+async function accountChannels(account) {
+  const payload = await spApiGet(account, account.region, '/sellers/v1/marketplaceParticipations');
+  const channels = [];
+  for (const row of Array.isArray(payload.payload) ? payload.payload : []) {
+    const marketplaceId = clean(row?.marketplace?.id);
+    const country = countryOfMarketplace(marketplaceId);
+    if (!country || AMAZON_MARKETPLACES[country].region !== account.region) continue;
+    if (row?.participation?.isParticipating === false) continue;
+    if (!account.allMarkets && !account.markets.includes(country)) continue;
+    channels.push({
+      openChannelId: channelIdOf(account.sellerId, marketplaceId),
+      channelName: `${account.brand}_${country}`,
+      siteId: null,
+      country,
+      status: 1,
     });
-    if ((response.status === 401 || response.status === 403) && attempt === 0) {
-      tokenCache = null;
-      continue;
-    }
-    return readJson(response);
   }
-  throw new Error('船长 API 授权失败，请重新生成 APPID 和密钥');
-}
-
-async function paged(path, query, headers = {}) {
-  const items = [];
-  for (let page = 1; page <= 10_000; page += 1) {
-    const payload = await captainGet(path, { ...query, page, rows: PAGE_SIZE }, headers);
-    const rows = Array.isArray(payload.data) ? payload.data : [];
-    items.push(...rows);
-    const total = intOf(payload.max_result);
-    if (!rows.length || rows.length < PAGE_SIZE || (total && items.length >= total)) return items;
-  }
-  throw new Error('船长 API 分页超过安全上限，请联系管理员检查接口数据');
+  const missing = account.markets.filter((market) => !channels.some((channel) => channel.country === market));
+  return { channels, missing };
 }
 
 async function discoverChannels() {
-  const sitePayload = await captainGet('/v1/open_user/get_site_list');
-  const sites = new Map((Array.isArray(sitePayload.data) ? sitePayload.data : []).map((site) => [
-    Number(site.site_id), countryOf(site.code),
-  ]));
-  const channels = await paged('/v1/open_user/get_channel_list', {});
-  const availableChannels = channels
-    .map((channel) => ({
-      openChannelId: clean(channel.open_channel_id),
-      channelName: clean(channel.title) || '未命名店铺',
-      siteId: Number(channel.site_id) || null,
-      country: sites.get(Number(channel.site_id)) || '',
-      status: Number(channel.status) === 1 ? 1 : 0,
-    }))
-    .filter((channel) => channel.openChannelId && channel.status && MARKETPLACES.includes(channel.country))
-    .sort((a, b) => `${a.country}:${a.channelName}`.localeCompare(`${b.country}:${b.channelName}`, 'zh-CN'));
-
   const groups = new Map();
-  for (const channel of availableChannels) {
-    const countrySuffix = new RegExp(`([_-])${channel.country}$`, 'i');
-    const strippedName = channel.channelName.replace(countrySuffix, '');
-    const isContinentalEurope = CONTINENTAL_EU_MARKETS.includes(channel.country)
-      && strippedName !== channel.channelName
-      && /(?:^|[_-])EU$/i.test(strippedName);
-    const groupName = isContinentalEurope ? strippedName : channel.channelName;
-    const scope = isContinentalEurope ? 'EU' : channel.country;
-    const groupKey = `${keyOf(groupName)}:${scope}`;
-    const group = groups.get(groupKey) ?? {
-      groupKey,
-      groupName,
-      scope,
-      countries: [],
-      channels: [],
-    };
-    group.channels.push(channel);
-    if (!group.countries.includes(channel.country)) group.countries.push(channel.country);
-    groups.set(groupKey, group);
+  const errors = [];
+  for (const account of spApiAccounts()) {
+    let result;
+    try {
+      result = await accountChannels(account);
+    } catch (error) {
+      errors.push(`${accountLabel(account)}：${clean(error.message) || '读取店铺失败'}`);
+      continue;
+    }
+    if (result.missing.length) {
+      errors.push(`${accountLabel(account)}：卖家账号没有开通 ${result.missing.join('、')}`);
+    }
+    for (const channel of result.channels) {
+      if (!MARKETPLACES.includes(channel.country)) continue;
+      // 欧洲大陆四站共用一份 FBA 库存,归成一个店铺组;UK 和其他国家各自一组
+      const scope = CONTINENTAL_EU_MARKETS.includes(channel.country) ? 'EU' : channel.country;
+      const groupName = `${account.brand}_${scope}`;
+      const groupKey = `${keyOf(groupName)}:${scope}`;
+      const group = groups.get(groupKey) ?? { groupKey, groupName, scope, countries: [], channels: [] };
+      if (group.channels.some((row) => row.openChannelId === channel.openChannelId)) continue;
+      group.channels.push(channel);
+      if (!group.countries.includes(channel.country)) group.countries.push(channel.country);
+      groups.set(groupKey, group);
+    }
   }
 
-  return [...groups.values()]
-    .map((group) => ({
-      ...group,
-      countries: group.countries.sort((a, b) => MARKETPLACES.indexOf(a) - MARKETPLACES.indexOf(b)),
-      channels: group.channels.sort((a, b) => MARKETPLACES.indexOf(a.country) - MARKETPLACES.indexOf(b.country)),
-    }))
-    .sort((a, b) => a.groupName.localeCompare(b.groupName, 'zh-CN'));
+  return {
+    errors,
+    groups: [...groups.values()]
+      .map((group) => ({
+        ...group,
+        countries: group.countries.sort((a, b) => MARKETPLACES.indexOf(a) - MARKETPLACES.indexOf(b)),
+        channels: group.channels.sort((a, b) => MARKETPLACES.indexOf(a.country) - MARKETPLACES.indexOf(b.country)),
+      }))
+      .sort((a, b) => a.groupName.localeCompare(b.groupName, 'zh-CN')),
+  };
 }
 
 function skuCoverage() {
@@ -185,52 +133,54 @@ function skuCoverage() {
   return rows.map((row) => ({ userId: row.user_id, country: row.country, brand: row.brand }));
 }
 
-function splitWindows(start, end) {
-  const windows = [];
-  let cursor = Math.max(0, Math.floor(start));
-  const finish = Math.max(cursor, Math.floor(end));
-  while (cursor < finish) {
-    const until = Math.min(finish, cursor + WINDOW_SECONDS);
-    windows.push([cursor, until]);
-    cursor = until;
-  }
-  return windows.length ? windows : [[finish - 60, finish]];
-}
-
 function normalizeInventory(item) {
-  const sku = clean(item?.SKU ?? item?.sku);
+  const sku = clean(item?.sellerSku);
   if (!sku) return null;
   const asin = clean(item?.asin).toUpperCase();
-  const deleted = Number(item?.is_delete ?? 0) !== 0;
+  const details = item?.inventoryDetails ?? {};
   return {
     sku,
     skuKey: keyOf(sku),
     asin: /^[A-Z0-9]{10}$/.test(asin) ? asin : null,
-    stock: deleted ? 0 : intOf(item?.fulfillable_quantity),
-    transit: deleted ? 0 : intOf(item?.inbound_shipped_quantity)
-      + intOf(item?.inbound_receiving_quantity)
-      + intOf(item?.inbound_working_quantity),
-    isDeleted: deleted ? 1 : 0,
+    stock: intOf(details.fulfillableQuantity),
+    transit: intOf(details.inboundShippedQuantity)
+      + intOf(details.inboundReceivingQuantity)
+      + intOf(details.inboundWorkingQuantity),
+    isDeleted: 0,
   };
 }
 
-async function fetchBindingInventory(binding, now) {
-  const lookback = Math.min(1095, Math.max(1, intOf(process.env.CAPTAIN_INITIAL_LOOKBACK_DAYS) || 365));
-  const start = binding.last_sync_at
-    ? Math.min(now - 60, Math.max(0, Number(binding.last_sync_at) - SYNC_OVERLAP_SECONDS))
-    : now - lookback * 24 * 60 * 60;
+/**
+ * 一家店铺(卖家 × 站点)的全部 FBA 库存。每次都拉全量:
+ * 接口的增量参数 startDateTime 检测不到在途数量的变化。
+ */
+async function fetchBindingInventory(binding) {
+  const channel = parseChannelId(binding.open_channel_id);
+  if (!channel) throw new Error('不是亚马逊店铺绑定，请在账号管理里重新读取亚马逊店铺并保存分配');
+  const account = findSpApiAccount(channel.sellerId, channel.region);
+  if (!account) {
+    throw new Error(`服务器 .env 里没有卖家 ${channel.sellerId} 的${REGION_LABELS[channel.region]}账号授权`);
+  }
+
   const latest = new Map();
-  for (const [from, to] of splitWindows(start, now)) {
-    const rows = await paged('/v1/open_fba/inventory_list', {
-      start_modified_time: from,
-      end_modified_time: to,
-    }, { OpenChannelId: binding.open_channel_id });
-    for (const raw of rows) {
+  let nextToken = '';
+  for (let page = 0; page < MAX_PAGES; page += 1) {
+    const payload = await spApiGet(account, channel.region, '/fba/inventory/v1/summaries', {
+      details: 'true',
+      granularityType: 'Marketplace',
+      granularityId: channel.marketplaceId,
+      marketplaceIds: channel.marketplaceId,
+      nextToken,
+    });
+    const rows = payload.payload?.inventorySummaries;
+    for (const raw of Array.isArray(rows) ? rows : []) {
       const item = normalizeInventory(raw);
       if (item) latest.set(item.skuKey, item);
     }
+    nextToken = clean(payload.pagination?.nextToken);
+    if (!nextToken) return [...latest.values()];
   }
-  return [...latest.values()];
+  throw new Error('亚马逊库存分页超过安全上限，请联系管理员检查接口数据');
 }
 
 function legacyBindingsForUser(userId) {
@@ -287,13 +237,13 @@ const markSourceError = db.prepare(
 );
 
 async function refreshSources(sources) {
-  const now = Math.floor(Date.now() / 1000);
   const errors = [];
   let fetched = 0;
   let succeeded = 0;
   for (const source of sources) {
     try {
-      const items = await fetchBindingInventory(source, now);
+      const items = await fetchBindingInventory(source);
+      const now = Math.floor(Date.now() / 1000);
       // 快照写库在 worker 线程里做
       await runTask('captainSaveSnapshots', { bindingId: source.id, items, now });
       fetched += items.length;
@@ -315,7 +265,7 @@ async function syncUser(userId, actorId = userId) {
   }
   const sources = sourcesForUser(userId);
   if (!sources.length) {
-    const error = new Error('这个账号还没有分配船长库存国家，请联系超级管理员');
+    const error = new Error('这个账号还没有分配亚马逊库存国家，请联系超级管理员');
     error.status = 400;
     throw error;
   }
@@ -403,6 +353,7 @@ captainRouter.get('/admin', requireRole('owner'), (req, res) => {
   ).all();
   res.json({
     configured: isConfigured(),
+    ...configSummary(),
     bindings,
     assignments: assignmentSummaries(),
     legacyBindings: legacyAdminBindings(),
@@ -412,10 +363,15 @@ captainRouter.get('/admin', requireRole('owner'), (req, res) => {
 
 captainRouter.post('/discover', requireRole('owner'), async (req, res) => {
   try {
-    res.json({ groups: await discoverChannels() });
+    requireConfigured();
+    const result = await discoverChannels();
+    // 一个店铺都没读到时把各账号的失败原因当错误返回;读到一部分就连同失败原因一起给页面
+    if (!result.groups.length && result.errors.length) {
+      return res.status(502).json({ error: result.errors.join('；') });
+    }
+    res.json(result);
   } catch (error) {
-    const status = error.status && error.status < 500 ? error.status : 502;
-    res.status(status).json({ error: error.message || '读取船长店铺失败' });
+    res.status(error.status === 503 ? 503 : 502).json({ error: error.message || '读取亚马逊店铺失败' });
   }
 });
 
@@ -441,6 +397,9 @@ captainRouter.post('/bindings', requireRole('owner'), (req, res) => {
   if (channels.some((channel) => !channel.openChannelId || !channel.channelName)) {
     return res.status(400).json({ error: '店铺信息不完整，请重新读取店铺' });
   }
+  if (channels.some((channel) => parseChannelId(channel.openChannelId)?.country !== channel.country)) {
+    return res.status(400).json({ error: '店铺编号与国家不一致，请重新读取亚马逊店铺' });
+  }
   if (new Set(channels.map((channel) => channel.openChannelId)).size !== channels.length) {
     return res.status(400).json({ error: '店铺组包含重复店铺，请重新读取店铺' });
   }
@@ -449,7 +408,7 @@ captainRouter.post('/bindings', requireRole('owner'), (req, res) => {
   const scope = countryOf(req.body?.scope) || clean(req.body?.scope).toUpperCase();
   const groupKey = clean(req.body?.groupKey);
   if (!groupName || !groupKey || groupKey !== `${keyOf(groupName)}:${scope}`) {
-    return res.status(400).json({ error: '店铺组信息不完整，请重新读取船长店铺' });
+    return res.status(400).json({ error: '店铺组信息不完整，请重新读取亚马逊店铺' });
   }
   const countries = [...new Set(channels.map((channel) => channel.country))];
   if (scope === 'EU' && countries.some((country) => !CONTINENTAL_EU_MARKETS.includes(country))) {

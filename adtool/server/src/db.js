@@ -25,6 +25,7 @@ setInterval(() => db.pragma('optimize'), 6 * 60 * 60 * 1000).unref();
  * 4) users 加「产品库与竞品分析使用权」列:默认全关,由超级管理员逐个开
  * 5) 旧的 neg_terms 搬进 lib_items:无关词→A,品牌→B,型号和 ASIN→C
  * 6) 产品库按“站点 + 数据月份 + ASIN”隔离；无法追溯月份的旧数据放进“历史数据”
+ * 7) 库存来源从船长 BI 换成亚马逊 SP-API,清掉船长时代的店铺绑定、店铺组、分配和快照
  */
 function migrate() {
   const abaColumns = db.prepare('PRAGMA table_info(aba_queries)').all().map((c) => c.name);
@@ -141,6 +142,23 @@ function migrate() {
       console.log('[db] 产品库已按月份隔离，旧记录归入“历史数据”');
     }
     db.pragma('user_version = 2');
+  }
+
+  if (version < 3) {
+    // 船长的店铺编号在亚马逊接口里不存在,留着只会每次同步都报错,旧快照还可能盖掉新库存。
+    // 删绑定会按外键连带删掉组成员和快照,再删掉空了的店铺组(连带国家分配)。
+    // SKU 库里已有的库存数和断货 / 补货记录不受影响;超级管理员重新读取亚马逊店铺并分配即可。
+    db.transaction(() => {
+      const removed = db.prepare(
+        "DELETE FROM captain_channel_bindings WHERE open_channel_id NOT LIKE 'spapi:%'"
+      ).run().changes;
+      db.prepare(
+        `DELETE FROM captain_channel_groups
+          WHERE group_key NOT IN (SELECT group_key FROM captain_channel_group_members)`
+      ).run();
+      if (removed) console.log(`[db] 库存来源换成亚马逊 SP-API,清掉 ${removed} 个船长店铺绑定`);
+    })();
+    db.pragma('user_version = 3');
   }
 }
 

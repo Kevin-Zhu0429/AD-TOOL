@@ -1470,7 +1470,7 @@ export function mountOptimizer(root, host, options) {
   }
   /**
    * 库存 → 广告状态建议(看当前改动后的状态):
-   * SKU 在库 0 但广告还在投 → 该关;SKU 刚补货(船长同步)但广告还停着 → 该开。
+   * SKU 在库 0 但广告还在投 → 该关;SKU 刚补货(库存同步)但广告还停着 → 该开。
    * 只动商品广告这一层;活动 / 广告组本身暂停的,开了广告也不会投,单独计数提醒。
    */
   function adStockPlan(o){
@@ -1568,7 +1568,7 @@ export function mountOptimizer(root, host, options) {
     var act=stockActions(data.list);
     var alert=inventoryRisks.length?'<div class="inventory-alert" role="status">'+
       '<span class="inventory-alert-icon" aria-hidden="true">!</span><div><b>发现 '+inventoryRisks.length+' 项包含在库为 0 的广告 SKU</b>'+
-      '<span>'+(act.newOut?'其中 '+act.newOut+' 个 SKU 是最近一次船长同步新断货。':'')+
+      '<span>'+(act.newOut?'其中 '+act.newOut+' 个 SKU 是最近一次库存同步新断货。':'')+
       '本周期已产生 '+fi(inventoryRiskMetrics.clicks)+' 次点击、'+fm(inventoryRiskMetrics.spend)+' 花费。库存来自当前站点 SKU 库，'+
       (act.pause?'还有 '+act.pause+' 条商品广告在投，建议先关闭，补货后再开。':'这些 SKU 的广告已经都关了。')+'</span></div>'+
       (act.pause?'<button class="btn sm" data-stockact="pause">一键关闭 '+act.pause+' 条在投广告</button>':'')+'</div>':'';
@@ -1586,7 +1586,7 @@ export function mountOptimizer(root, host, options) {
         '<button type="button" class="sgb mk-red'+(S.an.mark==='red'?' on':'')+'" data-anmark="red" aria-pressed="'+(S.an.mark==='red')+'">低转化高 ACOS</button>'+
         '<button type="button" class="sgb mk-blue'+(S.an.mark==='blue'?' on':'')+'" data-anmark="blue" aria-pressed="'+(S.an.mark==='blue')+'">点击无转化</button></div>'+
       '<div style="flex:1"></div><button class="btn sm" id="anCsv">导出本面板 CSV</button></div>'+
-      '<div class="anhint"><b>库存联动：</b>SKU 库明确返回在库 0 时整行标红；有在途也会继续提醒，库存空白不会误判。「新断货」「已补货」来自 SKU 库最近一次船长同步，一键关闭 / 开启只改商品广告状态，导出后生效。红色指标＝转化率低于 '+fp(S.cfg.skuCvrMin,0)+' 且 ACOS ≥ '+fp(S.cfg.skuAcosMax,1)+'；蓝色指标＝点击 ≥ '+S.cfg.skuDeadClicks+' 次零转化。点任意一行展开查看活动和搜索词。</div>';
+      '<div class="anhint"><b>库存联动：</b>SKU 库明确返回在库 0 时整行标红；有在途也会继续提醒，库存空白不会误判。「新断货」「已补货」来自 SKU 库最近一次库存同步，一键关闭 / 开启只改商品广告状态，导出后生效。红色指标＝转化率低于 '+fp(S.cfg.skuCvrMin,0)+' 且 ACOS ≥ '+fp(S.cfg.skuAcosMax,1)+'；蓝色指标＝点击 ≥ '+S.cfg.skuDeadClicks+' 次零转化。点任意一行展开查看活动和搜索词。</div>';
     if(!list.length)return bar+'<div class="empty">没有符合条件的 SKU</div>';
     return bar+'<table class="tbl antbl"><thead><tr>'+
       anTh('key',S.an.byAsin?'ASIN':'广告 SKU')+(S.an.byAsin?'':'<th>ASIN</th>')+'<th>库存</th>'+anTh('nc','活动数',1)+

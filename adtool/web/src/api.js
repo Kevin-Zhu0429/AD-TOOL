@@ -114,7 +114,7 @@ export const api = {
   updateSku: (id, body) => request(`/sku/${id}`, { method: 'PATCH', body }),
   deleteSkus: (ids) => request('/sku/delete', { method: 'POST', body: { ids } }),
 
-  // ---------- 船长 BI 库存同步 ----------
+  // ---------- 亚马逊 SP-API 库存同步(接口路径沿用 captain) ----------
   captainStatus: () => request('/captain/status'),
   syncCaptainInventory: () => request('/captain/sync', { method: 'POST' }),
   captainAdmin: () => request('/captain/admin'),

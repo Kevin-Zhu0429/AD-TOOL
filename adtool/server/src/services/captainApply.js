@@ -1,5 +1,5 @@
-// 船长库存:把拉回来的快照写库,再按分配关系回写 SKU 库存并记断货 / 补货。
-// 调船长 API 是异步网络请求,留在主线程;这里的写库和汇总在 worker 线程里执行。
+// 库存同步:把从亚马逊拉回来的快照写库,再按分配关系回写 SKU 库存并记断货 / 补货。
+// 调亚马逊 SP-API 是异步网络请求,留在主线程;这里的写库和汇总在 worker 线程里执行。
 import { REGIONS } from '../libs.js';
 import { recordStockChanges, snapshotStock } from '../stockEvents.js';
 

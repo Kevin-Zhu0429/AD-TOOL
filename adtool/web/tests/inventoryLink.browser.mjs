@@ -102,7 +102,7 @@ try {
   assert.equal(await page.locator('.inventory-alert').count(), 0);
   assert.equal(await page.locator('tr.stock-zero').count(), 0);
 
-  // 船长同步:ZERO-SKU 新断货但广告还在投,BACK-SKU 补货但广告还停着
+  // 库存同步:ZERO-SKU 新断货但广告还在投,BACK-SKU 补货但广告还停着
   await page.evaluate(() => {
     document.documentElement.dataset.theme = 'light';
     document.querySelector('#host').dataset.theme = 'light';
@@ -123,7 +123,7 @@ try {
 
   await page.locator('[data-anmark=""]').click();
   const alert = page.locator('.inventory-alert');
-  assert.match(await alert.innerText(), /其中 1 个 SKU 是最近一次船长同步新断货[\s\S]*还有 1 条商品广告在投/);
+  assert.match(await alert.innerText(), /其中 1 个 SKU 是最近一次库存同步新断货[\s\S]*还有 1 条商品广告在投/);
   assert.match(await zeroRow.locator('.inventory-cell').innerText(), /新断货[\s\S]*1 条广告在投/);
   const restock = page.locator('.stock-act.restock');
   assert.match(await restock.innerText(), /已补货 1 个 SKU[\s\S]*有 1 条商品广告还处于暂停/);
