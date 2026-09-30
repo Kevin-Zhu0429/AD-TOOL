@@ -3,23 +3,35 @@ import assert from 'node:assert/strict';
 import { startAbaTestServer } from './abaHarness.js';
 
 test('Amazon SP-API shared EU inventory is assigned to separate users by country', async (t) => {
-  process.env.SPAPI_CLIENT_ID = 'test-client';
-  process.env.SPAPI_CLIENT_SECRET = 'test-secret';
-  // 第一个账号不填区域,自动识别出 EU + NA;第二个账号只在 EU
-  process.env.SPAPI_REFRESH_TOKEN = 'Atzr|refresh-hp';
-  process.env.SPAPI_SELLER_ID = 'sellerhp';
-  process.env.SPAPI_STORE_NAME = 'HP';
-  process.env.SPAPI_REFRESH_TOKEN_2 = 'Atzr|refresh-cc';
-  process.env.SPAPI_SELLER_ID_2 = 'SELLERCC';
-  process.env.SPAPI_STORE_NAME_2 = 'CC';
-  process.env.SPAPI_REGION_2 = 'eu';
-  const spApiEnv = Object.keys(process.env).filter((key) => key.startsWith('SPAPI_'));
+  // 每个品牌一个开发者应用;HP 的欧洲和北美是两个卖家账号,不限站点
+  const brandEnv = {
+    BRAND1_NAME: 'HP',
+    BRAND1_LWA_CLIENT_ID: 'hp-client',
+    BRAND1_LWA_CLIENT_SECRET: 'hp-secret',
+    BRAND1_LWA_REFRESH_TOKEN_EU: 'Atzr|refresh-hp-eu',
+    BRAND1_SELLER_ID_EU: 'hpeu',
+    BRAND1_LWA_REFRESH_TOKEN_NA: 'Atzr|refresh-hp-na',
+    BRAND1_SELLER_ID_NA: 'HPNA',
+    // CC 只有欧洲账号,只要欧洲大陆四站(UK 开通了也不列)
+    BRAND2_NAME: 'CC',
+    BRAND2_MARKETS: 'ES, DE, FR, IT',
+    BRAND2_LWA_CLIENT_ID: 'cc-client',
+    BRAND2_LWA_CLIENT_SECRET: 'cc-secret',
+    BRAND2_LWA_REFRESH_TOKEN_EU: 'Atzr|refresh-cc-eu',
+    BRAND2_SELLER_ID_EU: 'CCEU',
+    // PG 漏填卖家编号:不猜,在账号管理里提示
+    BRAND5_NAME: 'PG',
+    BRAND5_LWA_CLIENT_ID: 'pg-client',
+    BRAND5_LWA_CLIENT_SECRET: 'pg-secret',
+    BRAND5_LWA_REFRESH_TOKEN_EU: 'Atzr|refresh-pg-eu',
+  };
+  Object.assign(process.env, brandEnv);
 
   const originalFetch = global.fetch;
   let server;
   t.after(async () => {
     global.fetch = originalFetch;
-    for (const key of spApiEnv) delete process.env[key];
+    for (const key of Object.keys(brandEnv)) delete process.env[key];
     if (server) await server.close();
   });
 
@@ -80,13 +92,18 @@ test('Amazon SP-API shared EU inventory is assigned to separate users by country
   });
   // 每个卖家在每个区域能看到的站点;没列出的区域按亚马逊的做法回 403
   const participations = {
-    'token-hp:eu': [participation('ES'), participation('DE'), participation('FR'), participation('IT'),
-      participation('UK'), participation('NL')],
-    'token-hp:na': [participation('US')],
-    'token-cc:eu': [participation('ES'), participation('DE'), participation('FR'), participation('IT'),
-      participation('UK', false)],
+    'token-hp-eu:eu': [participation('ES'), participation('DE'), participation('FR'), participation('IT'),
+      participation('UK'), participation('NL'), participation('AE', false)],
+    'token-hp-na:na': [participation('US')],
+    'token-cc-eu:eu': [participation('ES'), participation('DE'), participation('FR'), participation('IT'),
+      participation('UK')],
   };
-  const tokens = { 'Atzr|refresh-hp': 'token-hp', 'Atzr|refresh-cc': 'token-cc' };
+  // refresh token 只能配它自己品牌的应用换 access token
+  const tokens = {
+    'Atzr|refresh-hp-eu': ['hp-client', 'hp-secret', 'token-hp-eu'],
+    'Atzr|refresh-hp-na': ['hp-client', 'hp-secret', 'token-hp-na'],
+    'Atzr|refresh-cc-eu': ['cc-client', 'cc-secret', 'token-cc-eu'],
+  };
   const regionOfHost = {
     'sellingpartnerapi-eu.amazon.com': 'eu', 'sellingpartnerapi-na.amazon.com': 'na', 'sellingpartnerapi-fe.amazon.com': 'fe',
   };
@@ -103,12 +120,13 @@ test('Amazon SP-API shared EU inventory is assigned to separate users by country
       assert.equal(options.method, 'POST');
       const body = new URLSearchParams(String(options.body));
       assert.equal(body.get('grant_type'), 'refresh_token');
-      assert.equal(body.get('client_id'), 'test-client');
-      assert.equal(body.get('client_secret'), 'test-secret');
       lwaCalls += 1;
-      const token = tokens[body.get('refresh_token')];
+      const [clientId, clientSecret, token] = tokens[body.get('refresh_token')] ?? [];
       if (!token) return Response.json({ error: 'invalid_grant' }, { status: 400 });
-      return Response.json({ access_token: `${token}`, token_type: 'bearer', expires_in: 3600 });
+      if (body.get('client_id') !== clientId || body.get('client_secret') !== clientSecret) {
+        return Response.json({ error: 'invalid_client' }, { status: 401 });
+      }
+      return Response.json({ access_token: token, token_type: 'bearer', expires_in: 3600 });
     }
     const region = regionOfHost[url.host];
     assert.ok(region, `Unexpected remote request: ${url}`);
@@ -132,7 +150,7 @@ test('Amazon SP-API shared EU inventory is assigned to separate users by country
       assert.equal(url.searchParams.get('details'), 'true');
       const marketplaceId = url.searchParams.get('marketplaceIds');
       assert.equal(url.searchParams.get('granularityId'), marketplaceId);
-      const seller = token === 'token-hp' ? 'hp' : 'cc';
+      const seller = token.startsWith('token-hp') ? 'hp' : 'cc';
       const channel = `${seller}-${countryOf[marketplaceId].toLowerCase()}`;
       inventoryCalls.set(channel, (inventoryCalls.get(channel) ?? 0) + 1);
       if (channel === failingChannel) throw new TypeError('temporary remote failure');
@@ -166,12 +184,12 @@ test('Amazon SP-API shared EU inventory is assigned to separate users by country
     throw new Error(`Unexpected remote request: ${url}`);
   };
 
-  // 缺 Client Secret 算没配置
-  const clientSecret = process.env.SPAPI_CLIENT_SECRET;
-  delete process.env.SPAPI_CLIENT_SECRET;
+  // 缺 Client Secret 的品牌不算配好;一个配好的品牌都没有就是没配置
+  delete process.env.BRAND1_LWA_CLIENT_SECRET;
+  delete process.env.BRAND2_LWA_CLIENT_SECRET;
   assert.equal((await call('/captain/discover', ownerCookie, 'POST')).status, 503);
   assert.equal((await call('/captain/status', esCookie)).data.configured, false);
-  process.env.SPAPI_CLIENT_SECRET = clientSecret;
+  Object.assign(process.env, brandEnv);
 
   const discovered = await call('/captain/discover', ownerCookie, 'POST');
   assert.equal(discovered.status, 200, discovered.data.error);
@@ -191,7 +209,7 @@ test('Amazon SP-API shared EU inventory is assigned to separate users by country
   const usGroup = discovered.data.groups.find((group) => group.groupName === 'HP_US');
   assert.equal(euGroup.groupKey, 'hp_eu:EU');
   assert.deepEqual(euGroup.channels[0], {
-    openChannelId: 'spapi:SELLERHP:A1RKKUPIHCS9HS', channelName: 'HP_ES', siteId: null, country: 'ES', status: 1,
+    openChannelId: 'spapi:HPEU:A1RKKUPIHCS9HS', channelName: 'HP_ES', siteId: null, country: 'ES', status: 1,
   });
 
   // 店铺编号和国家对不上(比如手工拼的请求)不能保存
@@ -199,7 +217,7 @@ test('Amazon SP-API shared EU inventory is assigned to separate users by country
     ...euGroup,
     brand: 'hp',
     channels: euGroup.channels.map((channel) => (
-      channel.country === 'DE' ? { ...channel, openChannelId: 'spapi:SELLERHP:A1RKKUPIHCS9HS' } : channel
+      channel.country === 'DE' ? { ...channel, openChannelId: 'spapi:HPEU:A1RKKUPIHCS9HS' } : channel
     )),
     assignments: [{ country: 'ES', userId: users['aba-test'] }],
   });
@@ -296,11 +314,12 @@ test('Amazon SP-API shared EU inventory is assigned to separate users by country
   assert.deepEqual(status.data.bindings.map((row) => row.country).sort(), ['ES', 'UK', 'US']);
   const admin = await call('/captain/admin', ownerCookie);
   assert.equal(admin.data.assignments.length, 6);
-  assert.deepEqual(admin.data.accounts, [
-    { sellerId: 'SELLERHP', name: 'HP', region: 'auto' },
-    { sellerId: 'SELLERCC', name: 'CC', region: 'eu' },
+  assert.deepEqual(admin.data.brands, [
+    { name: 'HP', markets: [], accounts: [{ region: 'eu', sellerId: 'HPEU' }, { region: 'na', sellerId: 'HPNA' }] },
+    { name: 'CC', markets: ['ES', 'DE', 'FR', 'IT'], accounts: [{ region: 'eu', sellerId: 'CCEU' }] },
   ]);
-  assert.doesNotMatch(JSON.stringify(admin.data), /refresh|test-secret/);
+  assert.deepEqual(admin.data.configIssues, ['PG 欧洲账号缺少 BRAND5_SELLER_ID_EU']);
+  assert.doesNotMatch(JSON.stringify(admin.data), /Atzr|hp-secret|cc-secret/);
 
   // access token 被拒一次:换新 token 重试;被限流一次:退避重试。都不算失败
   const lwaBefore = lwaCalls;

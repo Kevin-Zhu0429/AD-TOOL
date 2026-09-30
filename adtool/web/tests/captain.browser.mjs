@@ -4,17 +4,21 @@ import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
 import { startAbaTestServer } from '../../server/tests/abaHarness.js';
 
-process.env.SPAPI_CLIENT_ID = 'browser-client';
-process.env.SPAPI_CLIENT_SECRET = 'browser-secret';
-process.env.SPAPI_REFRESH_TOKEN = 'Atzr|browser-hp';
-process.env.SPAPI_SELLER_ID = 'SELLERHP';
-process.env.SPAPI_STORE_NAME = 'HP';
-process.env.SPAPI_REGION = 'eu';
-process.env.SPAPI_REFRESH_TOKEN_2 = 'Atzr|browser-cc';
-process.env.SPAPI_SELLER_ID_2 = 'SELLERCC';
-process.env.SPAPI_STORE_NAME_2 = 'CC';
-process.env.SPAPI_REGION_2 = 'eu';
-const spApiEnv = Object.keys(process.env).filter((key) => key.startsWith('SPAPI_'));
+const brandEnv = {
+  BRAND1_NAME: 'HP',
+  BRAND1_MARKETS: 'ES,DE,FR',
+  BRAND1_LWA_CLIENT_ID: 'hp-client',
+  BRAND1_LWA_CLIENT_SECRET: 'hp-secret',
+  BRAND1_LWA_REFRESH_TOKEN_EU: 'Atzr|browser-hp',
+  BRAND1_SELLER_ID_EU: 'SELLERHP',
+  BRAND2_NAME: 'CC',
+  BRAND2_MARKETS: 'ES,DE,FR',
+  BRAND2_LWA_CLIENT_ID: 'cc-client',
+  BRAND2_LWA_CLIENT_SECRET: 'cc-secret',
+  BRAND2_LWA_REFRESH_TOKEN_EU: 'Atzr|browser-cc',
+  BRAND2_SELLER_ID_EU: 'SELLERCC',
+};
+Object.assign(process.env, brandEnv);
 
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
@@ -97,7 +101,7 @@ try {
   await login('aba-other');
   await page.locator('.topnav').getByRole('button', { name: '账号管理', exact: true }).click();
   await page.getByRole('button', { name: '亚马逊库存', exact: true }).click();
-  await page.getByText('已配置卖家账号：HP（SELLERHP · EU）、CC（SELLERCC · EU）').waitFor();
+  await page.getByText('已配置品牌：HP（欧洲 SELLERHP）、CC（欧洲 SELLERCC）').waitFor();
   await page.getByRole('button', { name: '读取亚马逊店铺', exact: true }).click();
   await page.getByText('已读取 2 个库存店铺，包含 6 个真实站点').waitFor();
   assert.equal(await page.getByLabel('CC_EU 对应的 SKU 库品牌').inputValue(), 'CC');
@@ -148,7 +152,7 @@ try {
   console.log('Amazon inventory country assignment browser workflow passed');
 } finally {
   global.fetch = originalFetch;
-  for (const key of spApiEnv) delete process.env[key];
+  for (const key of Object.keys(brandEnv)) delete process.env[key];
   await browser?.close();
   await vite?.close();
   await backend.close();

@@ -21,8 +21,8 @@ services:
       # 左边是服务器对外端口(改 .env 里的 HOST_PORT),右边固定 8080
       - "${HOST_PORT:-8080}:8080"
 
-    # 亚马逊 SP-API 凭证(SPAPI_ 开头的那几行)直接从 .env 读进容器;
-    # 多个卖家账号加 _2、_3 后缀即可,不用再改这个文件。下面 environment 里的同名项优先
+    # 亚马逊 SP-API 凭证(BRAND1_…、BRAND2_… 那些行)直接从 .env 读进容器;
+    # 加品牌、加区域都只改 .env,不用再改这个文件。下面 environment 里的同名项优先
     env_file:
       - path: .env
         required: false

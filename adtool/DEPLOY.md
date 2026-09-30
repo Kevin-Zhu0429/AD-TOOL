@@ -116,25 +116,26 @@ ls -l data-prod    # 属主应该就是你自己,不需要 chown
 
 ### 3.5 接入亚马逊库存同步(可选,随时可以补)
 
-SKU 库的「同步亚马逊库存」需要 SP-API 凭证。在 `adtool/.env` 末尾追加(换成你自己的值):
+SKU 库的「同步亚马逊库存」需要每个品牌的 SP-API 凭证。用 `vi .env` 或 `nano .env` 在末尾按品牌追加,
+每个品牌一组,编号 BRAND1、BRAND2 … 往下排(换成你自己的值;没有的区域整行不写):
 
-```bash
-cat >> .env <<'EOF'
-SPAPI_CLIENT_ID=amzn1.application-oa2-client.xxxxxxxx
-SPAPI_CLIENT_SECRET=amzn1.oa2-cs.v1.xxxxxxxx
-SPAPI_REFRESH_TOKEN=Atzr|xxxxxxxx
-SPAPI_SELLER_ID=A1XXXXXXXXXXXX
-SPAPI_STORE_NAME=CY
-EOF
+```
+BRAND1_NAME=CC
+BRAND1_MARKETS=ES,DE,FR,IT,UK,US,CA
+BRAND1_LWA_CLIENT_ID=品牌一应用的ClientID
+BRAND1_LWA_CLIENT_SECRET=品牌一应用的ClientSecret
+BRAND1_LWA_REFRESH_TOKEN_EU=品牌一欧洲账号的RefreshToken
+BRAND1_SELLER_ID_EU=品牌一欧洲账号的SellerID
+BRAND1_LWA_REFRESH_TOKEN_NA=品牌一北美账号的RefreshToken
+BRAND1_SELLER_ID_NA=品牌一北美账号的SellerID
 ```
 
-注意用的是 `<<'EOF'`(EOF 带单引号),Refresh Token 里的字符会原样写进去。
-`SPAPI_STORE_NAME` 建议填 SKU 库里的品牌;有多个卖家账号就再加 `SPAPI_REFRESH_TOKEN_2`、`SPAPI_SELLER_ID_2` …,
+`BRAND<n>_NAME` 要和 SKU 库里的品牌一致,等号两边不要加空格。
 完整说明见 `server/.env.example`。`docker-compose.yml` 会把 `.env` 整个读进容器,不用改它。
 改完 `.env` 要再跑一次 `docker compose up -d` 重建容器才生效。
 
-启动后超级管理员到「账号管理 → 亚马逊库存」:上方会列出已配置的卖家账号,点「读取亚马逊店铺」,
-给每个店铺组选品牌和各国负责人后保存。
+启动后超级管理员到「账号管理 → 亚马逊库存」:上方会列出已配置的品牌和各区域卖家编号,
+`.env` 哪里没填全也会在这里提示。点「读取亚马逊店铺」,给每个店铺组选品牌和各国负责人后保存。
 
 ### 4. 构建并启动
 

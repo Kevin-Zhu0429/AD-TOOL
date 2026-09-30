@@ -1,12 +1,14 @@
 import { createServer } from '../web/node_modules/vite/dist/node/index.js';
 import { startAbaTestServer } from '../server/tests/abaHarness.js';
 
-process.env.SPAPI_CLIENT_ID = 'preview-client';
-process.env.SPAPI_CLIENT_SECRET = 'preview-secret';
-process.env.SPAPI_REFRESH_TOKEN = 'Atzr|preview';
-process.env.SPAPI_SELLER_ID = 'PREVIEWSELLER';
-process.env.SPAPI_STORE_NAME = 'CY';
-process.env.SPAPI_REGION = 'eu';
+Object.assign(process.env, {
+  BRAND1_NAME: 'CY',
+  BRAND1_MARKETS: 'ES,DE,FR,IT,UK',
+  BRAND1_LWA_CLIENT_ID: 'preview-client',
+  BRAND1_LWA_CLIENT_SECRET: 'preview-secret',
+  BRAND1_LWA_REFRESH_TOKEN_EU: 'Atzr|preview',
+  BRAND1_SELLER_ID_EU: 'PREVIEWSELLER',
+});
 
 const originalFetch = global.fetch;
 const backend = await startAbaTestServer();

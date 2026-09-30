@@ -7,7 +7,7 @@ import { requireLogin, requireRole } from './auth.js';
 import { MARKETPLACES, REGIONS } from './libs.js';
 import { runTask } from './workers/pool.js';
 import {
-  AMAZON_MARKETPLACES, REGION_HOSTS, countryOfMarketplace, findSpApiAccount, spApiAccounts, spApiGet,
+  AMAZON_MARKETPLACES, REGION_LABELS, countryOfMarketplace, findSpApiAccount, readSpApiConfig, spApiAccounts, spApiGet,
 } from './spApi.js';
 
 // FBA 库存接口每页 50 条;一万页足够任何店铺,防止接口一直给 nextToken 死循环
@@ -36,15 +36,16 @@ function isConfigured() {
 
 function requireConfigured() {
   if (!isConfigured()) {
-    const error = new Error('亚马逊 SP-API 还没有配置，请先在服务器 .env 填写 Client ID、Client Secret、Refresh Token 和卖家编号');
+    const error = new Error('亚马逊 SP-API 还没有配置，请先在服务器 .env 按品牌填写 BRAND1_NAME、LWA Client ID / Secret、Refresh Token 和卖家编号');
     error.status = 503;
     throw error;
   }
 }
 
-/** 给页面看的账号列表,不带任何密钥 */
-function accountSummaries() {
-  return spApiAccounts().map(({ sellerId, name, region }) => ({ sellerId, name, region: region || 'auto' }));
+/** 给页面看的品牌配置和配置问题,不带任何密钥 */
+function configSummary() {
+  const { brands, issues } = readSpApiConfig();
+  return { brands, configIssues: issues };
 }
 
 /** 店铺编号:spapi:<卖家编号>:<marketplaceId>,同步时靠它找回账号和站点 */
@@ -57,55 +58,49 @@ function parseChannelId(openChannelId) {
   return { sellerId, marketplaceId, country, region: AMAZON_MARKETPLACES[country].region };
 }
 
-/** 一个卖家账号参与的、网站支持的站点。没填 SPAPI_REGION 时三个区域都试一遍 */
+const accountLabel = (account) => `${account.brand} ${REGION_LABELS[account.region]}`;
+
+/** 一个卖家账号(品牌 × 区域)开通了的站点,再按 BRAND<n>_MARKETS 过滤 */
 async function accountChannels(account) {
-  const regions = account.region ? [account.region] : Object.keys(REGION_HOSTS);
+  const payload = await spApiGet(account, account.region, '/sellers/v1/marketplaceParticipations');
   const channels = [];
-  const errors = [];
-  for (const region of regions) {
-    let payload;
-    try {
-      payload = await spApiGet(account, region, '/sellers/v1/marketplaceParticipations');
-    } catch (error) {
-      errors.push(error);
-      // 换 token 就失败说明凭证本身有问题,换区域也没用
-      if (error.lwa) break;
-      continue;
-    }
-    for (const row of Array.isArray(payload.payload) ? payload.payload : []) {
-      const marketplaceId = clean(row?.marketplace?.id);
-      const country = countryOfMarketplace(marketplaceId);
-      if (!country || AMAZON_MARKETPLACES[country].region !== region) continue;
-      if (row?.participation?.isParticipating === false) continue;
-      channels.push({
-        openChannelId: channelIdOf(account.sellerId, marketplaceId),
-        channelName: `${account.name}_${country}`,
-        siteId: null,
-        country,
-        status: 1,
-      });
-    }
+  for (const row of Array.isArray(payload.payload) ? payload.payload : []) {
+    const marketplaceId = clean(row?.marketplace?.id);
+    const country = countryOfMarketplace(marketplaceId);
+    if (!country || AMAZON_MARKETPLACES[country].region !== account.region) continue;
+    if (row?.participation?.isParticipating === false) continue;
+    if (!account.allMarkets && !account.markets.includes(country)) continue;
+    channels.push({
+      openChannelId: channelIdOf(account.sellerId, marketplaceId),
+      channelName: `${account.brand}_${country}`,
+      siteId: null,
+      country,
+      status: 1,
+    });
   }
-  if (!channels.length && errors.length) throw errors[0];
-  return channels;
+  const missing = account.markets.filter((market) => !channels.some((channel) => channel.country === market));
+  return { channels, missing };
 }
 
 async function discoverChannels() {
   const groups = new Map();
   const errors = [];
   for (const account of spApiAccounts()) {
-    let channels;
+    let result;
     try {
-      channels = await accountChannels(account);
+      result = await accountChannels(account);
     } catch (error) {
-      errors.push(`${account.name}：${clean(error.message) || '读取店铺失败'}`);
+      errors.push(`${accountLabel(account)}：${clean(error.message) || '读取店铺失败'}`);
       continue;
     }
-    for (const channel of channels) {
+    if (result.missing.length) {
+      errors.push(`${accountLabel(account)}：卖家账号没有开通 ${result.missing.join('、')}`);
+    }
+    for (const channel of result.channels) {
       if (!MARKETPLACES.includes(channel.country)) continue;
       // 欧洲大陆四站共用一份 FBA 库存,归成一个店铺组;UK 和其他国家各自一组
       const scope = CONTINENTAL_EU_MARKETS.includes(channel.country) ? 'EU' : channel.country;
-      const groupName = `${account.name}_${scope}`;
+      const groupName = `${account.brand}_${scope}`;
       const groupKey = `${keyOf(groupName)}:${scope}`;
       const group = groups.get(groupKey) ?? { groupKey, groupName, scope, countries: [], channels: [] };
       if (group.channels.some((row) => row.openChannelId === channel.openChannelId)) continue;
@@ -163,7 +158,9 @@ async function fetchBindingInventory(binding) {
   const channel = parseChannelId(binding.open_channel_id);
   if (!channel) throw new Error('不是亚马逊店铺绑定，请在账号管理里重新读取亚马逊店铺并保存分配');
   const account = findSpApiAccount(channel.sellerId, channel.region);
-  if (!account) throw new Error(`服务器 .env 里没有卖家 ${channel.sellerId} 的授权`);
+  if (!account) {
+    throw new Error(`服务器 .env 里没有卖家 ${channel.sellerId} 的${REGION_LABELS[channel.region]}账号授权`);
+  }
 
   const latest = new Map();
   let nextToken = '';
@@ -356,7 +353,7 @@ captainRouter.get('/admin', requireRole('owner'), (req, res) => {
   ).all();
   res.json({
     configured: isConfigured(),
-    accounts: accountSummaries(),
+    ...configSummary(),
     bindings,
     assignments: assignmentSummaries(),
     legacyBindings: legacyAdminBindings(),

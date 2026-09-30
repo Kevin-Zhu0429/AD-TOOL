@@ -85,15 +85,17 @@
 ### 亚马逊库存同步（SP-API）
 
 库存直接从亚马逊 SP-API 读取（以前接的是船长 BI，免费版每天只能调 100 次，已停用）。
-服务器 `.env` 配好 `SPAPI_CLIENT_ID`、`SPAPI_CLIENT_SECRET`、`SPAPI_REFRESH_TOKEN`、`SPAPI_SELLER_ID`
-后（写法见 `server/.env.example`，Docker 部署见 `DEPLOY.md`），超级管理员在
+服务器 `.env` 按品牌配好凭证后（写法见 `server/.env.example`，Docker 部署见 `DEPLOY.md`），超级管理员在
 「账号管理 → 亚马逊库存」点「读取亚马逊店铺」，按“网站账号 + 品牌 + 国家”保存分配。各账号可在自己的
 SKU 库点击「同步亚马逊库存」，超级管理员也可统一同步全部已启用的分配。
 
-* 一个卖家账号 × 一个站点 = 一家店铺。店铺列表来自 `/sellers/v1/marketplaceParticipations`，
-  只保留网站支持的站点（ES / DE / FR / IT / UK / US / CA / AU / AE）。
-* 多个卖家账号共用一个开发者应用时，第二个起在变量名后加 `_2`、`_3`。`SPAPI_STORE_NAME` 建议填 SKU 库品牌，
-  读取店铺时会自动选中。`SPAPI_REGION` 不填会自动识别 eu / na / fe。
+* 每个品牌一组 `BRAND<n>_…`：`NAME`（和 SKU 库品牌一致，读取店铺时自动选中）、`MARKETS`（列出哪些站点）、
+  这个品牌开发者应用的 `LWA_CLIENT_ID` / `LWA_CLIENT_SECRET`，以及欧洲 / 北美 / 远东账号各自的
+  `LWA_REFRESH_TOKEN_EU|NA|FE` 和 `SELLER_ID_EU|NA|FE`。填得不完整的品牌或区域不会被猜测使用，
+  「亚马逊库存」页面顶部会列出缺哪一项。
+* 一个卖家账号（品牌 × 区域）× 一个站点 = 一家店铺。店铺列表来自 `/sellers/v1/marketplaceParticipations`，
+  再按 `MARKETS` 过滤，只保留网站支持的站点（ES / DE / FR / IT / UK / US / CA / AU / AE）。
+  `MARKETS` 里列了但账号没开通的站点，读取店铺时会提示。
 * 开发者应用需要勾选「亚马逊物流（Amazon Fulfillment）」角色，否则库存接口会返回拒绝访问。
 
 库存来源为 `/fba/inventory/v1/summaries`：可售数量（fulfillable）写入在库库存，已发货、接收中、处理中三项

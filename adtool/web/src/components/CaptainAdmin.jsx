@@ -6,6 +6,7 @@ const formatTime = (value) => value
   ? new Date(Number(value) * 1000).toLocaleString('zh-CN', { hour12: false })
   : '尚未同步';
 const brandKey = (value) => String(value ?? '').trim().toLowerCase();
+const REGION_LABELS = { eu: '欧洲', na: '北美', fe: '远东' };
 const inferredBrand = (group) => {
   const name = String(group.groupName ?? '').trim();
   const withoutEurope = name.replace(/[_-]EU(?:[_-]UK)?$/i, '');
@@ -205,8 +206,18 @@ export default function CaptainAdmin({ users }) {
     <div className="captain-admin stack">
       {!settings.configured && (
         <div className="note warn" role="status">
-          服务器尚未配置亚马逊 SP-API。请先在 .env 填写 SPAPI_CLIENT_ID、SPAPI_CLIENT_SECRET、
-          SPAPI_REFRESH_TOKEN 和 SPAPI_SELLER_ID，再重启服务。
+          服务器尚未配置亚马逊 SP-API。请先在 .env 按品牌填写 BRAND1_NAME、BRAND1_LWA_CLIENT_ID 等
+          （写法见 server/.env.example），再重启服务。
+        </div>
+      )}
+      {settings.configIssues?.length > 0 && (
+        <div className="note warn" role="status">
+          <div>
+            .env 里的亚马逊配置需要检查：
+            <ul className="captain-issues">
+              {settings.configIssues.map((issue) => <li key={issue}>{issue}</li>)}
+            </ul>
+          </div>
         </div>
       )}
       {message && <div className={`note ${message.kind}`} role={message.kind === 'err' ? 'alert' : 'status'}>{message.text}</div>}
@@ -218,10 +229,10 @@ export default function CaptainAdmin({ users }) {
             一个库存店铺组先选择 SKU 品牌，再按需要选择一个或多个国家负责人；未上传 SKU 的国家可以留空，
             不会阻塞已选择的国家。欧洲组使用同一份共享库存，UK 仍单独分配。
           </p>
-          {settings.accounts?.length > 0 && (
+          {settings.brands?.length > 0 && (
             <p className="hint captain-accounts">
-              已配置卖家账号：{settings.accounts.map((account) => (
-                `${account.name}（${account.sellerId}${account.region === 'auto' ? '' : ` · ${account.region.toUpperCase()}`}）`
+              已配置品牌：{settings.brands.map((brand) => (
+                `${brand.name}（${brand.accounts.map((account) => `${REGION_LABELS[account.region]} ${account.sellerId}`).join(' · ')}）`
               )).join('、')}
             </p>
           )}
