@@ -20,7 +20,7 @@ function forget(key) {
   cache.delete(key);
 }
 
-function cached(key, build) {
+function cached(key, build, { store = true } = {}) {
   const hit = cache.get(key);
   if (hit && hit.expires > Date.now()) {
     cache.delete(key);
@@ -29,7 +29,9 @@ function cached(key, build) {
   }
   forget(key);
   const value = build();
-  const rows = value.items.length;
+  if (!store) return value;
+  // 按底层匹配到的行数计:合并视图的一行汇总下面还挂着每条原始记录的明细
+  const rows = Math.max(value.items.length, value.recordCount);
   if (rows > CACHE_ROW_LIMIT) return value;   // 单份就超上限的不缓存
   cache.set(key, { value, rows, expires: Date.now() + CACHE_TTL_MS });
   cachedRows += rows;
@@ -54,7 +56,9 @@ const tasks = {
     return JSON.stringify(abaPage(full, payload.query));
   },
   asinView(db, payload) {
-    const full = cached(viewKey('asin', payload), () => buildAsinView(db, payload.userId, payload.market, payload.query));
+    // 打印机视图导出会给每组挂上全部搜索词明细,体积不可控,而且是一次性的,不进缓存
+    const full = cached(viewKey('asin', payload), () => buildAsinView(db, payload.userId, payload.market, payload.query),
+      { store: payload.query.export !== '1' });
     return JSON.stringify(asinPage(full, payload.query));
   },
 };

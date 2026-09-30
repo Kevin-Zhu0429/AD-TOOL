@@ -10,7 +10,8 @@ import os from 'node:os';
 import { db } from '../db.js';
 import { runTask as runLocal } from './tasks.js';
 
-const TASK_TIMEOUT_MS = 60_000;
+// 单个任务从开始执行算起的最长时间;可用环境变量调,主要给压测用
+const TASK_TIMEOUT_MS = Number(process.env.WORKER_TASK_TIMEOUT_MS) || 60_000;
 
 function configuredSize() {
   const raw = process.env.WORKER_POOL_SIZE;
@@ -22,17 +23,23 @@ function configuredSize() {
 }
 
 const size = configuredSize();
-const slots = Array.from({ length: size }, () => ({ worker: null, pending: new Map() }));
+// 每个线程一次只跑一条任务;其余的在 queue 里排队,轮到了才开始计超时
+const slots = Array.from({ length: size }, () => ({ worker: null, running: null, queue: [] }));
 let nextId = 1;
+
+const load = (slot) => slot.queue.length + (slot.running ? 1 : 0);
 
 function fail(slot, worker, error) {
   if (slot.worker !== worker) return;          // error 和 exit 会先后触发,只处理一次
   slot.worker = null;
-  for (const job of slot.pending.values()) {
+  const job = slot.running;
+  slot.running = null;
+  if (job) {
     clearTimeout(job.timer);
     job.reject(error);
   }
-  slot.pending.clear();
+  // 排队中的任务还没开始跑,换一个新线程接着做
+  dispatch(slot);
 }
 
 function workerOf(slot) {
@@ -40,18 +47,37 @@ function workerOf(slot) {
   const worker = new Worker(new URL('./worker.js', import.meta.url));
   worker.unref();                                // 空闲的线程不挡进程退出
   worker.on('message', ({ id, ok, value, error }) => {
-    const job = slot.pending.get(id);
-    if (!job) return;
-    slot.pending.delete(id);
+    const job = slot.running;
+    if (!job || job.id !== id) return;
+    slot.running = null;
     clearTimeout(job.timer);
-    if (!slot.pending.size) worker.unref();
     if (ok) job.resolve(value);
     else job.reject(Object.assign(new Error(error.message), error.status ? { status: error.status } : {}));
+    dispatch(slot);
   });
   worker.on('error', (error) => fail(slot, worker, error));
   worker.on('exit', (code) => fail(slot, worker, new Error(`后台线程意外退出(${code})`)));
   slot.worker = worker;
   return worker;
+}
+
+/** 线程空着就把队首任务发过去,并从这一刻开始计超时 */
+function dispatch(slot) {
+  if (slot.running) return;
+  const job = slot.queue.shift();
+  if (!job) {
+    slot.worker?.unref();
+    return;
+  }
+  const worker = workerOf(slot);
+  worker.ref();
+  job.timer = setTimeout(() => {
+    // 超时的线程直接换掉:它卡在一个同步循环里,留着会拖住后面排队的任务
+    fail(slot, worker, Object.assign(new Error('查询超时,请缩小筛选范围后重试'), { status: 503 }));
+    worker.terminate();
+  }, TASK_TIMEOUT_MS);
+  slot.running = job;
+  worker.postMessage({ id: job.id, name: job.name, payload: job.payload });
 }
 
 function hash(text) {
@@ -72,18 +98,10 @@ export function runTask(name, payload, { key } = {}) {
   }
   const slot = key !== undefined
     ? slots[hash(key) % size]
-    : slots.reduce((best, s) => (s.pending.size < best.pending.size ? s : best));
-  const worker = workerOf(slot);
-  const id = nextId++;
+    : slots.reduce((best, s) => (load(s) < load(best) ? s : best));
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      // 超时的线程直接换掉:它可能卡在一个同步循环里,留着会拖住后面排队的任务
-      fail(slot, worker, Object.assign(new Error('查询超时,请缩小筛选范围后重试'), { status: 503 }));
-      worker.terminate();
-    }, TASK_TIMEOUT_MS);
-    slot.pending.set(id, { resolve, reject, timer });
-    worker.ref();
-    worker.postMessage({ id, name, payload });
+    slot.queue.push({ id: nextId++, name, payload, resolve, reject, timer: null });
+    dispatch(slot);
   });
 }
 
