@@ -105,6 +105,19 @@ export function runTask(name, payload, { key } = {}) {
   });
 }
 
+/**
+ * 跑一个返回 JSON 字符串的任务并直接发给浏览器;
+ * 任务里抛出的带 status 的错误(400 格式不对、404 不存在、503 超时)原样回给前端。
+ */
+export async function respondWithTask(res, name, payload, options) {
+  try {
+    res.type('json').send(await runTask(name, payload, options));
+  } catch (error) {
+    if (!error.status) throw error;
+    res.status(error.status).json({ error: error.message });
+  }
+}
+
 // ---------- 数据版本号 ----------
 // 每个写请求(非 GET)结束时加一。线程里的查询缓存把它放进键里,
 // 数据一变旧结果就不会再被命中 —— 不用逐个接口去想该清哪块缓存。

@@ -1,8 +1,13 @@
 // worker 线程里能跑的任务。每个任务拿到一个数据库连接和可结构化复制的参数,
-// 返回 JSON 字符串 —— 主线程拿到后直接发给浏览器,不用再解析一遍大对象。
+// 大多返回 JSON 字符串 —— 主线程拿到后直接发给浏览器,不用再解析一遍大对象。
+// 任务抛出带 status 的错误(比如 400 文件格式不对)会原样变成接口的错误响应。
 // WORKER_POOL_SIZE=0 时主线程也直接调用这里,行为一致。
 import { buildAbaView, abaPage } from '../services/abaView.js';
 import { buildAsinView, asinPage } from '../services/asinView.js';
+import { importAbaReports } from '../services/abaImport.js';
+import { importAsinReports } from '../services/asinImport.js';
+import { readBatch, importInventory, finishUpload } from '../services/agedFees.js';
+import { importProducts, listProducts } from '../services/products.js';
 
 // 缓存的是排好序的完整结果,翻页、换每页条数都不用重算。
 // 键里带数据版本号(任何写请求结束都会加一),所以数据一变旧结果就不会再被命中。
@@ -60,6 +65,30 @@ const tasks = {
     const full = cached(viewKey('asin', payload), () => buildAsinView(db, payload.userId, payload.market, payload.query),
       { store: payload.query.export !== '1' });
     return JSON.stringify(asinPage(full, payload.query));
+  },
+  // ---------- 导入:解析 + 事务写库 ----------
+  abaImport(db, { userId, market, files }) {
+    return JSON.stringify(importAbaReports(db, userId, market, files));
+  },
+  asinImport(db, { userId, market, files }) {
+    return JSON.stringify(importAsinReports(db, userId, market, files));
+  },
+  agedFeesImport(db, payload) {
+    return JSON.stringify(importInventory(db, payload));
+  },
+  agedFeesFinish(db, payload) {
+    return JSON.stringify(finishUpload(db, payload));
+  },
+  // 产品导入的结果主线程还要拼汇总,返回对象而不是字符串
+  productsImport(db, payload) {
+    return importProducts(db, payload);
+  },
+  // ---------- 大列表:整份 JSON 解析 ----------
+  agedFeesRead(db, { batchId }) {
+    return JSON.stringify(readBatch(db, batchId));
+  },
+  productsList(db, { marketplace, requestedMonth }) {
+    return JSON.stringify(listProducts(db, marketplace, requestedMonth));
   },
 };
 

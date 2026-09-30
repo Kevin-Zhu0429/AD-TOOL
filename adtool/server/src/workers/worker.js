@@ -3,8 +3,8 @@ import { parentPort } from 'node:worker_threads';
 import { openDb } from '../dbConnect.js';
 import { runTask } from './tasks.js';
 
-// 目前搬进来的都是查询任务,用只读连接;以后搬写入任务时再开读写连接
-const db = openDb({ readonly: true });
+// 导入任务要写库,用读写连接;建表和迁移只在主线程启动时做,这里不做
+const db = openDb();
 
 parentPort.on('message', ({ id, name, payload }) => {
   try {

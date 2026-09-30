@@ -31,3 +31,26 @@ export function openDb({ readonly = false } = {}) {
   conn.pragma('mmap_size = 268435456');  // 256 MB 内存映射读
   return conn;
 }
+
+// 每个连接各自缓存一条预编译语句;worker 里的导入要和业务数据写在同一个事务里
+const auditStatements = new WeakMap();
+
+/** 用指定连接写一条操作留痕 */
+export function writeAudit(conn, userId, marketplace, action, entity, entityId, detail) {
+  let insert = auditStatements.get(conn);
+  if (!insert) {
+    insert = conn.prepare(
+      `INSERT INTO audit_log (user_id, marketplace, action, entity, entity_id, detail)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    );
+    auditStatements.set(conn, insert);
+  }
+  insert.run(
+    userId ?? null,
+    marketplace ?? null,
+    action,
+    entity,
+    entityId ?? null,
+    detail ? JSON.stringify(detail) : null
+  );
+}
