@@ -4,7 +4,6 @@ import { api } from '../api.js';
 import { parseAbaReport } from '../../../shared/aba.js';
 import { parseAsinUpload } from '../../../shared/abaAsin.js';
 import { asinUploadBatches } from '../../../shared/abaAsinUpload.js';
-import * as XLSX from 'xlsx';
 
 const number = new Intl.NumberFormat('zh-CN');
 export default function AbaReportUpload({ market, kind = 'brand', onSaved }) {
@@ -32,6 +31,7 @@ export default function AbaReportUpload({ market, kind = 'brand', onSaved }) {
         if (file.size > 10 * 1024 * 1024) throw new Error('单份文件不能超过 10 MB');
         const buffer = await file.arrayBuffer();
         if (isAsin && /\.xlsx$/i.test(file.name)) {
+          const XLSX = await import('xlsx');
           const workbook = XLSX.read(buffer, { type: 'array', sheetRows: 100002 });
           const sheets = workbook.SheetNames.map((name) => {
             const sheet = workbook.Sheets[name];

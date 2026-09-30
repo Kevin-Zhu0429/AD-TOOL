@@ -1,5 +1,4 @@
 import { useMemo, useRef, useState } from 'react';
-import * as XLSX from 'xlsx';
 import { api } from '../api.js';
 import Icon from './Icon.jsx';
 import './ToolsPage.css';
@@ -38,6 +37,7 @@ export default function ToolsPage() {
     setBusy(true);
     setError('');
     try {
+      const XLSX = await import('xlsx');
       const parsed = await Promise.all(files.map(async (file) => {
         const workbook = XLSX.read(await file.arrayBuffer(), { type: 'array', cellDates: true });
         const sheets = workbook.SheetNames.map((name) => {
@@ -65,7 +65,8 @@ export default function ToolsPage() {
     }
   }
 
-  function download() {
+  async function download() {
+    const XLSX = await import('xlsx');
     const rows = books.flatMap((book) => book.sheets.flatMap((sheet) => sheet.rows.map((row) => {
       const normalized = Object.fromEntries(columns.map((column) => [column, row[column] ?? '']));
       return withSource ? { 来源文件: book.name, 来源工作表: sheet.name, ...normalized } : normalized;

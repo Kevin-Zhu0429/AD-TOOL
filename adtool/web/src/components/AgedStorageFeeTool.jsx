@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import * as XLSX from 'xlsx';
 import { api } from '../api.js';
 import { readInventoryRows } from '../agedStorageImport.js';
 import { AGE_BUCKETS, calculateInventory, compactInventoryRows, exportRow, FEE_BUCKETS, MARKET_RATES, OUTPUT_COLUMNS, resultForRow, sortAgedFeeRows } from '../../../shared/agedStorageFee.js';
@@ -103,8 +102,9 @@ export default function AgedStorageFeeTool() {
     } finally { setSavingId(null); }
   }
 
-  function download() {
+  async function download() {
     if (!filtered.length || pending || loading || savingId !== null || Object.values(corrections).some((item) => item.dirty) || saveError) return;
+    const XLSX = await import('xlsx');
     const rows = ordered.map(exportRow);
     const sheet = XLSX.utils.aoa_to_sheet([OUTPUT_COLUMNS, ...rows]);
     sheet['!cols'] = OUTPUT_COLUMNS.map((header, index) => ({ wch: index === 4 ? 34 : Math.min(32, Math.max(12, header.length * 2 + 2)) }));

@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from 'react';
-import * as XLSX from 'xlsx';
 import { api } from '../api.js';
 import NegHelper from './NegHelper.jsx';
 import './LibraryPage.css';
@@ -162,7 +161,8 @@ export default function LibraryPage({ market }) {
     });
   }
 
-  function exportXlsx() {
+  async function exportXlsx() {
+    const XLSX = await import('xlsx');
     const head = [...lib.cols.map((c) => c.label), '备注', '添加人', '添加时间'];
     const rows = [head];
     for (const it of shown) {
@@ -182,6 +182,7 @@ export default function LibraryPage({ market }) {
   async function importXlsx(file, asReplace) {
     if (!file) return;
     try {
+      const XLSX = await import('xlsx');
       const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
       const sheet = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: '' });
       if (!sheet.length) return setMsg({ kind: 'err', text: '这份文件是空的' });

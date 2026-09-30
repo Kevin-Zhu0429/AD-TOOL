@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import * as XLSX from 'xlsx';
 import { api } from '../api.js';
 import {
   isNewlyOutOfStock, isOutOfStock, isRestocked, isZeroStock, stockEventDate,
@@ -265,7 +264,8 @@ export default function SkuPage({ market }) {
     }
   }
 
-  function downloadTemplate() {
+  async function downloadTemplate() {
+    const XLSX = await import('xlsx');
     const rows = [
       cols.map((c) => c.label),
       ['ES', 'HP', '301', 'BKC', 'CY-ES-HP301XL-BKCL', 120, 300, ''],
@@ -283,7 +283,8 @@ export default function SkuPage({ market }) {
     XLSX.writeFile(wb, 'SKU库导入模板.xlsx');
   }
 
-  function exportXlsx() {
+  async function exportXlsx() {
+    const XLSX = await import('xlsx');
     const head = [...cols.map((c) => c.label), '更新时间', ...(mine ? [] : ['上传人'])];
     const rows = [head];
     for (const it of shown) {
@@ -302,6 +303,7 @@ export default function SkuPage({ market }) {
   async function importXlsx(file, asReplace) {
     if (!file) return;
     try {
+      const XLSX = await import('xlsx');
       const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
       const sheet = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: '' });
       if (!sheet.length) return setMsg({ kind: 'err', text: '这份文件是空的' });

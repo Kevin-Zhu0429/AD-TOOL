@@ -1,4 +1,3 @@
-import * as XLSX from 'xlsx';
 
 const MAX_FILE_BYTES = 50 * 1024 * 1024;
 const viewOf = (bytes) => new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -71,6 +70,7 @@ async function unzipFirstSheet(bytes) {
 }
 
 export async function readInventoryRows(file) {
+  const XLSX = await import('xlsx');
   if (file.size > MAX_FILE_BYTES) throw new Error('文件超过 50 MB。');
   let name = file.name;
   let bytes = new Uint8Array(await file.arrayBuffer());

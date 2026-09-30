@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import * as XLSX from 'xlsx';
 import { api } from '../api.js';
 import { buildAsinGroupExport } from '../abaAsinExport.js';
 import AbaAsinTable from './AbaAsinTable.jsx';
@@ -81,6 +80,7 @@ export default function AbaAsinView({ market, userId }) {
     try {
       const exported = await api.abaAsin({ ...filters, marketplace: market, view: 'printers', export: '1', page: 1 }, controller.signal);
       const { columns, rows } = buildAsinGroupExport(exported, filters);
+      const XLSX = await import('xlsx');
       const worksheet = XLSX.utils.aoa_to_sheet([columns.map((column) => column.label), ...rows]);
       columns.forEach((column, columnIndex) => {
         if (!column.rate) return;
