@@ -91,7 +91,7 @@ function hash(text) {
  * 传了 key 的任务固定派给同一个线程(缓存在线程里,同一个查询翻页才能命中);
  * 没传就派给手上任务最少的线程。
  */
-export function runTask(name, payload, { key } = {}) {
+export function runTask(name, payload, { key, signal } = {}) {
   if (!size) {
     try { return Promise.resolve(runLocal(db, name, payload)); }
     catch (error) { return Promise.reject(error); }
@@ -100,7 +100,16 @@ export function runTask(name, payload, { key } = {}) {
     ? slots[hash(key) % size]
     : slots.reduce((best, s) => (load(s) < load(best) ? s : best));
   return new Promise((resolve, reject) => {
-    slot.queue.push({ id: nextId++, name, payload, resolve, reject, timer: null });
+    const job = { id: nextId++, name, payload, resolve, reject, timer: null };
+    // 浏览器已经不要这个结果了(连点筛选时前一个请求会被取消):还在排队的直接撤掉,
+    // 不让一串过期的查询挡在最新那次前面。已经在跑的同步任务停不下来,跑完结果丢掉即可
+    signal?.addEventListener('abort', () => {
+      const index = slot.queue.indexOf(job);
+      if (index < 0) return;
+      slot.queue.splice(index, 1);
+      reject(Object.assign(new Error('请求已取消'), { status: 499, cancelled: true }));
+    }, { once: true });
+    slot.queue.push(job);
     dispatch(slot);
   });
 }
@@ -109,10 +118,14 @@ export function runTask(name, payload, { key } = {}) {
  * 跑一个返回 JSON 字符串的任务并直接发给浏览器;
  * 任务里抛出的带 status 的错误(400 格式不对、404 不存在、503 超时)原样回给前端。
  */
-export async function respondWithTask(res, name, payload, options) {
+export async function respondWithTask(res, name, payload, { cancelOnClose = false, ...options } = {}) {
+  // 只读查询才撤:导入之类的写任务浏览器走了也要做完
+  const controller = new AbortController();
+  if (cancelOnClose) res.once('close', () => { if (!res.writableEnded) controller.abort(); });
   try {
-    res.type('json').send(await runTask(name, payload, options));
+    res.type('json').send(await runTask(name, payload, { ...options, signal: controller.signal }));
   } catch (error) {
+    if (error.cancelled) return;
     if (!error.status) throw error;
     res.status(error.status).json({ error: error.message });
   }

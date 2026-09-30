@@ -36,7 +36,7 @@ export function buildDModelIndex(libData) {
     if (!re) return null;
     const brand = clean(rows[rowIndex].brand).toLowerCase();
     const key = `${kind}|${brand}|${compact(label)}`;
-    const entry = aliases.get(key) ?? { label: clean(label), kind, brand, re, rows: new Set() };
+    const entry = aliases.get(key) ?? { label: clean(label), kind, brand, re, token: compact(label), rows: new Set() };
     entry.rows.add(rowIndex);
     aliases.set(key, entry);
     return entry;
@@ -60,8 +60,44 @@ export function buildDModelIndex(libData) {
       printerNumbers.set(number, list);
     });
   });
-  const numberPatterns = [...printerNumbers].map(([number, entries]) => ({ re: aliasRe(number), entries }));
-  return { rows, aliases: [...aliases.values()], printerNumbers, numberPatterns, brands, searchCache: new Map() };
+  const numberPatterns = [...printerNumbers].map(([number, entries]) => ({ re: aliasRe(number), token: number, entries }));
+  const aliasList = [...aliases.values()];
+  return { rows, aliases: aliasList, printerNumbers, numberPatterns, brands, searchCache: new Map(),
+    aliasesByDigits: byDigitRun(aliasList), numbersByDigits: byDigitRun(numberPatterns) };
+}
+
+const longestDigitRun = (token) => (token.match(/\d+/g) ?? []).reduce((a, b) => (b.length > a.length ? b : a), '');
+
+/**
+ * 按别名里最长的一段数字建索引。别名能在搜索词里出现,这段数字一定是搜索词(去掉分隔符后)
+ * 某段连续数字的子串,查的时候只要枚举搜索词里数字段的子串去取候选,不用把几千条别名挨个试。
+ */
+function byDigitRun(entries) {
+  const map = new Map();
+  let maxLength = 0;
+  for (const [order, entry] of entries.entries()) {
+    entry.order = order;
+    const run = longestDigitRun(entry.token);
+    const list = map.get(run) ?? [];
+    list.push(entry);
+    map.set(run, list);
+    maxLength = Math.max(maxLength, run.length);
+  }
+  return { map, maxLength };
+}
+
+/** 搜索词里可能出现的别名(还要再用正则确认) */
+function candidates(flat, { map, maxLength }) {
+  const found = new Set();
+  for (const run of flat.match(/\d+/g) ?? []) {
+    for (let start = 0; start < run.length; start += 1) {
+      for (let end = start + 1; end <= Math.min(run.length, start + maxLength); end += 1) {
+        const list = map.get(run.slice(start, end));
+        if (list) for (const entry of list) if (flat.includes(entry.token)) found.add(entry);
+      }
+    }
+  }
+  return [...found].sort((a, b) => a.order - b.order);
 }
 
 /** SKU brand is the seller's brand, so it cannot be used as the OEM printer brand. */
@@ -122,10 +158,14 @@ function collectMentions(text, dIndex) {
     group.explicit ||= explicit;
     groups.set(key, group);
   };
-  for (const entry of dIndex.aliases) {
+  // 别名的正则只允许在字符之间插分隔符,所以能匹配上的前提是去掉分隔符后的文本里含有这个别名;
+  // 先用字符串包含筛一遍,几千条正则里通常只剩几条需要真正跑
+  // 先按数字段取候选,几千条别名里通常只剩几条需要真正跑;按原顺序处理,结果和逐条试完全一样
+  const flat = compact(text);
+  for (const entry of candidates(flat, dIndex.aliasesByDigits)) {
     for (const span of occurrences(text, entry.re)) add(span, entry, entry.kind === 'printer');
   }
-  for (const { re, entries } of dIndex.numberPatterns) {
+  for (const { re, entries } of candidates(flat, dIndex.numbersByDigits)) {
     for (const span of occurrences(text, re)) entries.forEach((entry) => add(span, entry));
   }
   const selected = [];

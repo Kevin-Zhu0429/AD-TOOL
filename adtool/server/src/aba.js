@@ -28,5 +28,5 @@ abaRouter.post('/import', async (req, res) => {
 abaRouter.get('/', async (req, res) => {
   // 匹配、聚合、排序都在 worker 线程里做,主线程只转发结果
   const payload = { userId: req.session.user.id, market: req.abaMarket, query: { ...req.query }, generation: dataGeneration() };
-  await respondWithTask(res, 'abaView', payload, { key: viewKey('aba', payload) });
+  await respondWithTask(res, 'abaView', payload, { key: viewKey('aba', payload), cancelOnClose: true });
 });
