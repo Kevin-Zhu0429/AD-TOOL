@@ -1,12 +1,12 @@
-import { useEffect, useMemo, useState } from 'react';
-import { api } from '../api.js';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { api, syncProgressText } from '../api.js';
 import './CaptainAdmin.css';
 
 const formatTime = (value) => value
   ? new Date(Number(value) * 1000).toLocaleString('zh-CN', { hour12: false })
   : '尚未同步';
 const brandKey = (value) => String(value ?? '').trim().toLowerCase();
-const REGION_LABELS = { eu: '欧洲', na: '北美', fe: '远东' };
+const SLOT_LABELS = { eu: '欧洲', na: '北美', ae: '中东', au: '澳洲' };
 const inferredBrand = (group) => {
   const name = String(group.groupName ?? '').trim();
   const withoutEurope = name.replace(/[_-]EU(?:[_-]UK)?$/i, '');
@@ -26,6 +26,7 @@ export default function CaptainAdmin({ users }) {
   const [drafts, setDrafts] = useState({});
   const [busy, setBusy] = useState('');
   const [message, setMessage] = useState(null);
+  const syncAbort = useRef(null);
 
   async function load() {
     try {
@@ -35,7 +36,14 @@ export default function CaptainAdmin({ users }) {
     }
   }
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+    const controller = new AbortController();
+    syncAbort.current = controller;
+    // 刷新页面前点过统一同步、服务器还没跑完的,接着显示进度
+    syncAll({ resume: true });
+    return () => controller.abort();
+  }, []);
 
   const activeUsers = useMemo(() => users.filter((user) => user.is_active), [users]);
   const bindingByChannel = useMemo(() => new Map(
@@ -184,17 +192,31 @@ export default function CaptainAdmin({ users }) {
     }
   }
 
-  async function syncAll() {
-    setBusy('sync');
-    setMessage(null);
+  async function syncAll({ resume = false } = {}) {
+    const signal = syncAbort.current?.signal;
+    // 接着看的时候,只有服务器上确实有统一同步在跑才占用按钮、显示进度
+    let following = !resume;
+    if (following) {
+      setBusy('sync');
+      setMessage(null);
+    }
+    const onProgress = (progress) => {
+      following = true;
+      setBusy('sync');
+      setMessage({ kind: 'info', text: syncProgressText(progress) });
+    };
     try {
-      const result = await api.syncAllCaptainInventory();
+      const result = resume
+        ? await api.resumeCaptainSyncAll({ onProgress, signal })
+        : await api.syncAllCaptainInventory({ onProgress, signal });
+      if (!result) return;
       await load();
       setMessage({ kind: result.failed ? 'warn' : 'ok', text: syncText(result) });
     } catch (error) {
+      if (signal?.aborted || !following) return;
       setMessage({ kind: 'err', text: error.message });
     } finally {
-      setBusy('');
+      if (!signal?.aborted && following) setBusy('');
     }
   }
 
@@ -232,7 +254,7 @@ export default function CaptainAdmin({ users }) {
           {settings.brands?.length > 0 && (
             <p className="hint captain-accounts">
               已配置品牌：{settings.brands.map((brand) => (
-                `${brand.name}（${brand.accounts.map((account) => `${REGION_LABELS[account.region]} ${account.sellerId}`).join(' · ')}）`
+                `${brand.name}（${brand.accounts.map((account) => `${SLOT_LABELS[account.slot]} ${account.sellerId}`).join(' · ')}）`
               )).join('、')}
             </p>
           )}
@@ -241,7 +263,7 @@ export default function CaptainAdmin({ users }) {
           <button className="btn" disabled={!settings.configured || !!busy} onClick={discover}>
             {busy === 'discover' ? '正在读取…' : '读取亚马逊店铺'}
           </button>
-          <button className="btn primary" disabled={!settings.configured || !!busy || !hasEnabled} onClick={syncAll}>
+          <button className="btn primary" disabled={!settings.configured || !!busy || !hasEnabled} onClick={() => syncAll()}>
             {busy === 'sync' ? '正在同步…' : '同步全部库存'}
           </button>
         </div>

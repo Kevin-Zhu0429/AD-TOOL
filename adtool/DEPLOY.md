@@ -130,7 +130,22 @@ BRAND1_LWA_REFRESH_TOKEN_NA=品牌一北美账号的RefreshToken
 BRAND1_SELLER_ID_NA=品牌一北美账号的SellerID
 ```
 
-`BRAND<n>_NAME` 要和 SKU 库里的品牌一致,等号两边不要加空格。
+做澳洲站的品牌,`MARKETS` 里加上 `AU`,再加一组澳洲账号的授权(澳洲和欧洲、北美是分开授权的):
+
+```
+BRAND1_LWA_REFRESH_TOKEN_AU=品牌一澳洲账号的RefreshToken
+BRAND1_SELLER_ID_AU=品牌一澳洲账号的SellerID
+```
+
+做阿联酋站(AE)的品牌,`MARKETS` 里加上 `AE`,再加一组中东账号的授权(AE 和欧洲也是分开授权的):
+
+```
+BRAND1_LWA_REFRESH_TOKEN_AE=品牌一中东账号的RefreshToken
+BRAND1_SELLER_ID_AE=品牌一中东账号的SellerID
+```
+
+`BRAND<n>_NAME` 要和 SKU 库里的品牌一致,等号两边不要加空格。账号后缀只有 `_EU`、`_NA`、`_AE`、`_AU` 四种,
+写成别的(比如 `_US`、`_UK`)不会被读到,页面上会点名提示。
 完整说明见 `server/.env.example`。`docker-compose.yml` 会把 `.env` 整个读进容器,不用改它。
 改完 `.env` 要再跑一次 `docker compose up -d` 重建容器才生效。
 

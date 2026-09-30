@@ -141,6 +141,11 @@ export function dataGeneration() {
 }
 
 export function bumpOnWrite(req, res, next) {
-  if (req.method !== 'GET' && req.method !== 'HEAD') res.once('close', () => { generation++; });
+  if (req.method !== 'GET' && req.method !== 'HEAD') res.once('close', bumpDataGeneration);
   next();
+}
+
+/** 请求已经返回、写库还在后台跑的任务(比如库存同步),写完自己再加一 */
+export function bumpDataGeneration() {
+  generation++;
 }

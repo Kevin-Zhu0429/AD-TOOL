@@ -2,12 +2,13 @@
 // 数据源现在是亚马逊 SP-API:店铺 = 卖家账号 × 站点,库存来自 FBA 库存接口。
 // 店铺组、国家负责人分配、回写 SKU 库和断货 / 补货记录的逻辑与数据源无关,保持不变。
 import express from 'express';
+import { randomUUID } from 'node:crypto';
 import { db, audit } from './db.js';
 import { requireLogin, requireRole } from './auth.js';
 import { MARKETPLACES, REGIONS } from './libs.js';
-import { runTask } from './workers/pool.js';
+import { bumpDataGeneration, runTask } from './workers/pool.js';
 import {
-  AMAZON_MARKETPLACES, REGION_LABELS, countryOfMarketplace, findSpApiAccount, readSpApiConfig, spApiAccounts, spApiGet,
+  AMAZON_MARKETPLACES, SLOT_LABELS, countryOfMarketplace, findSpApiAccount, readSpApiConfig, spApiAccounts, spApiGet,
 } from './spApi.js';
 
 // FBA 库存接口每页 50 条;一万页足够任何店铺,防止接口一直给 nextToken 死循环
@@ -58,18 +59,17 @@ function parseChannelId(openChannelId) {
   return { sellerId, marketplaceId, country, region: AMAZON_MARKETPLACES[country].region };
 }
 
-const accountLabel = (account) => `${account.brand} ${REGION_LABELS[account.region]}`;
+const accountLabel = (account) => `${account.brand} ${SLOT_LABELS[account.slot]}`;
 
-/** 一个卖家账号(品牌 × 区域)开通了的站点,再按 BRAND<n>_MARKETS 过滤 */
+/** 一个卖家账号开通了的站点里,归这个账号管的那些(已按 BRAND<n>_MARKETS 过滤) */
 async function accountChannels(account) {
   const payload = await spApiGet(account, account.region, '/sellers/v1/marketplaceParticipations');
   const channels = [];
   for (const row of Array.isArray(payload.payload) ? payload.payload : []) {
     const marketplaceId = clean(row?.marketplace?.id);
     const country = countryOfMarketplace(marketplaceId);
-    if (!country || AMAZON_MARKETPLACES[country].region !== account.region) continue;
+    if (!country || !account.markets.includes(country)) continue;
     if (row?.participation?.isParticipating === false) continue;
-    if (!account.allMarkets && !account.markets.includes(country)) continue;
     channels.push({
       openChannelId: channelIdOf(account.sellerId, marketplaceId),
       channelName: `${account.brand}_${country}`,
@@ -78,21 +78,26 @@ async function accountChannels(account) {
       status: 1,
     });
   }
-  const missing = account.markets.filter((market) => !channels.some((channel) => channel.country === market));
+  // 没填 MARKETS 时账号管的是所有可能的站点,没开通的不算缺
+  const missing = account.allMarkets
+    ? []
+    : account.markets.filter((market) => !channels.some((channel) => channel.country === market));
   return { channels, missing };
 }
 
 async function discoverChannels() {
   const groups = new Map();
   const errors = [];
-  for (const account of spApiAccounts()) {
-    let result;
-    try {
-      result = await accountChannels(account);
-    } catch (error) {
-      errors.push(`${accountLabel(account)}：${clean(error.message) || '读取店铺失败'}`);
+  const accounts = spApiAccounts();
+  // 各账号的限速互不影响,一起读;结果按配置顺序处理
+  const results = await Promise.allSettled(accounts.map((account) => accountChannels(account)));
+  for (const [index, account] of accounts.entries()) {
+    const settled = results[index];
+    if (settled.status === 'rejected') {
+      errors.push(`${accountLabel(account)}：${clean(settled.reason?.message) || '读取店铺失败'}`);
       continue;
     }
+    const result = settled.value;
     if (result.missing.length) {
       errors.push(`${accountLabel(account)}：卖家账号没有开通 ${result.missing.join('、')}`);
     }
@@ -157,10 +162,8 @@ function normalizeInventory(item) {
 async function fetchBindingInventory(binding) {
   const channel = parseChannelId(binding.open_channel_id);
   if (!channel) throw new Error('不是亚马逊店铺绑定，请在账号管理里重新读取亚马逊店铺并保存分配');
-  const account = findSpApiAccount(channel.sellerId, channel.region);
-  if (!account) {
-    throw new Error(`服务器 .env 里没有卖家 ${channel.sellerId} 的${REGION_LABELS[channel.region]}账号授权`);
-  }
+  const account = findSpApiAccount(channel.sellerId, channel.country);
+  if (!account) throw new Error(`服务器 .env 里没有卖家 ${channel.sellerId}（${channel.country}）的授权`);
 
   const latest = new Map();
   let nextToken = '';
@@ -236,54 +239,137 @@ const markSourceError = db.prepare(
           updated_at = datetime('now', 'localtime') WHERE id = ?`
 );
 
-async function refreshSources(sources) {
+/** 同一个卖家账号(卖家 × 接口区域)共用一份限速,排成一队;不同账号的队同时跑 */
+function laneOf(source) {
+  const channel = parseChannelId(source.open_channel_id);
+  return channel ? `${channel.sellerId}:${channel.region}` : `binding:${source.id}`;
+}
+
+async function refreshSources(sources, onProgress = () => {}) {
+  const lanes = new Map();
+  for (const [index, source] of sources.entries()) {
+    const lane = lanes.get(laneOf(source)) ?? [];
+    lane.push({ index, source });
+    lanes.set(laneOf(source), lane);
+  }
   const errors = [];
   let fetched = 0;
   let succeeded = 0;
-  for (const source of sources) {
-    try {
-      const items = await fetchBindingInventory(source);
-      const now = Math.floor(Date.now() / 1000);
-      // 快照写库在 worker 线程里做
-      await runTask('captainSaveSnapshots', { bindingId: source.id, items, now });
-      fetched += items.length;
-      succeeded += 1;
-    } catch (error) {
-      const message = clean(error.message).slice(0, 300) || '同步失败';
-      errors.push(`${source.channel_name}：${message}`);
-      markSourceError.run(message, source.id);
+  let done = 0;
+  onProgress({ phase: 'fetch', done, total: sources.length, current: '' });
+  await Promise.all([...lanes.values()].map(async (lane) => {
+    for (const { index, source } of lane) {
+      try {
+        const items = await fetchBindingInventory(source);
+        const now = Math.floor(Date.now() / 1000);
+        // 快照写库在 worker 线程里做
+        await runTask('captainSaveSnapshots', { bindingId: source.id, items, now });
+        fetched += items.length;
+        succeeded += 1;
+      } catch (error) {
+        const message = clean(error.message).slice(0, 300) || '同步失败';
+        errors.push({ index, text: `${source.channel_name}：${message}` });
+        markSourceError.run(message, source.id);
+      }
+      done += 1;
+      onProgress({ phase: 'fetch', done, total: sources.length, current: source.channel_name });
     }
-  }
-  return { sources: sources.length, succeeded, failed: errors.length, fetched, errors };
+  }));
+  return {
+    sources: sources.length, succeeded, failed: errors.length, fetched,
+    errors: errors.sort((x, y) => x.index - y.index).map((error) => error.text),
+  };
 }
 
-async function syncUser(userId, actorId = userId) {
-  if (runningUsers.has(userId)) {
-    const error = new Error('这个账号正在同步，请稍后再试');
-    error.status = 409;
-    throw error;
-  }
-  const sources = sourcesForUser(userId);
-  if (!sources.length) {
-    const error = new Error('这个账号还没有分配亚马逊库存国家，请联系超级管理员');
-    error.status = 400;
-    throw error;
-  }
-  runningUsers.add(userId);
-  try {
-    const refreshed = await refreshSources(sources);
-    const applied = refreshed.succeeded
-      ? await runTask('captainApply', { userId })
-      : { updated: 0, unmatched: 0, inventorySkus: 0, stockSync: null };
-    const { stockSync, ...counts } = applied;
-    audit(actorId, null, refreshed.errors.length ? 'sync_partial' : 'sync', 'captain_inventory', null, {
-      targetUserId: userId, ...refreshed, ...counts, errors: refreshed.errors.slice(0, 10),
-      outOfStock: stockSync?.outCount ?? 0, restocked: stockSync?.restockCount ?? 0,
+function httpError(status, message) {
+  const error = new Error(message);
+  error.status = status;
+  return error;
+}
+
+async function runUserSync(userId, sources, onProgress) {
+  const refreshed = await refreshSources(sources, onProgress);
+  onProgress({ phase: 'apply' });
+  const applied = refreshed.succeeded
+    ? await runTask('captainApply', { userId })
+    : { updated: 0, unmatched: 0, inventorySkus: 0, stockSync: null };
+  const { stockSync, ...counts } = applied;
+  audit(userId, null, refreshed.errors.length ? 'sync_partial' : 'sync', 'captain_inventory', null, {
+    targetUserId: userId, ...refreshed, ...counts, errors: refreshed.errors.slice(0, 10),
+    outOfStock: stockSync?.outCount ?? 0, restocked: stockSync?.restockCount ?? 0,
+  });
+  return { bindings: sources.length, ...refreshed, ...applied };
+}
+
+async function runAllSync(userIds, actorId, onProgress) {
+  const refreshed = await refreshSources(allActiveSources(), onProgress);
+  onProgress({ phase: 'apply' });
+  const results = [];
+  for (const userId of userIds) {
+    if (!refreshed.succeeded) {
+      results.push({ userId, updated: 0, unmatched: 0, inventorySkus: 0, outOfStock: 0, restocked: 0 });
+      continue;
+    }
+    // 逐个账号回写;写 SKU 库在 worker 线程里做
+    const { stockSync, ...counts } = await runTask('captainApply', { userId });
+    results.push({
+      userId, ...counts,
+      outOfStock: stockSync?.outCount ?? 0,
+      restocked: stockSync?.restockCount ?? 0,
     });
-    return { bindings: sources.length, ...refreshed, ...applied };
-  } finally {
-    runningUsers.delete(userId);
   }
+  const totals = results.reduce((sum, row) => ({
+    updated: sum.updated + row.updated,
+    unmatched: sum.unmatched + row.unmatched,
+    inventorySkus: sum.inventorySkus + row.inventorySkus,
+    outOfStock: sum.outOfStock + row.outOfStock,
+    restocked: sum.restocked + row.restocked,
+  }), { updated: 0, unmatched: 0, inventorySkus: 0, outOfStock: 0, restocked: 0 });
+  audit(actorId, null, refreshed.failed ? 'sync_partial' : 'sync',
+    'captain_inventory_all', null, { users: userIds.length, ...refreshed, ...totals });
+  return { users: userIds.length, results, ...refreshed, ...totals };
+}
+
+// ---------- 后台同步任务 ----------
+// 店铺多时一次同步要好几分钟,超过网关的等待时间就会报 504(其实后台还在跑)。
+// 所以同步接口只负责开始,马上返回任务状态;页面隔一会儿来问一次进度。
+// 任务只放在内存里,服务重启就没了,重新点同步即可。
+const jobs = new Map();
+
+function publicJob(job) {
+  if (!job) return null;
+  const { id, status, progress, result, error, startedAt, finishedAt } = job;
+  return { id, status, progress, result, error, startedAt, finishedAt };
+}
+
+function startJob(key, run) {
+  const job = {
+    id: randomUUID(),
+    status: 'running',
+    progress: { phase: 'fetch', done: 0, total: 0, current: '' },
+    result: null,
+    error: null,
+    startedAt: Date.now(),
+    finishedAt: null,
+  };
+  jobs.set(key, job);
+  Promise.resolve()
+    .then(() => run((progress) => { job.progress = { ...job.progress, ...progress }; }))
+    .then((result) => {
+      job.result = result;
+      job.status = 'done';
+    })
+    .catch((error) => {
+      console.error('[inventory-sync]', error);
+      job.error = clean(error.message) || '同步失败';
+      job.status = 'error';
+    })
+    .finally(() => {
+      job.finishedAt = Date.now();
+      // 写 SKU 库发生在请求返回之后,查询缓存要在写完时再作废一次
+      bumpDataGeneration();
+    });
+  return job;
 }
 
 function assignmentSummaries(userId = null) {
@@ -535,19 +621,40 @@ captainRouter.patch('/bindings/:id', requireRole('owner'), (req, res) => {
   res.json({ ok: true });
 });
 
-captainRouter.post('/sync', async (req, res, next) => {
+captainRouter.get('/sync', (req, res) => {
+  res.json({ job: publicJob(jobs.get(`user:${req.session.user.id}`)) });
+});
+
+captainRouter.post('/sync', (req, res, next) => {
   try {
     requireConfigured();
-    res.json(await syncUser(req.session.user.id));
+    const userId = req.session.user.id;
+    const key = `user:${userId}`;
+    const current = jobs.get(key);
+    if (current?.status === 'running') return res.status(202).json({ job: publicJob(current) });
+    if (runningUsers.has(userId)) throw httpError(409, '超级管理员正在统一同步库存，请稍后再试');
+    const sources = sourcesForUser(userId);
+    if (!sources.length) throw httpError(400, '这个账号还没有分配亚马逊库存国家，请联系超级管理员');
+    runningUsers.add(userId);
+    const job = startJob(key, (onProgress) => (
+      runUserSync(userId, sources, onProgress).finally(() => runningUsers.delete(userId))
+    ));
+    res.status(202).json({ job: publicJob(job) });
   } catch (error) {
     if (error.status) return res.status(error.status).json({ error: error.message });
     next(error);
   }
 });
 
-captainRouter.post('/sync-all', requireRole('owner'), async (req, res, next) => {
+captainRouter.get('/sync-all', requireRole('owner'), (req, res) => {
+  res.json({ job: publicJob(jobs.get('all')) });
+});
+
+captainRouter.post('/sync-all', requireRole('owner'), (req, res, next) => {
   try {
     requireConfigured();
+    const current = jobs.get('all');
+    if (current?.status === 'running') return res.status(202).json({ job: publicJob(current) });
     const userIds = db.prepare(
       `SELECT DISTINCT user_id FROM captain_channel_assignments WHERE enabled = 1
        UNION
@@ -558,38 +665,14 @@ captainRouter.post('/sync-all', requireRole('owner'), async (req, res, next) => 
        ORDER BY user_id`
     ).all().map((row) => row.user_id);
     if (userIds.some((userId) => runningUsers.has(userId))) {
-      return res.status(409).json({ error: '有账号正在同步，请稍后再试' });
+      throw httpError(409, '有账号正在同步，请稍后再试');
     }
     userIds.forEach((userId) => runningUsers.add(userId));
-    try {
-      const refreshed = await refreshSources(allActiveSources());
-      const results = [];
-      for (const userId of userIds) {
-        if (!refreshed.succeeded) {
-          results.push({ userId, updated: 0, unmatched: 0, inventorySkus: 0, outOfStock: 0, restocked: 0 });
-          continue;
-        }
-        // 逐个账号回写;写 SKU 库在 worker 线程里做
-        const { stockSync, ...counts } = await runTask('captainApply', { userId });
-        results.push({
-          userId, ...counts,
-          outOfStock: stockSync?.outCount ?? 0,
-          restocked: stockSync?.restockCount ?? 0,
-        });
-      }
-      const totals = results.reduce((sum, row) => ({
-        updated: sum.updated + row.updated,
-        unmatched: sum.unmatched + row.unmatched,
-        inventorySkus: sum.inventorySkus + row.inventorySkus,
-        outOfStock: sum.outOfStock + row.outOfStock,
-        restocked: sum.restocked + row.restocked,
-      }), { updated: 0, unmatched: 0, inventorySkus: 0, outOfStock: 0, restocked: 0 });
-      audit(req.session.user.id, null, refreshed.failed ? 'sync_partial' : 'sync',
-        'captain_inventory_all', null, { users: userIds.length, ...refreshed, ...totals });
-      res.json({ users: userIds.length, results, ...refreshed, ...totals });
-    } finally {
-      userIds.forEach((userId) => runningUsers.delete(userId));
-    }
+    const actorId = req.session.user.id;
+    const job = startJob('all', (onProgress) => (
+      runAllSync(userIds, actorId, onProgress).finally(() => userIds.forEach((userId) => runningUsers.delete(userId)))
+    ));
+    res.status(202).json({ job: publicJob(job) });
   } catch (error) {
     if (error.status) return res.status(error.status).json({ error: error.message });
     next(error);
