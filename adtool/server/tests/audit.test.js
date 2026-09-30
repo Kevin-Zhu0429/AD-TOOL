@@ -77,4 +77,31 @@ test('only owner can read per-account 7/30-day audit statistics', async (t) => {
   assert.ok(everything.data.logs.some((row) => row.created_at < first.data.logs.at(-1).created_at && row.entity === 'lib_items'),
     'days=all includes the 40-day-old row');
   assert.equal((await call('/auth/audit/logs', operator)).status, 403);
+
+  // 动作 / 对象筛选,第一页带汇总,翻页不带
+  const byAction = await call(`/auth/audit/logs?userId=${operatorId}&days=all&action=update&entity=lib_items`, owner);
+  assert.equal(byAction.data.logs.length, 2);
+  assert.ok(byAction.data.logs.every((row) => row.action === 'update' && row.entity === 'lib_items'));
+  assert.equal(byAction.data.summary.total, 2);
+  assert.deepEqual(byAction.data.summary.byEntity, [{ key: 'lib_items', n: 2 }]);
+  assert.equal(second.data.summary, undefined, 'later pages skip the summary');
+  assert.equal(first.data.summary.total, operatorRecent);
+  assert.equal(first.data.summary.users, 1);
+  assert.equal(first.data.summary.byUser[0].n, operatorRecent);
+  assert.equal(first.data.summary.byAction.reduce((sum, row) => sum + row.n, 0), operatorRecent);
+
+  // 自定义时间:两头都含当天
+  const day = (offset) => server.db.prepare("SELECT date('now', 'localtime', ?) AS d").get(`${offset} days`).d;
+  const tenDaysAgo = await call(`/auth/audit/logs?userId=${operatorId}&days=custom&from=${day(-12)}&to=${day(-8)}`, owner);
+  assert.equal(tenDaysAgo.data.logs.length, 1);
+  assert.equal(tenDaysAgo.data.summary.total, 1);
+  const exactDay = await call(`/auth/audit/logs?userId=${operatorId}&days=custom&from=${day(-40)}&to=${day(-40)}`, owner);
+  assert.equal(exactDay.data.logs.length, 1, 'a single-day range includes that whole day');
+  const empty = await call(`/auth/audit/logs?userId=${operatorId}&days=custom&from=${day(-3)}&to=${day(-2)}`, owner);
+  assert.equal(empty.data.summary.total, 0);
+  assert.deepEqual(empty.data.summary.byAction, []);
+  // 不合法的动作 / 日期参数直接忽略,不会拼进 SQL
+  const junk = await call(`/auth/audit/logs?userId=${operatorId}&days=custom&action=${encodeURIComponent("x' OR 1=1")}&from=bad`, owner);
+  assert.equal(junk.status, 200);
+  assert.equal(junk.data.summary.total, server.db.prepare('SELECT count(*) AS n FROM audit_log WHERE user_id = ?').get(operatorId).n);
 });

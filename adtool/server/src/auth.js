@@ -557,23 +557,75 @@ authRouter.get('/audit', requireRole('owner'), (req, res) => {
 });
 
 const AUDIT_PAGE_SIZE = 100;
+const AUDIT_DATE = /^\d{4}-\d{2}-\d{2}$/;
+const AUDIT_CODE = /^[a-z][a-z0-9_]{0,63}$/;
 
 /**
- * 操作明细按 id 倒序分页:?before=<上一页最后一条 id>&limit=100,
- * 账号(userId)和时间(days=7/30/all)在服务端筛,翻页不用一次拉很多条。
+ * 操作明细的筛选条件,统计汇总和分页共用:
+ * 账号 userId、动作 action、对象 entity,
+ * 时间 days=7/30/all,或 days=custom&from=YYYY-MM-DD&to=YYYY-MM-DD(两头都含当天)。
  */
-function auditLogPage(query) {
+function auditFilter(query) {
   const where = [];
   const args = [];
   const userId = Number(query.userId);
   if (Number.isInteger(userId) && userId > 0) { where.push('a.user_id = ?'); args.push(userId); }
+  const action = String(query.action ?? '');
+  if (AUDIT_CODE.test(action)) { where.push('a.action = ?'); args.push(action); }
+  const entity = String(query.entity ?? '');
+  if (AUDIT_CODE.test(entity)) { where.push('a.entity = ?'); args.push(entity); }
   const days = String(query.days ?? '30');
-  if (days !== 'all') {
+  if (days === 'custom') {
+    const from = String(query.from ?? '');
+    const to = String(query.to ?? '');
+    if (AUDIT_DATE.test(from)) { where.push('a.created_at >= ?'); args.push(from); }
+    if (AUDIT_DATE.test(to)) { where.push("a.created_at < date(?, '+1 day')"); args.push(to); }
+  } else if (days !== 'all') {
     where.push("a.created_at >= datetime('now', 'localtime', ?)");
     args.push(`-${['7', '30'].includes(days) ? days : '30'} days`);
   }
+  return { where, args };
+}
+
+/** 当前筛选条件下的汇总:总数、涉及账号,按动作 / 对象 / 账号 / 站点分组计数 */
+function auditSummary({ where, args }) {
+  const cond = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  const from = `FROM audit_log a ${cond}`;
+  const total = db.prepare(
+    `SELECT COUNT(*) AS total, COUNT(DISTINCT a.user_id) AS users,
+            MIN(a.created_at) AS first_at, MAX(a.created_at) AS last_at ${from}`
+  ).get(...args);
+  const group = (column) => db.prepare(
+    `SELECT a.${column} AS key, COUNT(*) AS n ${from} GROUP BY a.${column} ORDER BY n DESC, key`
+  ).all(...args);
+  const byUser = db.prepare(
+    `SELECT a.user_id AS key, us.display_name AS who, us.username, COUNT(*) AS n
+       FROM audit_log a LEFT JOIN users us ON us.id = a.user_id ${cond}
+      GROUP BY a.user_id ORDER BY n DESC, key`
+  ).all(...args);
+  return {
+    total: total.total,
+    users: total.users,
+    firstAt: total.first_at,
+    lastAt: total.last_at,
+    byAction: group('action'),
+    byEntity: group('entity'),
+    byMarket: group('marketplace'),
+    byUser,
+  };
+}
+
+/**
+ * 操作明细按 id 倒序分页:?before=<上一页最后一条 id>&limit=100,
+ * 筛选都在服务端做,翻页不用一次拉很多条。第一页(没有 before)顺带返回汇总。
+ */
+function auditLogPage(query) {
+  const filter = auditFilter(query);
+  const where = [...filter.where];
+  const args = [...filter.args];
   const before = Number(query.before);
-  if (Number.isInteger(before) && before > 0) { where.push('a.id < ?'); args.push(before); }
+  const firstPage = !(Number.isInteger(before) && before > 0);
+  if (!firstPage) { where.push('a.id < ?'); args.push(before); }
   const limit = Math.min(500, Math.max(1, Math.floor(Number(query.limit)) || AUDIT_PAGE_SIZE));
   const rows = db.prepare(
     `SELECT a.*, us.display_name AS who, us.username
@@ -583,7 +635,11 @@ function auditLogPage(query) {
       ORDER BY a.id DESC LIMIT ?`
   ).all(...args, limit + 1);
   const logs = rows.slice(0, limit);
-  return { logs, nextBefore: rows.length > limit ? logs.at(-1).id : null };
+  return {
+    logs,
+    nextBefore: rows.length > limit ? logs.at(-1).id : null,
+    ...(firstPage ? { summary: auditSummary(filter) } : {}),
+  };
 }
 
 /** 操作明细的下一页(不再重算统计) */
