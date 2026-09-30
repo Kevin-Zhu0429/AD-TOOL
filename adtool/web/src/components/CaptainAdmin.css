@@ -3,6 +3,7 @@
 .captain-intro { display: flex; align-items: center; gap: 20px; }
 .captain-intro > div:first-child { max-width: 720px; }
 .captain-intro .card-title { margin-bottom: 7px; }
+.captain-accounts { margin-top: 6px; overflow-wrap: anywhere; }
 .captain-actions { margin-left: auto; justify-content: flex-end; }
 .captain-table-scroll { max-height: 52vh; }
 .captain-field { min-width: 150px; padding: 5px 8px; font-size: 12px; }

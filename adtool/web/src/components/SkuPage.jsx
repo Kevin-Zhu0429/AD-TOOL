@@ -82,7 +82,7 @@ function StockEventList({ title, kind, events }) {
   );
 }
 
-/** 最近一次船长同步的新断货 / 补货,以及近 N 天仍成立的变动入口 */
+/** 最近一次库存同步的新断货 / 补货,以及近 N 天仍成立的变动入口 */
 function StockChangePanel({ sync, days, outCount, restockCount, onFilter }) {
   if (!sync && !outCount && !restockCount) return null;
   const changed = sync && (sync.outCount || sync.restockCount);
@@ -114,7 +114,7 @@ function StockChangePanel({ sync, days, outCount, restockCount, onFilter }) {
         <p className="hint">这次同步没有新断货或补货。</p>
       ) : null}
       <p className="hint">
-        表格里标「新断货」「已补货」的是近 {days} 天船长同步出的、现在仍成立的变动。
+        表格里标「新断货」「已补货」的是近 {days} 天库存同步出的、现在仍成立的变动。
         广告优化的 SKU 矩阵会同步提示：新断货的 SKU 可一键关闭在投广告，补货的 SKU 可一键重新开启暂停的广告。
       </p>
     </div>
@@ -388,7 +388,7 @@ export default function SkuPage({ market }) {
         <div className="stack">
           {mine && (
             <div className="card captain-sync-card">
-              <div className="card-title">船长库存</div>
+              <div className="card-title">亚马逊库存</div>
               <p className="hint">
                 欧洲库存按品牌合并；这里只更新分配给你的国家，其他国家由各自负责人同步。
               </p>
@@ -405,7 +405,7 @@ export default function SkuPage({ market }) {
                 </div>
               ) : (
                 <p className="hint captain-sync-empty">
-                  {captain?.configured ? '还没有绑定店铺，请联系超级管理员。' : '服务器尚未配置船长 API。'}
+                  {captain?.configured ? '还没有绑定店铺，请联系超级管理员。' : '服务器尚未配置亚马逊 SP-API。'}
                 </p>
               )}
               <button
@@ -413,7 +413,7 @@ export default function SkuPage({ market }) {
                 disabled={syncBusy || !captain?.configured || !captain?.bindings?.some((binding) => binding.enabled)}
                 onClick={syncCaptain}
               >
-                {syncBusy ? '正在同步…' : '同步船长库存'}
+                {syncBusy ? '正在同步…' : '同步亚马逊库存'}
               </button>
               {syncMsg && <div className={`note ${syncMsg.kind}`} role={syncMsg.kind === 'err' ? 'alert' : 'status'}>{syncMsg.text}</div>}
             </div>

@@ -230,10 +230,12 @@ CREATE TABLE IF NOT EXISTS sku_items (
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_sku_unique ON sku_items (user_id, dedupe);
 CREATE INDEX IF NOT EXISTS idx_sku_user ON sku_items (user_id, country);
--- 船长同步按「账号 + 国家 + 小写 SKU」更新库存;表达式必须和 captain.js 里的 WHERE 一字不差
+-- 库存同步按「账号 + 国家 + 小写 SKU」更新库存;表达式必须和 services/captainApply.js 里的 WHERE 一字不差
 CREATE INDEX IF NOT EXISTS idx_sku_user_country_key ON sku_items (user_id, country, lower(trim(sku)));
 
--- ---------- 船长 BI 店铺绑定与库存快照 ----------
+-- ---------- 库存同步:店铺绑定与库存快照 ----------
+-- 表名里的 captain 是历史名字(最早接的是船长 BI),现在的数据源是亚马逊 SP-API,
+-- open_channel_id 形如 spapi:<卖家编号>:<marketplaceId>。
 -- API 凭证只放环境变量；兼容表保存真实库存来源及旧版单账号绑定。
 -- 新版负责人关系由下方店铺组与国家分配表维护。
 CREATE TABLE IF NOT EXISTS captain_channel_bindings (
@@ -289,8 +291,8 @@ CREATE TABLE IF NOT EXISTS captain_channel_assignments (
 CREATE INDEX IF NOT EXISTS idx_captain_assignment_user
   ON captain_channel_assignments (user_id, country, enabled);
 
--- inventory_list 是按修改时间增量返回；保存每家店最后一次看到的完整数量，
--- 才能在多店铺之间稳定汇总，而不会因某个 SKU 本轮没变化就少算库存。
+-- 保存每家店每个 SKU 最后一次看到的完整数量，才能在多店铺之间稳定汇总；
+-- 某个 SKU 本轮没返回时沿用上次的快照。
 CREATE TABLE IF NOT EXISTS captain_inventory_snapshots (
   binding_id INTEGER NOT NULL REFERENCES captain_channel_bindings(id) ON DELETE CASCADE,
   sku_key    TEXT    NOT NULL,
@@ -303,7 +305,7 @@ CREATE TABLE IF NOT EXISTS captain_inventory_snapshots (
   PRIMARY KEY (binding_id, sku_key)
 );
 
--- ---------- 库存变动（每次船长同步后对比在库） ----------
+-- ---------- 库存变动（每次库存同步后对比在库） ----------
 -- 每个账号每次同步记一条 run；在库从 >0 变成 0 记「新断货」，从 0 变成 >0 记「补货」。
 -- 同步前没有库存值（空）的行不算变动，避免第一次同步把所有 0 库存都当成新断货。
 -- 事件按「账号 + 国家 + 小写 SKU」关联 SKU 库，整表替换后 id 变了也能对上。

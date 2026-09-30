@@ -49,7 +49,7 @@ skuRouter.get('/', (req, res) => {
     scope: all ? 'all' : 'mine',
     canViewAll: me.role === 'owner',
     stockEventDays: STOCK_EVENT_DAYS,
-    // 最近一次船长同步带来的新断货 / 补货;只看自己的库时才给
+    // 最近一次库存同步带来的新断货 / 补货;只看自己的库时才给
     stockSync: all ? null : latestSync(db, me.id),
     items: attachStockEvents(db, items, all ? items.map((item) => item.user_id) : [me.id]),
   });

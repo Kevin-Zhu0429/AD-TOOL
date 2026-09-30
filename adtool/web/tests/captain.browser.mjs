@@ -4,9 +4,17 @@ import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
 import { startAbaTestServer } from '../../server/tests/abaHarness.js';
 
-process.env.CAPTAIN_CLIENT_ID = 'browser-client';
-process.env.CAPTAIN_CLIENT_SECRET = 'browser-secret';
-process.env.CAPTAIN_INITIAL_LOOKBACK_DAYS = '1';
+process.env.SPAPI_CLIENT_ID = 'browser-client';
+process.env.SPAPI_CLIENT_SECRET = 'browser-secret';
+process.env.SPAPI_REFRESH_TOKEN = 'Atzr|browser-hp';
+process.env.SPAPI_SELLER_ID = 'SELLERHP';
+process.env.SPAPI_STORE_NAME = 'HP';
+process.env.SPAPI_REGION = 'eu';
+process.env.SPAPI_REFRESH_TOKEN_2 = 'Atzr|browser-cc';
+process.env.SPAPI_SELLER_ID_2 = 'SELLERCC';
+process.env.SPAPI_STORE_NAME_2 = 'CC';
+process.env.SPAPI_REGION_2 = 'eu';
+const spApiEnv = Object.keys(process.env).filter((key) => key.startsWith('SPAPI_'));
 
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
@@ -30,35 +38,35 @@ backend.db.prepare(
    VALUES (?, 'ES', 'HP', '302', 'BK', 'ZERO-SKU-BROWSER', 0, 0, 'ES|zero-sku-browser')`
 ).run(users['aba-test']);
 
+const { spApiTiming } = await import('../../server/src/spApi.js');
+spApiTiming.minIntervalMs = 0;
+const MARKETPLACE = { ES: 'A1RKKUPIHCS9HS', DE: 'A1PA6795UKMFR9', FR: 'A13V1IB3VIYZZH' };
+const countryOf = Object.fromEntries(Object.entries(MARKETPLACE).map(([country, id]) => [id, country]));
 global.fetch = async (input, options = {}) => {
   const url = new URL(String(input));
-  if (url.pathname === '/oauth2/token') return Response.json({ access_token: 'browser-token', expires_in: 3600 });
-  if (url.pathname === '/v1/open_user/get_site_list') {
-    return Response.json({ code: 200, data: [
-      { site_id: 1, code: 'ES' }, { site_id: 2, code: 'DE' }, { site_id: 3, code: 'FR' },
-    ] });
+  if (url.host === 'api.amazon.com') {
+    const refreshToken = new URLSearchParams(String(options.body)).get('refresh_token');
+    return Response.json({ access_token: refreshToken.replace('Atzr|', 'token-'), expires_in: 3600 });
   }
-  if (url.pathname === '/v1/open_user/get_channel_list') {
-    return Response.json({ code: 200, max_result: 6, data: [
-      { title: 'CC_EU_ES', site_id: 1, open_channel_id: 'captain-browser-cc-es', status: 1 },
-      { title: 'CC_EU_DE', site_id: 2, open_channel_id: 'captain-browser-cc-de', status: 1 },
-      { title: 'CC_EU_FR', site_id: 3, open_channel_id: 'captain-browser-cc-fr', status: 1 },
-      { title: 'HP_EU_ES', site_id: 1, open_channel_id: 'captain-browser-es', status: 1 },
-      { title: 'HP_EU_DE', site_id: 2, open_channel_id: 'captain-browser-de', status: 1 },
-      { title: 'HP_EU_FR', site_id: 3, open_channel_id: 'captain-browser-fr', status: 1 },
-    ] });
+  assert.equal(url.host, 'sellingpartnerapi-eu.amazon.com');
+  const token = new Headers(options.headers).get('x-amz-access-token');
+  if (url.pathname === '/sellers/v1/marketplaceParticipations') {
+    return Response.json({ payload: Object.values(MARKETPLACE).map((id) => ({
+      marketplace: { id }, participation: { isParticipating: true, hasSuspendedListings: false },
+    })) });
   }
-  if (url.pathname === '/v1/open_fba/inventory_list') {
-    const channel = new Headers(options.headers).get('OpenChannelId');
-    const stock = { 'captain-browser-es': 20, 'captain-browser-de': 20, 'captain-browser-fr': 20 }[channel];
-    assert.ok(stock);
-    return Response.json({ code: 200, max_result: 1, data: [{
-      SKU: 'BROWSER-SKU', asin: 'B012345678', fulfillable_quantity: stock,
-      inbound_shipped_quantity: 1, inbound_receiving_quantity: 0,
-      inbound_working_quantity: 0, is_delete: 0,
-    }] });
+  if (url.pathname === '/fba/inventory/v1/summaries') {
+    // 只有 HP 分配了负责人,CC 的店铺不该被拉
+    assert.equal(token, 'token-browser-hp');
+    assert.ok(countryOf[url.searchParams.get('marketplaceIds')]);
+    return Response.json({ payload: { inventorySummaries: [{
+      sellerSku: 'BROWSER-SKU', asin: 'B012345678',
+      inventoryDetails: {
+        fulfillableQuantity: 20, inboundShippedQuantity: 1, inboundReceivingQuantity: 0, inboundWorkingQuantity: 0,
+      },
+    }] } });
   }
-  throw new Error(`Unexpected Captain request: ${url}`);
+  throw new Error(`Unexpected Amazon request: ${url}`);
 };
 
 let vite;
@@ -88,8 +96,9 @@ try {
 
   await login('aba-other');
   await page.locator('.topnav').getByRole('button', { name: '账号管理', exact: true }).click();
-  await page.getByRole('button', { name: '船长库存', exact: true }).click();
-  await page.getByRole('button', { name: '读取船长店铺', exact: true }).click();
+  await page.getByRole('button', { name: '亚马逊库存', exact: true }).click();
+  await page.getByText('已配置卖家账号：HP（SELLERHP · EU）、CC（SELLERCC · EU）').waitFor();
+  await page.getByRole('button', { name: '读取亚马逊店铺', exact: true }).click();
   await page.getByText('已读取 2 个库存店铺，包含 6 个真实站点').waitFor();
   assert.equal(await page.getByLabel('CC_EU 对应的 SKU 库品牌').inputValue(), 'CC');
   assert.equal(await page.getByLabel('CC_EU ES 负责人').inputValue(), '');
@@ -121,7 +130,7 @@ try {
   assert.match(await skuRow.innerText(), /已补货/);
   if (process.env.SCREENSHOT_DIR) await page.screenshot({ path: `${process.env.SCREENSHOT_DIR}/sku-stock-change.png`, fullPage: true });
 
-  await page.getByRole('button', { name: '同步船长库存', exact: true }).click();
+  await page.getByRole('button', { name: '同步亚马逊库存', exact: true }).click();
   await page.getByText(/已更新 1 行，读取 3 个库存 SKU；新断货 0 个，补货 0 个/).waitFor();
   assert.match(await skuRow.innerText(), /20/);
   assert.match(await skuRow.innerText(), /1/);
@@ -136,12 +145,10 @@ try {
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   if (process.env.SCREENSHOT_DIR) await page.screenshot({ path: `${process.env.SCREENSHOT_DIR}/sku-stock-change-narrow.png`, fullPage: true });
   assert.deepEqual(pageErrors, []);
-  console.log('Captain country assignment browser workflow passed');
+  console.log('Amazon inventory country assignment browser workflow passed');
 } finally {
   global.fetch = originalFetch;
-  delete process.env.CAPTAIN_CLIENT_ID;
-  delete process.env.CAPTAIN_CLIENT_SECRET;
-  delete process.env.CAPTAIN_INITIAL_LOOKBACK_DAYS;
+  for (const key of spApiEnv) delete process.env[key];
   await browser?.close();
   await vite?.close();
   await backend.close();

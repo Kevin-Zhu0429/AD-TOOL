@@ -19,7 +19,7 @@ const ENTITY_LABELS = {
   user: '账号', lib_items: '否定词库', neg_cat_config: '词库设置', sku_items: 'SKU 库',
   portfolio_items: '广告组合库', products: '产品库', product: '产品', product_month: '产品月份',
   product_settings: '产品设置', aba_reports: 'ABA 品牌报告', aba_asin_reports: 'ABA ASIN 报告',
-  captain_inventory: '船长库存', captain_channel: '船长店铺', captain_channel_group: '船长店铺组',
+  captain_inventory: '库存同步', captain_channel: '库存店铺', captain_channel_group: '库存店铺组',
   module_home: '首页', module_builder: '自动广告', module_manual: '手动广告',
   module_optimizer: '广告优化', module_library: '否定词库', module_skus: 'SKU 库',
   module_portfolios: '广告组合库', module_aba: 'ABA 报告', module_products: '产品情报',
@@ -268,7 +268,7 @@ export default function AdminPage({ user, markets }) {
           操作日志
         </button>
         <button className={`lib-tab${tab === 'captain' ? ' on' : ''}`} onClick={() => setTab('captain')}>
-          船长库存
+          亚马逊库存
         </button>
       </div>
 
