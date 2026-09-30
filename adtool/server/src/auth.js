@@ -549,15 +549,44 @@ authRouter.get('/audit', requireRole('owner'), (req, res) => {
       GROUP BY u.id
       ORDER BY seven_day DESC, thirty_day DESC, u.id`
   ).all();
-  const logs = db.prepare(
-    `SELECT a.*, us.display_name AS who, us.username
-       FROM audit_log a
-       LEFT JOIN users us ON us.id = a.user_id
-      ORDER BY a.id DESC LIMIT 500`
-  ).all();
   const totals = stats.reduce((sum, row) => ({
     sevenDay: sum.sevenDay + Number(row.seven_day || 0),
     thirtyDay: sum.thirtyDay + Number(row.thirty_day || 0),
   }), { sevenDay: 0, thirtyDay: 0 });
-  res.json({ stats, totals, logs });
+  res.json({ stats, totals, ...auditLogPage(req.query) });
+});
+
+const AUDIT_PAGE_SIZE = 100;
+
+/**
+ * 操作明细按 id 倒序分页:?before=<上一页最后一条 id>&limit=100,
+ * 账号(userId)和时间(days=7/30/all)在服务端筛,翻页不用一次拉很多条。
+ */
+function auditLogPage(query) {
+  const where = [];
+  const args = [];
+  const userId = Number(query.userId);
+  if (Number.isInteger(userId) && userId > 0) { where.push('a.user_id = ?'); args.push(userId); }
+  const days = String(query.days ?? '30');
+  if (days !== 'all') {
+    where.push("a.created_at >= datetime('now', 'localtime', ?)");
+    args.push(`-${['7', '30'].includes(days) ? days : '30'} days`);
+  }
+  const before = Number(query.before);
+  if (Number.isInteger(before) && before > 0) { where.push('a.id < ?'); args.push(before); }
+  const limit = Math.min(500, Math.max(1, Math.floor(Number(query.limit)) || AUDIT_PAGE_SIZE));
+  const rows = db.prepare(
+    `SELECT a.*, us.display_name AS who, us.username
+       FROM audit_log a
+       LEFT JOIN users us ON us.id = a.user_id
+      ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+      ORDER BY a.id DESC LIMIT ?`
+  ).all(...args, limit + 1);
+  const logs = rows.slice(0, limit);
+  return { logs, nextBefore: rows.length > limit ? logs.at(-1).id : null };
+}
+
+/** 操作明细的下一页(不再重算统计) */
+authRouter.get('/audit/logs', requireRole('owner'), (req, res) => {
+  res.json(auditLogPage(req.query));
 });
