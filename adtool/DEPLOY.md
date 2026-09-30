@@ -137,8 +137,7 @@ BRAND1_LWA_REFRESH_TOKEN_AU=品牌一澳洲账号的RefreshToken
 BRAND1_SELLER_ID_AU=品牌一澳洲账号的SellerID
 ```
 
-做阿联酋站(AE)的品牌,`MARKETS` 里加上 `AE`。AE 如果和欧洲是同一个卖家账号,什么都不用加;
-如果是单独的卖家账号,再加一组中东账号的授权:
+做阿联酋站(AE)的品牌,`MARKETS` 里加上 `AE`,再加一组中东账号的授权(AE 和欧洲也是分开授权的):
 
 ```
 BRAND1_LWA_REFRESH_TOKEN_AE=品牌一中东账号的RefreshToken

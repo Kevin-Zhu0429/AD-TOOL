@@ -43,19 +43,18 @@ const clean = (value) => String(value ?? '').trim();
 const sleep = (ms) => (ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve());
 
 /**
- * 一个品牌下可以配的卖家账号。region 决定走哪个接口地址,markets 是这个账号能管的站点。
- * AE 在亚马逊属于欧洲区:单独填了 _AE 就用中东账号,没填就跟着欧洲账号读。
- * AU 属于亚马逊的远东区(FE),变量后缀写 _AU 或 _FE 都认;每组后缀的第一个是文档里写的。
+ * 一个品牌下可以配的卖家账号,各管各的站点,互不重叠。region 决定走哪个接口地址:
+ * AE 是单独的卖家账号,但亚马逊把它的接口放在欧洲区;AU 在亚马逊的远东区(FE),
+ * 变量后缀写 _AU 或 _FE 都认。每组后缀的第一个是文档里写的。
  */
 const ACCOUNT_SLOTS = [
-  { slot: 'eu', label: '欧洲', region: 'eu', suffixes: ['EU'], markets: ['ES', 'DE', 'FR', 'IT', 'UK', 'AE'] },
+  { slot: 'eu', label: '欧洲', region: 'eu', suffixes: ['EU'], markets: ['ES', 'DE', 'FR', 'IT', 'UK'] },
   { slot: 'na', label: '北美', region: 'na', suffixes: ['NA'], markets: ['US', 'CA'] },
   { slot: 'ae', label: '中东', region: 'eu', suffixes: ['AE'], markets: ['AE'] },
   { slot: 'au', label: '澳洲', region: 'fe', suffixes: ['AU', 'FE'], markets: ['AU'] },
 ];
 export const SLOT_LABELS = Object.fromEntries(ACCOUNT_SLOTS.map((item) => [item.slot, item.label]));
-// 一个站点能归好几个账号时(AE 可以归欧洲也可以归中东),管得越少的越具体,优先
-const SLOTS_BY_SPECIFICITY = [...ACCOUNT_SLOTS].sort((a, b) => a.markets.length - b.markets.length);
+const slotOfMarket = (market) => ACCOUNT_SLOTS.find((def) => def.markets.includes(market));
 const KNOWN_BRAND_KEYS = new Set(['NAME', 'MARKETS', 'LWA_CLIENT_ID', 'LWA_CLIENT_SECRET',
   ...ACCOUNT_SLOTS.flatMap((item) => item.suffixes).flatMap((suffix) => [`LWA_REFRESH_TOKEN_${suffix}`, `SELLER_ID_${suffix}`])]);
 
@@ -140,13 +139,11 @@ export function readSpApiConfig(env = process.env) {
       continue;
     }
 
-    const ownerOf = (market) => SLOTS_BY_SPECIFICITY
-      .map((def) => filled.find((item) => item.def === def))
-      .find((item) => item?.def.markets.includes(market));
     const brandAccounts = [];
     for (const item of filled) {
-      const owned = item.def.markets.filter((market) => ownerOf(market) === item);
-      const accountMarkets = markets.length ? owned.filter((market) => markets.includes(market)) : owned;
+      const accountMarkets = markets.length
+        ? item.def.markets.filter((market) => markets.includes(market))
+        : item.def.markets;
       if (markets.length && !accountMarkets.length) {
         issues.push(`${label} 填了${item.def.label}账号，但 ${prefix}MARKETS 里没有它管的站点，这个账号不会读取`);
       }
@@ -158,9 +155,9 @@ export function readSpApiConfig(env = process.env) {
       });
     }
 
-    const uncovered = markets.filter((market) => !ownerOf(market));
+    const uncovered = markets.filter((market) => !filled.some((item) => item.def === slotOfMarket(market)));
     if (uncovered.length) {
-      const slots = [...new Set(uncovered.map((market) => SLOTS_BY_SPECIFICITY.find((def) => def.markets.includes(market))))];
+      const slots = [...new Set(uncovered.map(slotOfMarket))];
       const needed = slots.map((def) => (
         `${prefix}LWA_REFRESH_TOKEN_${def.suffixes[0]} 和 ${prefix}SELLER_ID_${def.suffixes[0]}`
       )).join('；');

@@ -91,9 +91,9 @@ SKU 库点击「同步亚马逊库存」，超级管理员也可统一同步全�
 
 * 每个品牌一组 `BRAND<n>_…`：`NAME`（和 SKU 库品牌一致，读取店铺时自动选中）、`MARKETS`（列出哪些站点）、
   这个品牌开发者应用的 `LWA_CLIENT_ID` / `LWA_CLIENT_SECRET`，以及欧洲 / 北美 / 中东 / 澳洲账号各自的
-  `LWA_REFRESH_TOKEN_EU|NA|AE|AU` 和 `SELLER_ID_EU|NA|AE|AU`。AE 在亚马逊属于欧洲区，
-  是单独卖家账号时才填 `_AE`，不填就用欧洲账号读；澳洲属于远东区，写 `_FE` 也认；
-  写错的变量名会被点名提示。填得不完整的品牌或账号不会被猜测使用，
+  `LWA_REFRESH_TOKEN_EU|NA|AE|AU` 和 `SELLER_ID_EU|NA|AE|AU`。四个账号各管各的站点：
+  欧洲 ES / DE / FR / IT / UK，北美 US / CA，中东 AE，澳洲 AU（AE 的接口地址在亚马逊欧洲区，
+  AU 在远东区，程序自动选；澳洲后缀写 `_FE` 也认）。写错的变量名会被点名提示。填得不完整的品牌或账号不会被猜测使用，
   「亚马逊库存」页面顶部会列出缺哪一项。
 * 一个卖家账号 × 一个站点 = 一家店铺。店铺列表来自 `/sellers/v1/marketplaceParticipations`，
   再按 `MARKETS` 过滤，只保留网站支持的站点（ES / DE / FR / IT / UK / US / CA / AU / AE）。
