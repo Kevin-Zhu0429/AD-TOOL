@@ -73,11 +73,17 @@ export function syncProgressText(progress) {
     + (progress.current ? `（刚完成 ${progress.current}）` : '');
 }
 
-/** 操作明细的筛选和翻页参数;all / 空值不带 */
-function auditQuery({ userId, days, before } = {}) {
+/** 操作明细的筛选和翻页参数;all / 空值不带,自定义时间才带 from / to */
+function auditQuery({ userId, action, entity, days, from, to, before } = {}) {
   const q = new URLSearchParams();
   if (userId && userId !== 'all') q.set('userId', userId);
+  if (action && action !== 'all') q.set('action', action);
+  if (entity && entity !== 'all') q.set('entity', entity);
   if (days) q.set('days', days);
+  if (days === 'custom') {
+    if (from) q.set('from', from);
+    if (to) q.set('to', to);
+  }
   if (before) q.set('before', before);
   return q.toString();
 }
@@ -108,7 +114,7 @@ export const api = {
   deleteUser: (id) => request(`/auth/users/${id}`, { method: 'DELETE' }),
   resetPassword: (id, newPassword) =>
     request(`/auth/users/${id}/reset-password`, { method: 'POST', body: { newPassword } }),
-  // 统计 + 第一页明细;filters: { userId, days }
+  // 统计 + 第一页明细和汇总;filters: { userId, action, entity, days, from, to }
   audit: (filters = {}) => request(`/auth/audit?${auditQuery(filters)}`),
   auditLogs: (filters = {}, before) => request(`/auth/audit/logs?${auditQuery({ ...filters, before })}`),
   recordActivity: (module, action, marketplace, detail) =>

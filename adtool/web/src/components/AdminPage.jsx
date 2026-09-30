@@ -31,6 +31,63 @@ const DETAIL_LABELS = {
   sheets: '工作表', groups: '分类', field: '字段', role: '角色', markets: '站点',
 };
 
+const AUDIT_PERIODS = [
+  { id: '7', label: '近 7 天' }, { id: '30', label: '近 30 天' },
+  { id: 'all', label: '全部明细' }, { id: 'custom', label: '自定义' },
+];
+
+/** 本地日期 YYYY-MM-DD(日志时间是服务器本地时间,自定义范围按天算) */
+function localDate(offsetDays = 0) {
+  const d = new Date();
+  d.setDate(d.getDate() + offsetDays);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/** 自定义范围两头都填了且起始不晚于结束,才去请求 */
+function auditRangeReady(filter) {
+  return filter.days !== 'custom' || (filter.from && filter.to && filter.from <= filter.to);
+}
+
+/** 下拉选项:已知的代码按中文名列出,当前选中但不在表里的也保留 */
+function auditOptions(labels, current) {
+  const keys = Object.keys(labels);
+  if (current !== 'all' && !keys.includes(current)) keys.push(current);
+  return keys.map((key) => ({ key, label: labels[key] ?? key }));
+}
+
+/** 汇总里的一组计数,点一下就按这一项筛(再点取消) */
+function SummaryGroup({ title, items, labelOf, active, onPick }) {
+  if (!items?.length) return null;
+  const total = items.reduce((sum, item) => sum + item.n, 0);
+  return (
+    <div className="audit-sum-group">
+      <h3>{title}</h3>
+      <ul>
+        {items.slice(0, 8).map((item) => {
+          const key = String(item.key ?? '');
+          const on = active === key;
+          return (
+            <li key={key || 'none'}>
+              <button
+                type="button"
+                className={`audit-sum-item${on ? ' on' : ''}`}
+                aria-pressed={on}
+                disabled={!onPick || item.key == null}
+                onClick={() => onPick(on ? 'all' : key)}
+              >
+                <span className="audit-sum-label">{labelOf(item)}</span>
+                <span className="audit-sum-bar"><i style={{ width: `${Math.max(3, (item.n / total) * 100)}%` }} /></span>
+                <b>{item.n}</b>
+              </button>
+            </li>
+          );
+        })}
+        {items.length > 8 && <li className="audit-sum-rest">另有 {items.length - 8} 项，共 {items.slice(8).reduce((sum, item) => sum + item.n, 0)} 条</li>}
+      </ul>
+    </div>
+  );
+}
+
 function detailText(raw) {
   if (!raw) return '—';
   try {
@@ -68,8 +125,10 @@ export default function AdminPage({ user, markets }) {
   const [logs, setLogs] = useState([]);
   const [auditStats, setAuditStats] = useState([]);
   const [auditTotals, setAuditTotals] = useState({ sevenDay: 0, thirtyDay: 0 });
-  const [logUser, setLogUser] = useState('all');
-  const [logPeriod, setLogPeriod] = useState('30');
+  const [logFilter, setLogFilter] = useState({
+    userId: 'all', action: 'all', entity: 'all', days: '30', from: localDate(-6), to: localDate(),
+  });
+  const [logSummary, setLogSummary] = useState(null);
   const [logNext, setLogNext] = useState(null);
   const [logBusy, setLogBusy] = useState(false);
   const logRequest = useRef(0);
@@ -96,11 +155,12 @@ export default function AdminPage({ user, markets }) {
   async function load() {
     try {
       const request = ++logRequest.current;
-      const [u, a] = await Promise.all([api.listUsers(), api.audit({ userId: logUser, days: logPeriod })]);
+      const [u, a] = await Promise.all([api.listUsers(), api.audit(auditRangeReady(logFilter) ? logFilter : { ...logFilter, days: '30' })]);
       setUsers(u.users);
       if (request === logRequest.current) {
         setLogs(a.logs);
         setLogNext(a.nextBefore ?? null);
+        setLogSummary(a.summary ?? null);
       }
       setAuditStats(a.stats ?? []);
       setAuditTotals(a.totals ?? { sevenDay: 0, thirtyDay: 0 });
@@ -116,7 +176,7 @@ export default function AdminPage({ user, markets }) {
     if (deleteUser && !deleteDialogRef.current?.open) deleteDialogRef.current?.showModal();
   }, [deleteUser]);
 
-  // 账号和时间在服务端筛;切换条件时重新取第一页,「加载更多」接着上一页往后取
+  // 筛选都在服务端做;切换条件时重新取第一页(连汇总),「加载更多」接着上一页往后取
   async function loadLogs(filters, before) {
     const request = ++logRequest.current;
     setLogBusy(true);
@@ -125,20 +185,26 @@ export default function AdminPage({ user, markets }) {
       if (request !== logRequest.current) return;   // 条件已经又变了,丢掉旧结果
       setLogs((old) => (before ? [...old, ...page.logs] : page.logs));
       setLogNext(page.nextBefore ?? null);
+      if (!before) setLogSummary(page.summary ?? null);
     } catch (e) {
       setMsg({ kind: 'err', text: e.message });
     } finally {
       if (request === logRequest.current) setLogBusy(false);
     }
   }
-  function changeLogUser(value) {
-    setLogUser(value);
-    loadLogs({ userId: value, days: logPeriod });
+  function changeLogFilter(patch) {
+    const next = { ...logFilter, ...patch };
+    setLogFilter(next);
+    if (auditRangeReady(next)) { loadLogs(next); return; }
+    // 日期还没选完整:作废在途请求,别让上一个条件的结果留在表里
+    logRequest.current += 1;
+    setLogBusy(false);
+    setLogs([]);
+    setLogNext(null);
+    setLogSummary(null);
   }
-  function changeLogPeriod(value) {
-    setLogPeriod(value);
-    loadLogs({ userId: logUser, days: value });
-  }
+  const logRangeError = auditRangeReady(logFilter) ? '' : '请选择起止日期，且开始日期不能晚于结束日期';
+  const logFiltered = logFilter.userId !== 'all' || logFilter.action !== 'all' || logFilter.entity !== 'all';
 
   async function act(fn, okText) {
     setMsg(null);
@@ -577,12 +643,45 @@ export default function AdminPage({ user, markets }) {
 
           <div className="card audit-log-card">
             <div className="audit-log-head">
-              <div><h2>操作明细</h2><p className="hint">按账号和时间查看，每次加载 100 条。</p></div>
+              <div><h2>操作明细</h2><p className="hint">按账号、动作、对象和时间筛选，每次加载 100 条。</p></div>
               <div className="audit-filters">
-                <label>账号<select className="inp" value={logUser} onChange={(event) => changeLogUser(event.target.value)}><option value="all">全部账号</option>{auditStats.map((item) => <option key={item.id} value={item.id}>{item.display_name}</option>)}</select></label>
-                <label>时间<select className="inp" value={logPeriod} onChange={(event) => changeLogPeriod(event.target.value)}><option value="7">近 7 天</option><option value="30">近 30 天</option><option value="all">全部明细</option></select></label>
+                <label>账号<select className="inp" value={logFilter.userId} onChange={(event) => changeLogFilter({ userId: event.target.value })}><option value="all">全部账号</option>{auditStats.map((item) => <option key={item.id} value={item.id}>{item.display_name}</option>)}</select></label>
+                <label>动作<select className="inp" value={logFilter.action} onChange={(event) => changeLogFilter({ action: event.target.value })}><option value="all">全部动作</option>{auditOptions(ACTION_LABELS, logFilter.action).map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}</select></label>
+                <label>对象<select className="inp" value={logFilter.entity} onChange={(event) => changeLogFilter({ entity: event.target.value })}><option value="all">全部对象</option>{auditOptions(ENTITY_LABELS, logFilter.entity).map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}</select></label>
+                <label>时间<select className="inp" value={logFilter.days} onChange={(event) => changeLogFilter({ days: event.target.value })}>{AUDIT_PERIODS.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
+                {logFilter.days === 'custom' && (
+                  <>
+                    <label>开始<input className="inp" type="date" value={logFilter.from} max={logFilter.to || undefined} aria-invalid={!!logRangeError} onChange={(event) => changeLogFilter({ from: event.target.value })} /></label>
+                    <label>结束<input className="inp" type="date" value={logFilter.to} min={logFilter.from || undefined} aria-invalid={!!logRangeError} onChange={(event) => changeLogFilter({ to: event.target.value })} /></label>
+                  </>
+                )}
+                {logFiltered && <button className="btn sm audit-reset" type="button" onClick={() => changeLogFilter({ userId: 'all', action: 'all', entity: 'all' })}>清除筛选</button>}
               </div>
             </div>
+            {logRangeError && <div className="note err audit-range-error" role="alert">{logRangeError}</div>}
+            {logSummary && !logRangeError && (
+              <section className="audit-summary" aria-label="筛选结果汇总">
+                <div className="audit-sum-totals">
+                  <div><b>{logSummary.total}</b><span>条操作</span></div>
+                  <div><b>{logSummary.users}</b><span>个账号</span></div>
+                  <div><b>{logSummary.byAction.length}</b><span>种动作</span></div>
+                  <div><b>{logSummary.byEntity.length}</b><span>类对象</span></div>
+                  {logSummary.firstAt && (
+                    <p className="audit-sum-span">
+                      <span className="mono">{logSummary.firstAt}</span> 至 <span className="mono">{logSummary.lastAt}</span>
+                    </p>
+                  )}
+                </div>
+                {logSummary.total > 0 && (
+                  <div className="audit-sum-groups">
+                    <SummaryGroup title="按动作" items={logSummary.byAction} active={logFilter.action} labelOf={(item) => ACTION_LABELS[item.key] ?? item.key} onPick={(action) => changeLogFilter({ action })} />
+                    <SummaryGroup title="按对象" items={logSummary.byEntity} active={logFilter.entity} labelOf={(item) => ENTITY_LABELS[item.key] ?? item.key} onPick={(entity) => changeLogFilter({ entity })} />
+                    <SummaryGroup title="按账号" items={logSummary.byUser} active={logFilter.userId} labelOf={(item) => item.who ?? '已删除账号'} onPick={(userId) => changeLogFilter({ userId })} />
+                    <SummaryGroup title="按站点" items={logSummary.byMarket} labelOf={(item) => item.key ?? '无站点'} />
+                  </div>
+                )}
+              </section>
+            )}
             <div className="scroll audit-log-scroll">
             <table className="tbl">
               <thead>
@@ -605,7 +704,7 @@ export default function AdminPage({ user, markets }) {
           </div>
             {logNext && (
               <div className="audit-more">
-                <button className="btn sm" type="button" disabled={logBusy} aria-busy={logBusy} onClick={() => loadLogs({ userId: logUser, days: logPeriod }, logNext)}>
+                <button className="btn sm" type="button" disabled={logBusy} aria-busy={logBusy} onClick={() => loadLogs(logFilter, logNext)}>
                   {logBusy ? '正在加载…' : '加载更多'}
                 </button>
               </div>
