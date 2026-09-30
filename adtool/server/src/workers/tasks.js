@@ -8,6 +8,7 @@ import { importAbaReports } from '../services/abaImport.js';
 import { importAsinReports } from '../services/asinImport.js';
 import { readBatch, importInventory, finishUpload } from '../services/agedFees.js';
 import { importProducts, listProducts } from '../services/products.js';
+import { applyAndTrackStock, saveSnapshots } from '../services/captainApply.js';
 
 // 缓存的是排好序的完整结果,翻页、换每页条数都不用重算。
 // 键里带数据版本号(任何写请求结束都会加一),所以数据一变旧结果就不会再被命中。
@@ -82,6 +83,14 @@ const tasks = {
   // 产品导入的结果主线程还要拼汇总,返回对象而不是字符串
   productsImport(db, payload) {
     return importProducts(db, payload);
+  },
+  // ---------- 船长同步:快照写库 + 回写 SKU 库存(返回对象,主线程要拼汇总) ----------
+  captainSaveSnapshots(db, payload) {
+    saveSnapshots(db, payload);
+    return null;
+  },
+  captainApply(db, { userId }) {
+    return applyAndTrackStock(db, userId);
   },
   // ---------- 大列表:整份 JSON 解析 ----------
   agedFeesRead(db, { batchId }) {

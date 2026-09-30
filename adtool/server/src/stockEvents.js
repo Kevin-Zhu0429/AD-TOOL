@@ -9,7 +9,7 @@
  * 事件保留在库里,SKU 库和广告优化按「账号 + 国家 + SKU」取最近一条还成立的变动:
  * 新断货后又补上了、补货后又卖断了,旧的那条就不再提示。
  */
-import { db } from './db.js';
+// 函数都接收 db 参数:主线程和 worker 线程各用自己的连接
 
 /** 变动在 SKU 库和广告优化里提示多少天 */
 export const STOCK_EVENT_DAYS = 30;
@@ -18,7 +18,7 @@ const skuKeyOf = (value) => String(value ?? '').trim().toLowerCase();
 const isKnown = (value) => value !== null && value !== undefined;
 
 /** 同步前先把这个账号的库存拍一份,同步后拿来对比 */
-export function snapshotStock(userId) {
+export function snapshotStock(db, userId) {
   const rows = db.prepare(
     'SELECT id, stock, transit FROM sku_items WHERE user_id = ?'
   ).all(userId);
@@ -56,7 +56,7 @@ function eventOut(row) {
  * 同步写完 SKU 库之后调用:对比 before,记一条同步记录和每个变动。
  * 没有变动也记一条同步记录,页面才能告诉用户「这次同步没有新断货 / 补货」。
  */
-export function recordStockChanges(userId, before) {
+export function recordStockChanges(db, userId, before) {
   const after = db.prepare(
     `SELECT id, country, brand, model, set_group, sku, asin, stock, transit
        FROM sku_items WHERE user_id = ?`
@@ -89,11 +89,11 @@ export function recordStockChanges(userId, before) {
     return Number(id);
   })();
 
-  return latestSync(userId, syncId);
+  return latestSync(db, userId, syncId);
 }
 
 /** 某次(默认最近一次)同步的结果:数量 + 变动明细 */
-export function latestSync(userId, syncId = null) {
+export function latestSync(db, userId, syncId = null) {
   const sync = syncId
     ? db.prepare('SELECT * FROM sku_stock_syncs WHERE id = ? AND user_id = ?').get(syncId, userId)
     : db.prepare('SELECT * FROM sku_stock_syncs WHERE user_id = ? ORDER BY id DESC LIMIT 1').get(userId);
@@ -116,7 +116,7 @@ export function latestSync(userId, syncId = null) {
  * 给 SKU 库的行挂上 stockEvent:最近 STOCK_EVENT_DAYS 天内这个 SKU 最新的一条变动,
  * 且现在的库存还和它一致(新断货仍是 0 / 补货后仍 > 0),否则不挂。
  */
-export function attachStockEvents(items, userIds) {
+export function attachStockEvents(db, items, userIds) {
   const ids = [...new Set(userIds)].filter((id) => Number.isInteger(id));
   if (!items.length || !ids.length) return items;
   const rows = db.prepare(
