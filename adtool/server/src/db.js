@@ -58,8 +58,9 @@ function migrate() {
   // 报告行数在导入时写好,报告列表就不用每份都 count(*) 一遍
   for (const [table, rows] of [['aba_reports', 'aba_queries'], ['aba_asin_reports', 'aba_asin_queries']]) {
     if (!db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === 'row_count')) {
-      db.exec(`ALTER TABLE ${table} ADD COLUMN row_count INTEGER NOT NULL DEFAULT 0;
-        UPDATE ${table} SET row_count = (SELECT count(*) FROM ${rows} q WHERE q.report_id = ${table}.id);`);
+      // 加列和回填放在同一个事务里:中途失败就一起回滚,下次启动会重做,不会留下全是 0 的行数
+      db.transaction(() => db.exec(`ALTER TABLE ${table} ADD COLUMN row_count INTEGER NOT NULL DEFAULT 0;
+        UPDATE ${table} SET row_count = (SELECT count(*) FROM ${rows} q WHERE q.report_id = ${table}.id);`))();
     }
   }
   if (!db.prepare('PRAGMA table_info(sku_items)').all().some((c) => c.name === 'asin')) {
