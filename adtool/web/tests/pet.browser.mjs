@@ -139,12 +139,20 @@ try {
   assert.equal(await page.getByRole('button', { name: '跑偏词检测（Beta）' }).count(), 0);
   await page.screenshot({ path: output + 'pet-optimizer.png', fullPage: true });
   await nav('价格策略表');
-  await page.getByRole('button', { name: '添加记录' }).click();
-  await page.getByRole('dialog').getByLabel('SKU *').fill('PET-RAIN-L');
-  await page.getByRole('dialog').getByLabel('售价').fill('19.99');
-  await page.getByRole('dialog').getByRole('button', { name: '保存记录' }).click();
+  // SKU 库里的 PET-RAIN-L 有库存,默认显示;今天的日期在第一列
   await page.locator('.price-table tbody tr').filter({ hasText: 'PET-RAIN-L' }).waitFor();
+  const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Los_Angeles' }).replaceAll('-', '/');
+  assert.equal(await page.locator('.price-table tbody tr').first().locator('td').first().innerText(), today);
+  assert.equal(await page.locator('.price-table thead th.day').count(), 7);
   await page.screenshot({ path: output + 'pet-price-strategy.png', fullPage: true });
+  await nav('销售统计');
+  await page.locator('.sales-stats .stats-table').first().waitFor();
+  await page.getByRole('button', { name: '编辑9月目标' }).click();
+  await page.getByRole('dialog').getByLabel('目标销量（件）').fill('1800');
+  await page.getByRole('dialog').getByRole('button', { name: '保存', exact: true }).click();
+  await page.getByRole('dialog').waitFor({ state: 'detached' });
+  assert.match(await page.locator('.sales-stats tbody tr').filter({ hasText: '9月' }).innerText(), /1,800/);
+  await page.screenshot({ path: output + 'pet-sales-stats.png', fullPage: true });
   await nav('账号管理'); assert.doesNotMatch(await page.locator('.shell-main').innerText(), /B\/C\/D\/E|干扰墨盒/);
   assert.deepEqual(errors, []);
   console.log('Pet browser passed: US-only, SKU variants, picker keyboard, product import/edit/retry/delete/export, narrow viewport, ABA linkage/export and optimizer inventory.');

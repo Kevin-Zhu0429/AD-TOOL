@@ -357,3 +357,38 @@ CREATE TABLE IF NOT EXISTS pet_captain_api_usage (
   calls INTEGER NOT NULL DEFAULT 0,
   last_request_at INTEGER NOT NULL DEFAULT 0
 );
+
+-- 宠物美国站每日销量：亚马逊订单报告按太平洋时间、SKU 汇总。每次同步把覆盖到的日期整天重写。
+-- sales 为订单金额(美元,不含税);estimated_sales 为其中待付款订单按 Listing 价估算的部分。
+CREATE TABLE IF NOT EXISTS pet_daily_sales (
+  day TEXT NOT NULL,
+  sku TEXT NOT NULL COLLATE NOCASE,
+  asin TEXT,
+  units INTEGER NOT NULL DEFAULT 0,
+  orders INTEGER NOT NULL DEFAULT 0,
+  sales REAL NOT NULL DEFAULT 0,
+  estimated_sales REAL NOT NULL DEFAULT 0,
+  PRIMARY KEY(day, sku)
+);
+CREATE INDEX IF NOT EXISTS idx_pet_daily_sales_sku ON pet_daily_sales(sku, day);
+
+-- 亚马逊 Listing 当前售价和状态,每次同步整表替换
+CREATE TABLE IF NOT EXISTS pet_listing_cache (
+  sku TEXT PRIMARY KEY COLLATE NOCASE,
+  asin TEXT,
+  price REAL,
+  status TEXT,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+
+-- 每月目标与人工数据：目标、实际利润和广告花费由人填写,实际销量和销售额由同步数据计算
+CREATE TABLE IF NOT EXISTS pet_monthly_targets (
+  month TEXT PRIMARY KEY,
+  target_units INTEGER,
+  target_sales REAL,
+  target_profit REAL,
+  actual_profit REAL,
+  ad_spend REAL,
+  updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);

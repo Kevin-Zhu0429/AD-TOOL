@@ -44,7 +44,7 @@ function AmazonSyncCard({ onSynced }) {
     setBusy(true);
     setMsg(null);
     try {
-      await api.syncPriceStrategy(status.latestDay);
+      await api.syncPriceStrategy();
       wasRunning.current = true;
       setMsg({ kind: 'ok', text: '已在后台开始同步，完成后自动刷新。' });
       await refresh();
@@ -60,13 +60,13 @@ function AmazonSyncCard({ onSynced }) {
     <div className="card captain-sync-card">
       <div className="card-title">亚马逊同步</div>
       <p className="hint">
-        读取美国店铺全部 Listing、FBA 库存和商品尺码颜色：新 SKU 自动加入，已有 SKU 更新 ASIN 和库存，款式、面料等人工字段保留。价格策略表同时更新。每天美西时间凌晨 3 点后自动同步前一天。
+        读取美国店铺全部 Listing、FBA 库存和商品尺码颜色：新 SKU 自动加入，已有 SKU 更新 ASIN 和库存，款式、面料等人工字段保留。价格策略表和销售统计同时更新。每 3 小时自动同步一次。
       </p>
       {!status?.configured ? (
         <p className="hint captain-sync-empty">{status?.issues?.[0] ?? '服务器尚未配置宠物店铺的亚马逊 SP-API 凭证。'}</p>
       ) : (
         <p className="hint captain-sync-empty">
-          {last ? `上次同步：${new Date(last.completedAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}（快照 ${last.date}）` : '还没有同步过'}
+          {last ? `上次同步：${new Date(last.completedAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}（数据至美西 ${last.today ?? last.date}）` : '还没有同步过'}
         </p>
       )}
       <button
