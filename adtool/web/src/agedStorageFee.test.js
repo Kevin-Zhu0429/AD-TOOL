@@ -13,6 +13,15 @@ test('图片中的六个市场费率包含 AE', () => {
   assert.deepEqual(MARKET_RATES.US, [0.01, 0.12, 0.30, 0.35]);
 });
 
+test('DE/FR/IT/ES 按 EU 费率计算，市场列保留站点', () => {
+  const [de, eu] = calculateInventory([{ ...inventoryRow('de', 1, 1), 市场代码: 'CC_EU_DE' }, { ...inventoryRow('eu', 1, 1), 市场代码: 'CC_EU' }], '2026-09-01');
+  assert.equal(de.market, 'DE');
+  assert.ok(de.fee.total > 0);
+  assert.deepEqual(de.fee, eu.fee);
+  for (const market of ['FR', 'IT', 'ES']) assert.deepEqual(calculateSkuFee(de.buckets, 1, '2026-09-01', market), eu.fee);
+  assert.equal(resultForRow(de, { special: true, value: '2' }).fee.total, resultForRow(eu, { special: true, value: '2' }).fee.total);
+});
+
 test('市场代码第一个词是品牌，最后一个词是市场', () => {
   assert.deepEqual(parseMarketCode('CC_EU_DE'), { brand: 'CC', market: 'DE' });
   assert.deepEqual(parseMarketCode('CC_UK'), { brand: 'CC', market: 'UK' });

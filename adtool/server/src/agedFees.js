@@ -2,7 +2,7 @@ import express from 'express';
 import { randomUUID } from 'node:crypto';
 import { db, audit } from './db.js';
 import { requireLogin } from './auth.js';
-import { calculateSkuFee, MARKET_RATES } from '../../shared/agedStorageFee.js';
+import { calculateSkuFee, ratesFor } from '../../shared/agedStorageFee.js';
 import { respondWithTask } from './workers/pool.js';
 
 export const agedFeesRouter = express.Router();
@@ -83,7 +83,7 @@ agedFeesRouter.patch('/rows/:id', (req, res) => {
   if (special && numeric !== null && (!Number.isFinite(numeric) || numeric <= 0)) return res.status(400).json({ error: '修正日销必须大于 0' });
   if (special && numeric !== null) {
     const row = JSON.parse(item.base_json);
-    if (MARKET_RATES[row.market]) {
+    if (ratesFor(row.market)) {
       try { calculateSkuFee(row.buckets, numeric, row.date, row.market, db.prepare('SELECT scenario FROM aged_fee_batches WHERE id = ?').get(item.batch_id).scenario); }
       catch (error) { return res.status(400).json({ error: error.message }); }
     }

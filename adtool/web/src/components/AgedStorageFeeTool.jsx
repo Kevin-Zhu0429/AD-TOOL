@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api.js';
 import { readInventoryRows } from '../agedStorageImport.js';
-import { AGE_BUCKETS, calculateInventory, compactInventoryRows, exportRow, FEE_BUCKETS, MARKET_RATES, OUTPUT_COLUMNS, resultForRow, sortAgedFeeRows } from '../../../shared/agedStorageFee.js';
+import { AGE_BUCKETS, calculateInventory, compactInventoryRows, exportRow, FEE_BUCKETS, EU_MARKETS, MARKET_RATES, OUTPUT_COLUMNS, ratesFor, resultForRow, sortAgedFeeRows } from '../../../shared/agedStorageFee.js';
 import Icon from './Icon.jsx';
 import './ToolsPage.css';
 import './AgedStorageFeeTool.css';
@@ -55,7 +55,7 @@ export default function AgedStorageFeeTool() {
   const pageCount = Math.max(1, Math.ceil(ordered.length / PAGE_SIZE));
   const shown = ordered.slice((Math.min(page, pageCount) - 1) * PAGE_SIZE, Math.min(page, pageCount) * PAGE_SIZE);
   const pending = ordered.reduce((count, row) => count + (!row.valid ? 1 : 0), 0);
-  const withoutRates = ordered.reduce((count, row) => count + (!MARKET_RATES[row.market] ? 1 : 0), 0);
+  const withoutRates = ordered.reduce((count, row) => count + (!ratesFor(row.market) ? 1 : 0), 0);
 
   function applyShared(data) {
     setShared(data);
@@ -146,7 +146,7 @@ export default function AgedStorageFeeTool() {
     <p className="aged-help">支持 .zip、.xlsx、.xls、.csv；ZIP 内可放库存表。首张工作表需包含市场代码、SKU、7 日均销量和 8 个库龄列。7 天为 0 时取 14 天，两者都为 0 时按 0.14 计算。未配置费率的市场会保留数据，费用留空。任一账号导入新批次后，所有账号查看同一份最新结果。</p>
     <details className="aged-rate-panel" open>
       <summary><span className="aged-rate-title">各市场费率</span><span className="aged-rate-caption">按库龄阶段查看 · 每月 15 日库存快照</span><span className="aged-rate-toggle" aria-hidden="true">⌄</span></summary>
-      <div className="aged-rate-table-wrap"><table className="aged-rate-table"><caption>市场超龄仓储费率，美元 / 件 / 次</caption><thead><tr><th scope="col">市场</th>{FEE_BUCKETS.map((bucket) => <th scope="col" key={bucket}>{bucket === '456+' ? '456 天以上' : `${bucket.replace('-', '–')} 天`}</th>)}</tr></thead><tbody>{Object.entries(MARKET_RATES).map(([code, rates]) => <tr key={code}><th scope="row">{code}</th>{rates.map((rate, index) => <td key={FEE_BUCKETS[index]}>${rate.toFixed(2)}</td>)}</tr>)}</tbody></table></div>
+      <div className="aged-rate-table-wrap"><table className="aged-rate-table"><caption>市场超龄仓储费率，美元 / 件 / 次</caption><thead><tr><th scope="col">市场</th>{FEE_BUCKETS.map((bucket) => <th scope="col" key={bucket}>{bucket === '456+' ? '456 天以上' : `${bucket.replace('-', '–')} 天`}</th>)}</tr></thead><tbody>{Object.entries(MARKET_RATES).map(([code, rates]) => <tr key={code}><th scope="row">{code === 'EU' ? `EU（${EU_MARKETS.join('/')}）` : code}</th>{rates.map((rate, index) => <td key={FEE_BUCKETS[index]}>${rate.toFixed(2)}</td>)}</tr>)}</tbody></table></div>
     </details>
     {fileError && <div className="tool-error" role="alert"><Icon name="alert" />{fileError}</div>}
     {saveError && <div className="tool-error" role="alert"><Icon name="alert" />{saveError}</div>}
@@ -175,7 +175,7 @@ export default function AgedStorageFeeTool() {
       <div className="aged-table-wrap"><table className="aged-table">
         <thead><tr>{OUTPUT_COLUMNS.map((column) => <th key={column} scope="col">{column}</th>)}</tr></thead>
         <tbody>{shown.map((row) => <tr key={row.id} className={snapshot.corrections[row.id] !== corrections[row.id] ? 'aged-row-edited' : undefined}>
-          <td>{row.date}</td><td>{row.marketCode}</td><td>{row.brand}</td><td>{row.market || '—'}{!MARKET_RATES[row.market] && <small className="aged-source-label">无费率</small>}</td><td className="aged-sku">{row.sku}</td>
+          <td>{row.date}</td><td>{row.marketCode}</td><td>{row.brand}</td><td>{row.market || '—'}{!ratesFor(row.market) && <small className="aged-source-label">无费率</small>}</td><td className="aged-sku">{row.sku}</td>
           <td className="aged-number">{money(row.fee.average)}</td><td className="aged-number">{money(row.fee.total)}</td>
           <td className="aged-number">{amount(row.dailySales)}<small className="aged-source-label">{row.salesSource}</small></td>
           <td><select className="inp aged-cell-select" aria-label={`${row.sku} 是否有特殊情况`} disabled={!row.canEdit || loading || savingId !== null} value={row.special ? 'yes' : 'no'} onChange={(event) => { const special = event.target.value === 'yes'; const next = updateCorrection(row.id, { special, value: special ? row.correctionValue : '', reason: special ? row.reason : '', dirty: true }); saveCorrection(row.id, next); }}><option value="no">否</option><option value="yes">是</option></select></td>
