@@ -36,6 +36,9 @@ try {
   assert.equal(await page.locator('.topnav').getByRole('button', { name: '否定词库' }).count(), 0);
   assert.doesNotMatch(await page.locator('.home').innerText(), /墨盒|打印机/);
   await nav('SKU 库');
+  await page.locator('.captain-sync-card').filter({ hasText: '亚马逊同步' }).waitFor();
+  assert.match(await page.locator('.captain-sync-card').innerText(), /PET_SP_|亚马逊 SP-API/);
+  assert.equal(await page.getByRole('button', { name: '从亚马逊同步' }).isDisabled(), true);
   await page.getByLabel('批量添加 SKU').fill('PET-RAIN-L\t雨衣 A 款\tL\t黄色\t防水涂层\t0\t80\tPet Brand\tB000000001\nPET-RAIN-XL\t雨衣 A 款\tXL\t黄色\t防水涂层\t120\t60\tPet Brand\tB000000002');
   await page.getByRole('button', { name: '写入我的库' }).click();
   await page.getByText('新增 2 行', { exact: true }).waitFor();

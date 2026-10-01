@@ -130,7 +130,7 @@ export default function HomePage({ user, market, onNav, theme, onOpenChangelog }
         )}
         {isPet && <EntryCard
           tone="amber" icon="chart" title="价格策略表"
-          desc="按日期和 SKU 查看销量、广告、库存与价格。可导入表格，船长数据每天自动同步。"
+          desc="按日期和 SKU 查看销量、广告、库存与价格。可导入表格，亚马逊数据每天自动同步。"
           meta="US 站 · 店铺共享 · 每日快照"
           onClick={() => onNav('priceStrategy')}
         />}

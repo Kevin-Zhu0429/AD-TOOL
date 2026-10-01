@@ -7,7 +7,8 @@ import { AbaPagination } from './AbaTable.jsx';
 import './LibraryPage.css';
 import './PriceStrategyPage.css';
 
-const latestCompleteDay = () => new Date(Date.now() - 86400000).toLocaleDateString('sv-SE', { timeZone: 'Asia/Shanghai' });
+// 美国站报表按太平洋时间切日,默认看美西的昨天
+const latestCompleteDay = () => new Date(Date.now() - 86400000).toLocaleDateString('sv-SE', { timeZone: 'America/Los_Angeles' });
 const groups = [
   ['身份与库存', ['date','asin','sku','style','size','color','fabric','skc','nameZh','totalStock','availableStock','inboundStock']],
   ['销量与流量', ['totalSales','salesThroughLastMonth','monthlySales','monthlyOrders','sales7d','orders7d','adSales7d','adOrders7d','movement7d','movementSpeed7d','clicks7d','conversion7d']],
@@ -102,19 +103,18 @@ export default function PriceStrategyPage() {
 
   return <div className="lib price-strategy animate-in">
     <div className="lib-head"><div><h1>价格策略表 <span className="tag blue">US 站</span></h1>
-      <p className="hint">店铺共享的每日 SKU 快照。船长自动填销量、广告点击/订单和可售/在途库存；利润和总库存按录入值保存。</p></div>
+      <p className="hint">店铺共享的每日 SKU 快照。亚马逊自动填销量、订单、可售/在途库存，售价空白时用 Listing 当前价；广告点击/订单、利润和总库存按录入值保存。</p></div>
       <div className="row wrap"><button className="btn" onClick={() => download([
         PRICE_ALL_FIELDS.map((field) => field.key === 'date' ? date : field.key === 'marketplace' ? 'US' : field.key === 'sku' ? 'PET-SKU-001' : '')
       ], '价格策略模板.xlsx', headers)}>下载模板</button>
         <button className="btn" type="button" onClick={() => fileRef.current?.click()}>导入 Excel</button><input ref={fileRef} className="price-file" type="file" accept=".xlsx,.xls,.csv" onChange={readFile} tabIndex={-1} aria-hidden="true" />
-        <button className="btn" disabled={busy || !syncState?.configured || syncState?.running || syncState?.rateLimitedToday} onClick={syncNow}>{syncState?.running ? '后台同步中…' : '同步船长数据'}</button>
+        <button className="btn" disabled={busy || !syncState?.configured || syncState?.running} onClick={syncNow}>{syncState?.running ? '后台同步中…' : '同步亚马逊数据'}</button>
         <button className="btn primary" onClick={() => { setError(''); setEditor({ date, marketplace: 'US' }); }}>添加记录</button></div></div>
-    <p className="hint">{syncState?.configured ? `北京时间每天 10 时后自动同步前一天数据。上次保存：${syncState.lastSuccess ? `${syncState.lastSuccess.date}，${syncState.lastSuccess.stage || '已完成'}` : '尚未同步'}` : '船长 API 未配置；可以先手动录入或导入。'} {syncState?.usage && `今日已调用 ${syncState.usage.calls}/${syncState.usage.limit} 次；每次同步最多 ${syncState.callsPerSync || 20} 次，每次请求间隔至少 10 秒。`} 订单和库存会先显示，广告数据随后补齐。动销速度＝近7日销量÷7；周转周数＝总库存÷近7日销量；预估售罄日按该速度推算；7天环比＝本期销量与前7日相比；转化率＝广告订单数÷广告点击数。利润、费比和广告销量暂无可靠自动口径。</p>
-    {syncState?.running && <p className="note" role="status">船长同步正在后台运行，本轮最多调用 20 次，约 3 分钟内完成；离开页面后仍会继续。</p>}
-    {syncState?.lastError && <p className="note err" role="status">上次同步失败（快照 {syncState.lastError.date}，{new Date(syncState.lastError.at).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}）：{syncState.lastError.message}{syncState.pauseReason ? `。${syncState.pauseReason}。` : ''}</p>}
-    {syncState?.pauseReason && !syncState.lastError && <p className="note err" role="status">{syncState.pauseReason}</p>}
+    <p className="hint">{syncState?.configured ? `日期按美国太平洋时间。每天美西凌晨 3 点后自动同步前一天，也可以选日期手动同步（最晚 ${syncState.latestDay}）。上次保存：${syncState.lastSuccess ? `${syncState.lastSuccess.date}，${new Date(syncState.lastSuccess.completedAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}` : '尚未同步'}` : (syncState?.issues?.[0] ?? '服务器还没有配置宠物店铺的亚马逊 SP-API 凭证；可以先手动录入或导入。')} 动销速度＝近7日销量÷7；周转周数＝总库存÷近7日销量；预估售罄日按该速度推算；7天环比＝本期销量与前7日相比；转化率＝广告订单数÷广告点击数。广告数据等亚马逊广告 API 开通后接入。</p>
+    {syncState?.running && <p className="note" role="status">亚马逊同步正在后台运行，订单报告生成需要几分钟；离开页面后仍会继续。</p>}
+    {syncState?.lastError && (!syncState.lastSuccess || syncState.lastError.at > syncState.lastSuccess.completedAt) && <p className="note err" role="status">上次同步失败（快照 {syncState.lastError.date}，{new Date(syncState.lastError.at).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}）：{syncState.lastError.message}</p>}
     {message && <p className="note ok" role="status">{message}</p>}
-    {error && !syncState?.rateLimitedToday && <p className="note err" role="alert">{error}</p>}
+    {error && <p className="note err" role="alert">{error}</p>}
     <section className="card">
       <div className="row wrap price-toolbar"><label>快照日期 <input className="inp" type="date" value={date} onChange={(e) => setDate(e.target.value)} /></label>
         <label>SKU / ASIN / 款式搜索 <input className="inp" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="输入关键词" /></label>

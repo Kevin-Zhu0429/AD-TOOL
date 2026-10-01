@@ -20,12 +20,15 @@ priceStrategyRouter.get('/', (req, res) => {
   res.json({ items, dates, sync: priceSyncStatus() });
 });
 
+priceStrategyRouter.get('/status', (req, res) => res.json(priceSyncStatus()));
+
 priceStrategyRouter.post('/sync', (req, res) => {
   const date = String(req.body?.date ?? '');
   if (!dailyDates(date).length) return res.status(400).json({ error: '同步日期不合法' });
   const status = priceSyncStatus();
-  if (status.rateLimitedToday) return res.status(429).json({ error: status.pauseReason });
-  if (status.running) return res.status(409).json({ error: '价格策略表正在同步' });
+  if (!status.configured) return res.status(503).json({ error: status.issues[0] ?? '服务器还没有配置宠物店铺的亚马逊 SP-API 凭证' });
+  if (status.running) return res.status(409).json({ error: '亚马逊数据正在同步' });
+  if (date > status.latestDay) return res.status(400).json({ error: `美国站最新完整的一天是 ${status.latestDay}` });
   void syncPriceStrategy(date, req.session.user.id).catch((error) => console.error('[price-sync]', error.message));
   res.status(202).json({ accepted: true, date });
 });

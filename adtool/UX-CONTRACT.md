@@ -7,7 +7,7 @@
 | Capability | Canonical owner | Source of truth | Allowed variants | Verification |
 |---|---|---|---|---|
 | 品类与站点 | shared/profile.js + server/src/profile.js | 部署配置 APP_PROFILE；服务端 US 校验 | ink / pet，独立数据库 | pet.test.js |
-| SKU 属性 | PET_SKU_FIELDS + skuLib + SkuPage / SkuPicker | 用户填写、仅库存与唯一 ASIN 由船长补充 | pet 保留原始尺码；ink 保持型号匹配 | API + 浏览器 |
+| SKU 属性 | PET_SKU_FIELDS + skuLib + SkuPage / SkuPicker | pet：亚马逊同步新增 SKU、更新 ASIN/库存、补空白尺码颜色，其余人工维护；ink：用户填写，库存与 ASIN 由同步补充 | pet 保留原始尺码；ink 保持型号匹配 | API + 浏览器 |
 | Select/Listbox | 既有原生 select + .inp | 本文和 DESIGN.md | 接受操作系统弹层 | pet.browser.mjs |
 | Table Selection | SkuPage 的页面选择与 ID 集合 | 当前页面显示行 | 全选当前页，筛选保持可见计数 | 浏览器 |
 | Date | 原生 month 输入 + 服务端 YYYY-MM 校验 | 来源数据月份，由用户确认 | 产品月份 / ABA 来源报告周 | API + 浏览器 |

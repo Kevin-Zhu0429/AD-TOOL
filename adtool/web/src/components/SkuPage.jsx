@@ -9,6 +9,78 @@ import { isOutOfStock, isZeroStock } from '../skuMatch.js';
 import './LibraryPage.css';
 import './SkuPage.css';
 
+/** 宠物版:从亚马逊 SP-API 同步 Listing、库存和尺码颜色,价格策略表同一次更新 */
+function AmazonSyncCard({ onSynced }) {
+  const [status, setStatus] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState(null);
+  const wasRunning = useRef(false);
+
+  async function refresh() {
+    try {
+      const next = await api.priceSyncStatus();
+      if (wasRunning.current && !next.running) {
+        onSynced();
+        window.dispatchEvent(new CustomEvent('adtool:sku-inventory-updated'));
+        const done = next.lastSuccess;
+        setMsg(next.lastError && (!done || next.lastError.at > done.completedAt)
+          ? { kind: 'err', text: next.lastError.message }
+          : { kind: 'ok', text: `已同步：新增 ${done?.skuAdded ?? 0} 个 SKU，更新 ${done?.skuUpdated ?? 0} 个` });
+      }
+      wasRunning.current = next.running;
+      setStatus(next);
+    } catch (e) {
+      setStatus({ configured: false, issues: [e.message] });
+    }
+  }
+  useEffect(() => { refresh(); }, []);
+  useEffect(() => {
+    if (!status?.running) return undefined;
+    const timer = setInterval(refresh, 10_000);
+    return () => clearInterval(timer);
+  }, [status?.running]);
+
+  async function sync() {
+    setBusy(true);
+    setMsg(null);
+    try {
+      await api.syncPriceStrategy(status.latestDay);
+      wasRunning.current = true;
+      setMsg({ kind: 'ok', text: '已在后台开始同步，完成后自动刷新。' });
+      await refresh();
+    } catch (e) {
+      setMsg({ kind: 'err', text: e.message });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const last = status?.lastSuccess;
+  return (
+    <div className="card captain-sync-card">
+      <div className="card-title">亚马逊同步</div>
+      <p className="hint">
+        读取美国店铺全部 Listing、FBA 库存和商品尺码颜色：新 SKU 自动加入，已有 SKU 更新 ASIN 和库存，款式、面料等人工字段保留。价格策略表同时更新。每天美西时间凌晨 3 点后自动同步前一天。
+      </p>
+      {!status?.configured ? (
+        <p className="hint captain-sync-empty">{status?.issues?.[0] ?? '服务器尚未配置宠物店铺的亚马逊 SP-API 凭证。'}</p>
+      ) : (
+        <p className="hint captain-sync-empty">
+          {last ? `上次同步：${new Date(last.completedAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}（快照 ${last.date}）` : '还没有同步过'}
+        </p>
+      )}
+      <button
+        className="btn primary captain-sync-button"
+        disabled={busy || !status?.configured || status?.running}
+        onClick={sync}
+      >
+        {status?.running ? '后台同步中…' : busy ? '正在开始…' : '从亚马逊同步'}
+      </button>
+      {msg && <div className={`note ${msg.kind}`} role={msg.kind === 'err' ? 'alert' : 'status'}>{msg.text}</div>}
+    </div>
+  );
+}
+
 /* 列名兜底:Excel 表头和列标题对不上时,再按这些关键词猜一次 */
 const ALIAS = {
   style: /款式|style/i, size: /尺码|size/i, color: /^颜色$|^colou?r$/i, fabric: /面料|外观|fabric|material/i,
@@ -80,7 +152,7 @@ export default function SkuPage({ market }) {
       setCaptain({ configured: false, bindings: [], error: e.message });
     }
   }
-  useEffect(() => { load('mine'); loadCaptain(); }, []);
+  useEffect(() => { load('mine'); if (!isPet) loadCaptain(); }, []);
 
   const cols = useMemo(() => data?.cols ?? [], [data]);
   const items = useMemo(() => data?.items ?? [], [data]);
@@ -309,11 +381,12 @@ export default function SkuPage({ market }) {
 
       <div className="lib-body">
         <div className="stack">
-          {mine && (
+          {mine && isPet && <AmazonSyncCard onSynced={() => load(scope)} />}
+          {mine && !isPet && (
             <div className="card captain-sync-card">
               <div className="card-title">船长库存</div>
               <p className="hint">
-                {isPet ? '同步已绑定美国店铺的库存，只更新已有 SKU 的在库、在途库存，保留人工填写的宠物属性。' : '欧洲库存按品牌合并；这里只更新分配给你的国家，其他国家由各自负责人同步。'}
+                欧洲库存按品牌合并；这里只更新分配给你的国家，其他国家由各自负责人同步。
               </p>
               {captain?.bindings?.length ? (
                 <div className="captain-binding-list">
