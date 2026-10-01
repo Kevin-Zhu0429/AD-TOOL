@@ -121,7 +121,7 @@ export default function PriceStrategyPage() {
             const level = row.soldOut && row.sales7d > 0 ? 'danger' : urgency(row.stockDays);
             return <tr key={row.sku}>
               <td className="col-date">{slash(data.today)}</td>
-              <td className="col-sku"><b>{row.sku}</b>{(row.style || row.size || row.color) && <small>{[row.style, row.size, row.color].filter(Boolean).join(' · ')}</small>}</td>
+              <td className="col-sku"><b>{row.sku}</b>{(row.style || row.size || row.color) && <small title={[row.style, row.size, row.color].filter(Boolean).join(' · ')}>{[row.style, row.size, row.color].filter(Boolean).join(' · ')}</small>}</td>
               <td className="mono">{row.asin ?? ''}</td>
               <td className={`num${row.soldOut ? ' danger' : ''}`}>{row.stock == null ? '' : fmt(row.stock)}</td>
               <td className="num">{row.transit ? fmt(row.transit) : ''}</td>

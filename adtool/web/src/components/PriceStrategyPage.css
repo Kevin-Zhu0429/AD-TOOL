@@ -1,5 +1,8 @@
+/* 表格列多,页面不限宽,铺满整个窗口 */
+.lib.price-strategy { max-width: none; padding: 18px 20px 28px; }
 .price-strategy > .card { padding: 14px 16px; }
 .price-strategy .lib-head { flex-wrap: wrap; }
+.price-strategy .lib-head > .row { margin-left: auto; }
 .price-toolbar { margin-bottom: 10px; gap: 14px; }
 .price-toolbar label { display: flex; align-items: center; gap: 8px; }
 .price-toolbar .inp { width: 240px; }
@@ -28,7 +31,7 @@
 .price-table .col-sku { position: sticky; left: 84px; z-index: 1; background: var(--panel); min-width: 170px; box-shadow: 1px 0 0 var(--border); }
 .price-table thead .col-date, .price-table thead .col-sku { z-index: 3; background: var(--panel-2); }
 .price-table td.col-sku b { font-weight: 650; }
-.price-table td.col-sku small { margin-left: 8px; color: var(--text-faint); font-size: 11px; }
+.price-table td.col-sku small { display: inline-block; vertical-align: bottom; max-width: 170px; overflow: hidden; text-overflow: ellipsis; margin-left: 8px; color: var(--text-faint); font-size: 11px; }
 .price-table td.heat1 { color: var(--text); }
 .price-table td.heat2 { color: var(--red-text); font-weight: 700; }
 .price-table td.heat3 { color: var(--red-text); font-weight: 700; background: var(--red-soft); }
