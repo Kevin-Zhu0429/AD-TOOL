@@ -8,6 +8,7 @@ import { buildAsinGroupExport } from '../abaAsinExport.js';
 import AbaAsinTable from './AbaAsinTable.jsx';
 import { AbaPagination } from './AbaTable.jsx';
 import AbaReportUpload from './AbaReportUpload.jsx';
+import AbaAmazonSync from './AbaAmazonSync.jsx';
 
 const number = new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 0 });
 const defaults = { brand: '', aggregation: 'sum', model: '', view: 'queries', month: '', asin: '', skuId: '', q: '', wordType: 'all', merge: '1', sort: 'market_impressions', direction: 'desc', page: 1, pageSize: 100 };
@@ -116,6 +117,7 @@ export default function AbaAsinView({ market, userId }) {
     }
   }
   return <div className="aba-asin-view">
+    {isPet && <AbaAmazonSync market={market} onSynced={(weeks) => saved({ reports: weeks.map((week_end) => ({ week_end })) })} />}
     <AbaReportUpload market={market} kind="asin" onSaved={saved} />
     <section className="aba-filters" aria-label="ASIN 报告筛选">
       <div className="aba-toolbar aba-asin-selectors">

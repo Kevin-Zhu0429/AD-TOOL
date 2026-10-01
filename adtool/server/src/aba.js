@@ -7,6 +7,7 @@ import { requireLogin, canRead } from './auth.js';
 import { MARKETPLACES, regionOf } from './libs.js';
 import { ABA_COLUMNS, BRAND_COLUMNS, BRAND_SOURCE_COLUMNS, brandRates, ABA_PAGE_SIZES, abaMatcher, aggregateAbaRows, parseAbaReport } from '../../shared/aba.js';
 import { abaAsinRouter } from './abaAsin.js';
+import { petAbaRouter } from './petAbaSync.js';
 
 export const abaRouter = express.Router();
 abaRouter.use(requireLogin);
@@ -18,6 +19,7 @@ abaRouter.use((req, res, next) => {
   next();
 });
 
+abaRouter.use('/asin/amazon', petAbaRouter);
 abaRouter.use('/asin', abaAsinRouter);
 
 abaRouter.post('/import', (req, res) => {
