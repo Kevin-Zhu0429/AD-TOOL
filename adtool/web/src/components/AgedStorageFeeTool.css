@@ -33,6 +33,9 @@
 .aged-table th:nth-child(5) { z-index: 3; background: var(--panel-2); }
 .aged-table tbody tr:hover td { background: var(--accent-soft); }
 .aged-table tbody tr:hover td:nth-child(5) { background: var(--panel-3); }
+.aged-table tbody tr.aged-row-edited td { background: linear-gradient(var(--green-soft), var(--green-soft)), var(--panel); }
+.aged-table tbody tr.aged-row-edited td:first-child { box-shadow: inset 3px 0 0 var(--green); }
+.aged-hint { margin: 10px 0; padding: 9px 11px; color: var(--green-text); background: var(--green-soft); border-radius: var(--radius); }
 .aged-number { text-align: right !important; font-variant-numeric: tabular-nums; }
 .aged-sku { min-width: 230px; max-width: 300px; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
 .aged-source-label { display: block; color: var(--text-dim); font-size: 10px; }
