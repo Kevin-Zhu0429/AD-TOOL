@@ -246,9 +246,11 @@ export default function AdminPage({ user, markets }) {
         <button className={`lib-tab${tab === 'audit' ? ' on' : ''}`} onClick={() => setTab('audit')}>
           操作日志
         </button>
-        <button className={`lib-tab${tab === 'captain' ? ' on' : ''}`} onClick={() => setTab('captain')}>
-          船长库存
-        </button>
+        {!isPet && (
+          <button className={`lib-tab${tab === 'captain' ? ' on' : ''}`} onClick={() => setTab('captain')}>
+            船长库存
+          </button>
+        )}
       </div>
 
       {msg && <div className={`note ${msg.kind}`} style={{ marginBottom: 13 }}>{msg.text}</div>}

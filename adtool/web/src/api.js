@@ -16,6 +16,7 @@ export const api = {
   priceStrategy: (date = '') => request(`/price-strategy${date ? `?date=${encodeURIComponent(date)}` : ''}`),
   savePriceStrategy: (rows) => request('/price-strategy/rows', { method: 'POST', body: { rows } }),
   deletePriceStrategy: (id) => request(`/price-strategy/${id}`, { method: 'DELETE' }),
+  priceSyncStatus: () => request('/price-strategy/status'),
   syncPriceStrategy: (date) => request('/price-strategy/sync', { method: 'POST', body: { date } }),
   abaAsin: (params, signal) => request(`/aba/asin?${new URLSearchParams(Object.entries(params).filter(([, value]) => value !== undefined))}`, { signal }),
   importAbaAsin: (marketplace, files) => request('/aba/asin/import', { method: 'POST', body: { marketplace, files } }),
