@@ -126,6 +126,19 @@ try {
   assert.doesNotMatch(await page.locator('.aba-asin-view').innerText(), /墨盒|打印机|机型/);
   await page.screenshot({ path: output + 'pet-aba.png', fullPage: true });
   const asinDownload = page.waitForEvent('download'); await page.getByRole('button', { name: '导出 Excel', exact: true }).click(); await asinDownload;
+  // 后台同步中:显示第几份报告、哪一周,被限流时显示倒计时
+  const retryAt = new Date(Date.now() + 45_000).toISOString();
+  await page.route('**/api/aba/asin/amazon/status**', (route) => route.fulfill({ json: { configured: true, issues: [], running: true,
+    progress: { total: 8, done: 2, weeks: 4, weekIndex: 2, week: '2026-09-13~2026-09-19', batch: 1, batches: 2, stage: 'throttled', retryAt } } }));
+  await nav('SKU 库'); await nav('ABA 报告');
+  await page.getByRole('button', { name: 'ASIN 视图', exact: true }).click();
+  const progress = page.locator('.aba-sync-progress');
+  await progress.waitFor();
+  assert.match(await progress.innerText(), /第 3 \/ 8 份报告[\s\S]*25%[\s\S]*2026-09-13~2026-09-19 这周（第 1\/2 批 ASIN）[\s\S]*限流，4\d 秒后自动重试/);
+  assert.equal(await page.getByRole('progressbar', { name: 'ABA 同步进度' }).getAttribute('aria-valuenow'), '25');
+  assert.equal(await page.locator('.aba-amazon-sync').getByRole('button', { name: '后台同步中…' }).isDisabled(), true);
+  await page.locator('.aba-amazon-sync').screenshot({ path: output + 'pet-aba-sync-progress.png' });
+  await page.unroute('**/api/aba/asin/amazon/status**');
 
   await nav('广告优化');
   const ads = XLSX.utils.book_new();
