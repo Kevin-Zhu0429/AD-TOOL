@@ -191,7 +191,10 @@ export async function fetchOrderLines(account, start, end, gateway = amazonGatew
       const day = pacificDay(row['purchase-date']);
       const quantity = intOf(row.quantity);
       if (!day || !quantity) continue;
-      lines.push({ orderId, day, sku, asin: validAsin(row.asin), quantity });
+      // item-price 是这一行的商品金额(已乘数量、不含税);待付款订单亚马逊还没给金额,留空
+      const amount = Number(row['item-price']);
+      lines.push({ orderId, day, sku, asin: validAsin(row.asin), quantity,
+        amount: clean(row['item-price']) && Number.isFinite(amount) ? amount : null });
     }
     from = to;
   }

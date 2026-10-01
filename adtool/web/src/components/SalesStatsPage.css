@@ -1,0 +1,25 @@
+.sales-stats > .card { padding: 14px 16px; margin-bottom: 16px; }
+.stats-head { margin-bottom: 10px; }
+.stats-head label { white-space: nowrap; display: flex; align-items: center; gap: 8px; }
+.stats-table table { border-collapse: separate; border-spacing: 0; font-size: 13px; }
+.stats-table th, .stats-table td { white-space: nowrap; padding: 6px 10px; }
+.stats-table thead th { background: var(--panel-2); text-align: center; font-weight: 650; }
+.stats-table thead th small { display: block; color: var(--text-faint); font-weight: 400; font-size: 11px; }
+.stats-table thead th.actual { color: var(--red-text); }
+.stats-table tbody th, .stats-table tfoot th { text-align: center; font-weight: 600; }
+.stats-table td.num { text-align: right; font-variant-numeric: tabular-nums; min-width: 64px; }
+.stats-table td.strong { font-weight: 650; }
+.stats-table td.dim { color: var(--text-dim); }
+.stats-table tfoot th, .stats-table tfoot td { background: var(--panel-2); font-weight: 700; border-top: 1px solid var(--border); }
+.stats-table .current { background: var(--accent-soft); }
+.stats-table thead th.current { color: var(--accent-text); }
+.stats-table tr.current > * { background: var(--amber-soft); }
+.sales-stats .good { color: var(--green-text); font-weight: 650; }
+.sales-stats .warn { color: var(--amber-text); font-weight: 650; }
+.sales-stats .danger { color: var(--red-text); font-weight: 650; }
+.progress-cell { min-width: 110px; }
+.progress { position: relative; height: 18px; border-radius: 9px; background: var(--panel-3); overflow: hidden; }
+.progress span { position: absolute; inset: 0 auto 0 0; background: var(--accent-line); }
+.progress em { position: relative; display: block; text-align: center; font-style: normal; font-size: 11px; line-height: 18px; }
+.stats-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 8px 0; }
+@media (max-width: 760px) { .stats-fields { grid-template-columns: 1fr; } }

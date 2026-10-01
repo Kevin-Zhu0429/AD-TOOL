@@ -130,9 +130,15 @@ export default function HomePage({ user, market, onNav, theme, onOpenChangelog }
         )}
         {isPet && <EntryCard
           tone="amber" icon="chart" title="价格策略表"
-          desc="按日期和 SKU 查看销量、广告、库存与价格。可导入表格，亚马逊数据每天自动同步。"
-          meta="US 站 · 店铺共享 · 每日快照"
+          desc="一页看全部 SKU：在库、在途、近 7 天每日销量、月销量和预估售罄日，日期每天自动滚动。"
+          meta="US 站 · 店铺共享 · 亚马逊自动同步"
           onClick={() => onNav('priceStrategy')}
+        />}
+        {isPet && <EntryCard
+          tone="amber" icon="chart" title="销售统计"
+          desc="按周看每天的全店销量，按月对比目标销量、销售额和利润的达成情况。"
+          meta="US 站 · 周销量 · 每月数据"
+          onClick={() => onNav('salesStats')}
         />}
         <EntryCard
           tone="green" icon="box" title="小工具"

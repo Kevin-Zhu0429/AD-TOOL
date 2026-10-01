@@ -1,6 +1,5 @@
 import { db, audit } from './db.js';
 import { isPet, PET_SHOP_ID } from './profile.js';
-import { normalizePriceRow, dailyDates, dailyIsoDates } from '../../shared/priceStrategy.js';
 import {
   amazonGateway, fetchCatalogAttributes, fetchInventory, fetchListings, fetchOrderLines,
   pacificDay, pacificMidnight, petSpConfig, shiftDay,
@@ -8,72 +7,60 @@ import {
 
 // 订单报告晚于下单几分钟才完整,当天的区间截到现在之前
 const REPORT_LAG_MS = 5 * 60_000;
+// 订单报告单份最多 30 天
+const WINDOW_DAYS = 30;
+// 每次同步重拉最近几天:待付款转发货、取消都会改动最近的订单
+const REFRESH_DAYS = 9;
 const savedState = (key) => {
   const value = db.prepare('SELECT value FROM pet_price_sync_state WHERE key=?').get(key)?.value;
   return value ? JSON.parse(value) : null;
 };
 const stateUpsert = db.prepare(`INSERT INTO pet_price_sync_state(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`);
 
-export function withCalculatedPriceMetrics(row) {
-  const result = { ...row };
-  if (result.sales7d != null) result.movement7d = result.sales7d;
-  if (result.salesThroughLastMonth != null && result.monthlySales != null) {
-    result.totalSales = result.salesThroughLastMonth + result.monthlySales;
-  }
-  if (result.totalStock != null && result.sales7d > 0) {
-    result.turnoverWeeks = Number((result.totalStock / result.sales7d).toFixed(2));
-    result.estimatedSelloutDate = shiftDay(result.date, Math.ceil(result.totalStock * 7 / result.sales7d));
-  }
-  if (result.clicks7d > 0 && result.adOrders7d != null) {
-    result.conversion7d = Number((result.adOrders7d / result.clicks7d * 100).toFixed(2));
-  }
-  return result;
+/** 第一次同步回填到今年 1 月 1 日(至少 3 个月),之后只从上次同步到的日子往前重拉几天 */
+export function orderSyncStart(today, coverage) {
+  const backfill = [`${today.slice(0, 4)}-01-01`, shiftDay(today, -92)].sort()[0];
+  if (!coverage?.to) return backfill;
+  return [shiftDay(today, -REFRESH_DAYS), shiftDay(coverage.to, -2)].sort()[0];
 }
 
-/** 订单行 + 库存 + Listing → 每个 SKU 一行快照指标。date 是太平洋时间的快照日 */
-export function summarizeAmazonRows({ orderLines = [], inventory = [], listings = [] }, date) {
-  const dates = dailyIsoDates(date);
-  const relevant = new Set(dates);
-  const previous = new Set(dates.map((day) => shiftDay(day, -7)));
-  const monthStart = `${date.slice(0, 7)}-01`;
-  const bySku = new Map();
-  const get = (sku) => {
-    const key = String(sku ?? '').trim().toLowerCase();
-    if (!key) return null;
-    if (!bySku.has(key)) bySku.set(key, { sku: String(sku).trim(), daily: Object.fromEntries(dates.map((d) => [d, 0])),
-      monthlySales: 0, previous7dSales: 0, monthlyOrderIds: new Set(), weekOrderIds: new Set(),
-      availableStock: null, inboundStock: null, asin: null, listingPrice: null });
-    return bySku.get(key);
-  };
-  for (const line of orderLines) {
-    if (line.day > date) continue;
-    const row = get(line.sku);
-    if (line.day >= monthStart) { row.monthlySales += line.quantity; row.monthlyOrderIds.add(line.orderId); }
-    if (relevant.has(line.day)) { row.daily[line.day] += line.quantity; row.weekOrderIds.add(line.orderId); }
-    if (previous.has(line.day)) row.previous7dSales += line.quantity;
+/** 订单行按太平洋日期 + SKU 汇总。待付款订单还没有金额,按 Listing 售价估算 */
+export function aggregateDailySales(lines, priceBySku = new Map()) {
+  const rows = new Map();
+  for (const line of lines) {
+    const key = `${line.day}\0${line.sku.toLowerCase()}`;
+    if (!rows.has(key)) rows.set(key, { day: line.day, sku: line.sku, asin: null, units: 0, orders: new Set(), sales: 0, estimatedSales: 0 });
+    const row = rows.get(key);
     row.asin ||= line.asin || null;
+    row.units += line.quantity;
+    row.orders.add(line.orderId);
+    if (line.amount != null) row.sales += line.amount;
+    else {
+      const estimate = (priceBySku.get(line.sku.toLowerCase()) ?? 0) * line.quantity;
+      row.sales += estimate;
+      row.estimatedSales += estimate;
+    }
   }
-  for (const item of inventory) {
-    const row = get(item.sku);
-    row.availableStock = item.stock;
-    row.inboundStock = item.transit;
-    row.asin ||= item.asin || null;
-  }
-  for (const listing of listings) {
-    const row = bySku.get(listing.sku.toLowerCase());
-    if (!row) continue;
-    row.asin ||= listing.asin;
-    row.listingPrice = listing.price;
-  }
-  return [...bySku.values()].map((row) => {
-    const sales7d = dates.reduce((sum, day) => sum + row.daily[day], 0);
-    const { daily, previous7dSales, monthlyOrderIds, weekOrderIds, ...rest } = row;
-    return { ...rest, date, sales7d, monthlyOrders: monthlyOrderIds.size, orders7d: weekOrderIds.size,
-      weekOverWeek: previous7dSales ? Number(((sales7d / previous7dSales - 1) * 100).toFixed(2)) : null,
-      movement3d: dates.slice(-3).reduce((sum, day) => sum + daily[day], 0),
-      movementSpeed7d: Number((sales7d / 7).toFixed(3)),
-      ...Object.fromEntries(dates.map((day, index) => [`day${index + 1}`, daily[day]])) };
-  });
+  return [...rows.values()].map((row) => ({ ...row, orders: row.orders.size,
+    sales: Number(row.sales.toFixed(2)), estimatedSales: Number(row.estimatedSales.toFixed(2)) }));
+}
+
+/** 把 [fromDay, toDay) 这几天的销量整天替换 */
+function replaceDailySales(fromDay, toDay, rows) {
+  const insert = db.prepare(`INSERT INTO pet_daily_sales(day,sku,asin,units,orders,sales,estimated_sales)
+    VALUES(@day,@sku,@asin,@units,@orders,@sales,@estimatedSales)`);
+  db.transaction(() => {
+    db.prepare('DELETE FROM pet_daily_sales WHERE day>=? AND day<?').run(fromDay, toDay);
+    for (const row of rows) insert.run(row);
+  })();
+}
+
+function saveListings(listings) {
+  const insert = db.prepare('INSERT OR REPLACE INTO pet_listing_cache(sku,asin,price,status) VALUES(?,?,?,?)');
+  db.transaction(() => {
+    db.prepare('DELETE FROM pet_listing_cache').run();
+    for (const listing of listings) insert.run(listing.sku, listing.asin, listing.price, listing.status || null);
+  })();
 }
 
 /**
@@ -119,48 +106,21 @@ export function applySkuLibrary({ listings, inventory, attributes = new Map(), b
   return { added, updated };
 }
 
-// 录入时留空的列存成 null,合并时不能把 SKU 库里的款式、尺码等盖掉
-const present = (row) => Object.fromEntries(Object.entries(row).filter(([, value]) => value !== null && value !== undefined));
-
-function persistSnapshot({ date, actorId, rows }) {
-  const skus = db.prepare("SELECT sku,asin,style,size,color,fabric FROM sku_items WHERE user_id=? AND country='US'").all(PET_SHOP_ID);
-  const skuByKey = new Map(skus.map((item) => [item.sku.toLowerCase(), item]));
-  const sourceBySku = new Map(rows.map((row) => [row.sku.toLowerCase(), row]));
-  for (const sku of skus) if (!sourceBySku.has(sku.sku.toLowerCase())) sourceBySku.set(sku.sku.toLowerCase(), { sku: sku.sku, date });
-  const select = db.prepare('SELECT data_json FROM pet_price_strategy WHERE snapshot_date=? AND marketplace=? AND sku=?');
-  const upsert = db.prepare(`INSERT INTO pet_price_strategy(snapshot_date,marketplace,sku,data_json,updated_by)
-    VALUES(?,'US',?,?,?) ON CONFLICT(snapshot_date,marketplace,sku) DO UPDATE SET
-    data_json=excluded.data_json,updated_by=excluded.updated_by,updated_at=datetime('now','localtime')`);
-  db.transaction(() => {
-    for (const { listingPrice, ...source } of sourceBySku.values()) {
-      const existing = select.get(date, 'US', source.sku);
-      const old = existing ? JSON.parse(existing.data_json) : {};
-      const filled = present(old);
-      const sku = skuByKey.get(source.sku.toLowerCase());
-      // 售价:录入过的保留,空白时用亚马逊 Listing 当前价;其余人工列不被同步覆盖
-      const merged = normalizePriceRow(withCalculatedPriceMetrics({ ...sku, ...filled, ...present(source), date, marketplace: 'US',
-        totalStock: old.totalStock, price: old.price ?? listingPrice ?? null, promoPrice: old.promoPrice,
-        currentProfit: old.currentProfit, monthlyMargin: old.monthlyMargin, monthlyAdRatio: old.monthlyAdRatio }));
-      upsert.run(date, merged.sku, JSON.stringify(merged), actorId);
-    }
-  })();
-  return sourceBySku.size;
-}
-
 let running = false;
-export async function syncPriceStrategy(date, actorId = null, gateway = amazonGateway, env = process.env) {
+/** 同步一次:Listing → FBA 库存 → 尺码颜色 → SKU 库 → 订单(按 30 天一段写入每日销量) */
+export async function syncAmazonData(actorId = null, gateway = amazonGateway, env = process.env, now = () => new Date()) {
   if (!isPet) throw new Error('只支持宠物版');
-  if (!dailyDates(date).length) throw new Error('同步日期不合法');
-  if (running) throw new Error('亚马逊数据正在同步');
+  if (running) throw Object.assign(new Error('亚马逊数据正在同步'), { status: 409 });
   const { account, issues } = petSpConfig(env);
   if (!account) throw Object.assign(new Error(issues[0] ?? '服务器还没有配置宠物店铺的亚马逊 SP-API 凭证'), { status: 503 });
-  if (date > pacificDay(new Date())) throw Object.assign(new Error('美国站这一天还没有开始'), { status: 400 });
   running = true;
-  const startedAt = new Date().toISOString();
-  stateUpsert.run('last_attempt', JSON.stringify({ date, startedAt }));
+  const startedAt = now().toISOString();
+  const today = pacificDay(now());
+  stateUpsert.run('last_attempt', JSON.stringify({ today, startedAt }));
   let stage = '读取 Listing';
   try {
     const listings = await fetchListings(account, gateway);
+    saveListings(listings);
     stage = '读取 FBA 库存';
     const inventory = await fetchInventory(account, gateway);
     stage = '读取商品尺码颜色';
@@ -174,25 +134,35 @@ export async function syncPriceStrategy(date, actorId = null, gateway = amazonGa
     stage = '更新 SKU 库';
     const library = applySkuLibrary({ listings, inventory, attributes, brand: account.brand });
 
-    stage = '读取订单报告';
-    const start = pacificMidnight([`${date.slice(0, 7)}-01`, shiftDay(date, -13)].sort()[0]);
-    const end = new Date(Math.min(pacificMidnight(shiftDay(date, 1)).getTime(), Date.now() - REPORT_LAG_MS));
-    const orderLines = await fetchOrderLines(account, start, end, gateway);
-
-    stage = '保存价格策略表';
-    const rows = summarizeAmazonRows({ orderLines, inventory, listings }, date);
-    const skus = persistSnapshot({ date, actorId, rows });
-    const result = { date, skus, listings: listings.length, inventorySkus: inventory.length,
-      orderLines: orderLines.length, skuAdded: library.added, skuUpdated: library.updated };
+    const priceBySku = new Map(listings.filter((item) => item.price).map((item) => [item.sku.toLowerCase(), item.price]));
+    const coverage = savedState('sales_coverage');
+    const from = orderSyncStart(today, coverage);
+    let orderLines = 0;
+    for (let day = from; day <= today;) {
+      const next = [shiftDay(day, WINDOW_DAYS), shiftDay(today, 1)].sort()[0];
+      stage = `读取订单报告（${day} 起）`;
+      const end = new Date(Math.min(pacificMidnight(next).getTime(), now().getTime() - REPORT_LAG_MS));
+      // 只留落在这一段日期里的行,和相邻一段的整天替换互不干扰
+      const lines = (await fetchOrderLines(account, pacificMidnight(day), end, gateway))
+        .filter((line) => line.day >= day && line.day < next);
+      replaceDailySales(day, next, aggregateDailySales(lines, priceBySku));
+      orderLines += lines.length;
+      // 每段写完就记下覆盖范围,回填中途失败下次从断点继续
+      const covered = { from: coverage?.from && coverage.from < from ? coverage.from : from, to: shiftDay(next, -1) };
+      stateUpsert.run('sales_coverage', JSON.stringify(covered));
+      day = next;
+    }
+    const result = { today, from, listings: listings.length, inventorySkus: inventory.length, orderLines,
+      skuAdded: library.added, skuUpdated: library.updated };
     db.transaction(() => {
-      stateUpsert.run('last_success', JSON.stringify({ ...result, startedAt, completedAt: new Date().toISOString(), complete: true }));
+      stateUpsert.run('last_success', JSON.stringify({ ...result, startedAt, completedAt: now().toISOString() }));
       db.prepare("DELETE FROM pet_price_sync_state WHERE key='last_error'").run();
     })();
     if (actorId) audit(actorId, 'US', 'sync', 'pet_price_strategy', null, result);
     return result;
   } catch (error) {
     const message = `${stage}：${String(error.message)}`.slice(0, 300);
-    stateUpsert.run('last_error', JSON.stringify({ date, at: new Date().toISOString(), stage, message }));
+    stateUpsert.run('last_error', JSON.stringify({ today, at: now().toISOString(), stage, message }));
     throw Object.assign(new Error(message), { status: error.status });
   } finally { running = false; }
 }
@@ -200,23 +170,23 @@ export async function syncPriceStrategy(date, actorId = null, gateway = amazonGa
 export function priceSyncStatus(env = process.env) {
   const states = Object.fromEntries(db.prepare('SELECT key,value FROM pet_price_sync_state').all().map(({ key, value }) => [key, JSON.parse(value)]));
   const { account, issues } = petSpConfig(env);
-  return { source: 'amazon', configured: !!account, issues, running,
-    latestDay: shiftDay(pacificDay(new Date()), -1),
-    lastSuccess: states.last_success ?? null, lastAttempt: states.last_attempt ?? null, lastError: states.last_error ?? null };
+  return { source: 'amazon', configured: !!account, issues, running, today: pacificDay(new Date()),
+    coverage: states.sales_coverage ?? null,
+    lastSuccess: states.last_success?.completedAt ? states.last_success : null,
+    lastAttempt: states.last_attempt ?? null, lastError: states.last_error ?? null };
 }
 
-/** 每小时检查一次:太平洋时间凌晨 3 点后同步美国站前一天 */
+const SYNC_EVERY_MS = 3 * 60 * 60_000;
+/** 每 30 分钟检查一次:距上次成功满 3 小时就再同步,失败后 1 小时内不重试 */
 export function startPriceSyncScheduler() {
   if (!isPet || process.env.NODE_ENV === 'test') return;
   const run = async () => {
-    const pacificHour = Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'America/Los_Angeles', hour: '2-digit', hourCycle: 'h23' }).format(new Date()));
-    if (pacificHour < 3) return;
-    const date = shiftDay(pacificDay(new Date()), -1);
     const status = priceSyncStatus();
-    if (!status.configured || running || status.lastSuccess?.date === date && status.lastSuccess?.complete
-      || status.lastAttempt?.date === date && Date.now() - Date.parse(status.lastAttempt.startedAt) < 3 * 60 * 60_000) return;
-    try { await syncPriceStrategy(date); } catch (error) { console.error('[price-sync]', error.message); }
+    const ago = (time) => (time ? Date.now() - Date.parse(time) : Infinity);
+    if (!status.configured || running || ago(status.lastSuccess?.completedAt) < SYNC_EVERY_MS
+      || ago(status.lastAttempt?.startedAt) < 60 * 60_000) return;
+    try { await syncAmazonData(); } catch (error) { console.error('[price-sync]', error.message); }
   };
   setTimeout(run, 60_000).unref();
-  setInterval(run, 60 * 60_000).unref();
+  setInterval(run, 30 * 60_000).unref();
 }

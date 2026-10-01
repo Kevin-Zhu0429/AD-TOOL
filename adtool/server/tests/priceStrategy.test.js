@@ -13,16 +13,19 @@ const LISTINGS = tsv([
   ['Dog Bed Large', 'DOG-L', '39.99', 'B000000001', 'Active'],
   ['Dog Bed XL', 'DOG-XL', '49.99', 'B000000002', 'Active'],
 ]);
-// 9/20 太平洋时间下午的订单、9/14 的上周订单、一条取消、一条加拿大站
+// 今天固定为 2026-09-22(太平洋时间);近 7 天 = 9/15–9/21
 const ORDERS = tsv([
-  ['amazon-order-id', 'purchase-date', 'order-status', 'sales-channel', 'sku', 'asin', 'item-status', 'quantity'],
-  ['111-1', '2026-09-20T22:00:00+00:00', 'Shipped', 'Amazon.com', 'DOG-L', 'B000000001', 'Shipped', '3'],
-  ['111-0', '2026-09-14T20:00:00+00:00', 'Shipped', 'Amazon.com', 'DOG-L', 'B000000001', 'Shipped', '1'],
-  ['111-2', '2026-09-20T20:00:00+00:00', 'Cancelled', 'Amazon.com', 'DOG-L', 'B000000001', 'Cancelled', '5'],
-  ['111-3', '2026-09-20T20:00:00+00:00', 'Shipped', 'Amazon.ca', 'DOG-L', 'B000000001', 'Shipped', '7'],
-  // 太平洋时间 9/22 凌晨,不算进 9/21 的快照
-  ['111-4', '2026-09-22T08:30:00+00:00', 'Pending', 'Amazon.com', 'DOG-XL', 'B000000002', 'Unshipped', '2'],
-  ['111-5', '2026-09-21T08:30:00+00:00', 'Pending', 'Amazon.com', 'DOG-XL', 'B000000002', 'Unshipped', '2'],
+  ['amazon-order-id', 'purchase-date', 'order-status', 'sales-channel', 'sku', 'asin', 'item-status', 'quantity', 'item-price'],
+  ['111-1', '2026-09-20T22:00:00+00:00', 'Shipped', 'Amazon.com', 'DOG-L', 'B000000001', 'Shipped', '3', '89.97'],
+  ['111-0', '2026-09-14T20:00:00+00:00', 'Shipped', 'Amazon.com', 'DOG-L', 'B000000001', 'Shipped', '1', '29.99'],
+  ['111-2', '2026-09-20T20:00:00+00:00', 'Cancelled', 'Amazon.com', 'DOG-L', 'B000000001', 'Cancelled', '5', ''],
+  ['111-3', '2026-09-20T20:00:00+00:00', 'Shipped', 'Amazon.ca', 'DOG-L', 'B000000001', 'Shipped', '7', '1'],
+  // 太平洋时间 9/22 凌晨:算今天,不进近 7 天,但进本月
+  ['111-4', '2026-09-22T08:30:00+00:00', 'Pending', 'Amazon.com', 'DOG-XL', 'B000000002', 'Unshipped', '2', ''],
+  // 太平洋时间 9/21 凌晨,待付款没有金额,按 Listing 价 49.99 估算
+  ['111-5', '2026-09-21T08:30:00+00:00', 'Pending', 'Amazon.com', 'DOG-XL', 'B000000002', 'Unshipped', '2', ''],
+  // 8 月的订单只进 8 月的每月数据
+  ['111-6', '2026-08-10T20:00:00+00:00', 'Shipped', 'Amazon.com', 'DOG-L', 'B000000001', 'Shipped', '4', '100'],
 ]);
 
 function fakeAmazon({ failOn } = {}) {
@@ -67,7 +70,9 @@ function fakeAmazon({ failOn } = {}) {
   return { gateway, calls, reports };
 }
 
-test('Amazon sync fills the shared SKU library and price snapshot without overwriting manual fields', async (t) => {
+test('Amazon sync fills the SKU library and daily sales; the price board and stats are computed for today', async (t) => {
+  process.env.NODE_ENV = 'test';
+  process.env.PET_TODAY = '2026-09-22';
   const backend = await startPetTestServer();
   t.after(() => backend.close());
   const call = async (path, cookie, body, method = 'POST') => {
@@ -77,85 +82,86 @@ test('Amazon sync fills the shared SKU library and price snapshot without overwr
   };
   const owner = (await call('/auth/login', null, { username: 'pet-owner', password: 'pet-test-password' })).cookie;
   const user = (await call('/auth/login', null, { username: 'pet-user', password: 'pet-test-password' })).cookie;
-  assert.equal((await call('/price-strategy/rows', owner, { rows: [
-    { date: '2026-09-21', sku: 'DOG-L', price: 19.99, totalStock: 40 },
-    { date: '2026-09-21', sku: 'DOG-XL', price: -2 },
-  ] })).status, 400);
-  assert.equal((await call('/price-strategy?date=2026-09-21', user)).data.items.length, 0);
-  // 人工录入的售价、总库存和广告点击/订单
-  assert.equal((await call('/price-strategy/rows', owner, { rows: [
-    { date: '2026-09-21', sku: 'DOG-L', price: 19.99, totalStock: 40, clicks7d: 12, adOrders7d: 2 },
-  ] })).status, 200);
   // SKU 库已有 DOG-L,款式和尺码是人工填的
   assert.equal((await call('/sku/rows', owner, { rows: [{ sku: 'DOG-L', style: '圆形狗窝', size: 'L' }] })).status, 200);
 
   // 没配置凭证时不能同步
-  assert.equal((await call('/price-strategy?date=2026-09-21', user)).data.sync.configured, false);
-  assert.equal((await call('/price-strategy/sync', user, { date: '2026-09-21' })).status, 503);
+  const empty = (await call('/price-strategy', user)).data;
+  assert.equal(empty.sync.configured, false);
+  assert.equal(empty.today, '2026-09-22');
+  assert.deepEqual([empty.days[0], empty.days[6]], ['2026-09-15', '2026-09-21']);
+  assert.equal((await call('/price-strategy/sync', user, {})).status, 503);
 
-  const { syncPriceStrategy, priceSyncStatus } = await import('../src/priceStrategySync.js');
+  const { syncAmazonData, priceSyncStatus, orderSyncStart } = await import('../src/priceStrategySync.js');
   const { reportTiming } = await import('../src/petAmazon.js');
   reportTiming.pollMs = 0;
+  // 9/22 中午(太平洋时间)
+  const now = () => new Date('2026-09-22T19:00:00Z');
   const amazon = fakeAmazon();
-  const result = await syncPriceStrategy('2026-09-21', 1, amazon.gateway, ENV);
-  assert.deepEqual({ ...result }, { date: '2026-09-21', skus: 2, listings: 2, inventorySkus: 2, orderLines: 4, skuAdded: 1, skuUpdated: 1 });
+  const result = await syncAmazonData(1, amazon.gateway, ENV, now);
+  assert.equal(result.from, '2026-01-01', '第一次回填到年初');
+  assert.deepEqual([result.listings, result.inventorySkus, result.skuAdded, result.skuUpdated], [2, 2, 1, 1]);
 
-  // 订单报告覆盖月初到快照日次日 0 点(太平洋时间,夏令时 UTC-7)
-  const orderReport = [...amazon.reports.values()].find((body) => body.reportType.includes('ORDERS'));
-  assert.equal(orderReport.dataStartTime, '2026-09-01T07:00:00.000Z');
-  assert.equal(orderReport.dataEndTime, '2026-09-22T07:00:00.000Z');
-
-  const synced = (await call('/price-strategy?date=2026-09-21', user)).data;
-  const dog = synced.items.find((row) => row.sku === 'DOG-L');
-  const xl = synced.items.find((row) => row.sku === 'DOG-XL');
+  // 订单报告按 30 天一段,从 1/1 太平洋 0 点到现在之前
+  const orderReports = [...amazon.reports.values()].filter((body) => body.reportType.includes('ORDERS'));
+  assert.equal(orderReports.length, 9);
+  assert.equal(orderReports[0].dataStartTime, '2026-01-01T08:00:00.000Z');
+  assert.equal(orderReports.at(-1).dataEndTime, '2026-09-22T18:55:00.000Z');
+  // 假接口每段都返回同一批订单;只有落在该段日期内的才写入,不会重复计数
+  const board = (await call('/price-strategy', user)).data;
+  const dog = board.rows.find((row) => row.sku === 'DOG-L');
+  const xl = board.rows.find((row) => row.sku === 'DOG-XL');
+  assert.deepEqual(dog.daily, [0, 0, 0, 0, 0, 3, 0]);
   assert.equal(dog.sales7d, 3);
-  assert.equal(dog.movement7d, 3);
-  assert.equal(dog.day6, 3);
-  assert.equal(dog.monthlySales, 4);
-  assert.equal(dog.monthlyOrders, 2);
-  assert.equal(dog.orders7d, 1);
-  assert.equal(dog.weekOverWeek, 200);
-  assert.equal(dog.availableStock, 25);
-  assert.equal(dog.inboundStock, 5);
-  assert.equal(dog.turnoverWeeks, 13.33);
-  assert.equal(dog.estimatedSelloutDate, '2026-12-24');
-  assert.equal(dog.price, 19.99, '人工售价保留');
-  assert.equal(dog.totalStock, 40);
-  assert.equal(dog.clicks7d, 12, '人工广告点击保留');
-  assert.equal(dog.conversion7d, 16.67);
-  assert.equal(dog.style, '圆形狗窝');
-  assert.equal(xl.price, 49.99, '空白售价用 Listing 价');
-  assert.equal(xl.sales7d, 2);
-  assert.equal(xl.day7, 2);
-  assert.equal(xl.inboundStock, 40);
-  assert.equal(synced.sync.lastSuccess.date, '2026-09-21');
+  assert.equal(dog.movement3d, 1);
+  assert.equal(dog.speed7d, 0.43);
+  assert.equal(dog.monthUnits, 4);
+  assert.deepEqual([dog.stock, dog.transit, dog.price, dog.style, dog.size], [25, 5, 39.99, '圆形狗窝', 'L']);
+  assert.equal(dog.stockDays, 58);
+  assert.equal(dog.stockTransitDays, 70);
+  assert.equal(dog.selloutDate, '2026-11-20');
+  assert.deepEqual(xl.daily, [0, 0, 0, 0, 0, 0, 2]);
+  assert.equal(xl.today, 2);
+  assert.equal(xl.monthUnits, 4);
+  assert.equal(xl.soldOut, true);
+  assert.equal(xl.selloutDate, null);
+  assert.equal(xl.stockTransitDays, 140);
 
-  const skus = (await call('/sku', user)).data.items;
-  const skuL = skus.find((row) => row.sku === 'DOG-L');
-  const skuXl = skus.find((row) => row.sku === 'DOG-XL');
-  assert.deepEqual([skuL.style, skuL.size, skuL.color, skuL.asin, skuL.stock, skuL.transit, skuL.brand],
-    ['圆形狗窝', 'L', 'Grey', 'B000000001', 25, 5, 'PawNest']);
-  assert.deepEqual([skuXl.size, skuXl.color, skuXl.asin, skuXl.stock, skuXl.transit, skuXl.brand],
-    ['X-Large', 'Grey', 'B000000002', 0, 40, 'PawNest']);
+  const sales = backend.db.prepare("SELECT * FROM pet_daily_sales WHERE sku='DOG-XL' AND day='2026-09-21'").get();
+  assert.deepEqual([sales.units, sales.orders, sales.sales, sales.estimated_sales], [2, 1, 99.98, 99.98]);
 
-  // 再同步一次不重复建行,也不再请求已有尺码颜色的目录
+  // 再同步只重拉最近几天,不重复建 SKU、不再请求已有尺码颜色的目录
+  assert.equal(orderSyncStart('2026-09-22', priceSyncStatus(ENV).coverage), '2026-09-13');
   const again = fakeAmazon();
-  const second = await syncPriceStrategy('2026-09-21', 1, again.gateway, ENV);
-  assert.equal(second.skuAdded, 0);
-  assert.equal(second.skuUpdated, 0);
+  const second = await syncAmazonData(1, again.gateway, ENV, now);
+  assert.deepEqual([second.from, second.skuAdded, second.skuUpdated], ['2026-09-13', 0, 0]);
   assert.equal(again.calls.filter((entry) => entry.path.includes('/catalog/')).length, 0);
-  assert.equal((await call('/price-strategy?date=2026-09-21', owner)).data.items.length, 2);
+  assert.equal((await call('/price-strategy', user)).data.rows.find((row) => row.sku === 'DOG-L').monthUnits, 4);
 
-  // 失败会记录阶段,不动已保存的数据
-  await assert.rejects(syncPriceStrategy('2026-09-20', 1, fakeAmazon({ failOn: '/fba/inventory' }).gateway, ENV), /读取 FBA 库存.*403/);
+  // 销售统计:周销量按 ISO 周,每月数据合并人工目标
+  assert.equal((await call('/price-strategy/targets/2026-09', user, { targetUnits: 10, targetSales: 400, actualProfit: -5, adSpend: 20 }, 'PUT')).status, 200);
+  assert.equal((await call('/price-strategy/targets/2026-13', user, { targetUnits: 1 }, 'PUT')).status, 400);
+  assert.equal((await call('/price-strategy/targets/2026-09', user, { targetUnits: 1.5 }, 'PUT')).status, 400);
+  const stats = (await call('/price-strategy/stats?weeks=2', user)).data;
+  assert.equal(stats.coveredFrom, '2026-01-01');
+  assert.deepEqual(stats.weekly.map((week) => week.week), [38, 39]);
+  assert.deepEqual(stats.weekly[0].days, [1, 0, 0, 0, 0, 0, 3]);
+  assert.deepEqual(stats.weekly[1].days, [2, 2, null, null, null, null, null]);
+  assert.equal(stats.weekly[1].current, true);
+  const september = stats.monthly.months[8];
+  assert.deepEqual([september.units, september.unitsRate, september.sales, september.estimatedSales],
+    [8, 80, 319.92, 199.96]);
+  assert.deepEqual([september.adRatio, september.margin, september.progress], [6.3, -1.6, 73.3]);
+  assert.deepEqual([stats.monthly.months[7].units, stats.monthly.months[7].sales], [4, 100]);
+  assert.equal(stats.monthly.months[9].units, null, '未来月份没有实际值');
+  assert.equal(stats.monthly.total.units, 12);
+
+  // 失败会记录阶段,已保存的数据不动
+  await assert.rejects(syncAmazonData(1, fakeAmazon({ failOn: '/fba/inventory' }).gateway, ENV, now), /读取 FBA 库存.*403/);
   const status = priceSyncStatus(ENV);
   assert.match(status.lastError.message, /读取 FBA 库存/);
-  assert.equal(status.lastSuccess.date, '2026-09-21');
-  assert.equal((await call('/price-strategy?date=2026-09-21', user)).data.items.find((row) => row.sku === 'DOG-L').price, 19.99);
-  await assert.rejects(syncPriceStrategy('2999-01-01', 1, amazon.gateway, ENV), /还没有开始/);
-
-  assert.equal((await call(`/price-strategy/${dog.id}`, user, {}, 'DELETE')).status, 200);
-  assert.equal((await call('/price-strategy?date=2026-09-21', owner)).data.items.length, 1);
+  assert.equal(status.lastSuccess.today, '2026-09-22');
+  assert.equal((await call('/price-strategy', user)).data.rows.find((row) => row.sku === 'DOG-L').sales7d, 3);
 });
 
 test('pet SP-API settings are read from PET_SP_* only and gaps are named', async () => {
