@@ -103,9 +103,13 @@ export async function downloadReportDocument(document) {
 
 export const amazonGateway = { request: spApiRequest, download: downloadReportDocument };
 
-/** 申请一份报告、等它生成完、下载并解析。没有数据(CANCELLED)返回空数组 */
-export async function runReport(account, reportType, { start, end } = {}, gateway = amazonGateway) {
+/**
+ * 申请一份报告、等它生成完、下载并解析。没有数据(CANCELLED)返回 parse 的空结果。
+ * 平面文件默认按 TSV 解析;品牌分析这类 JSON 报告传 parse: JSON.parse
+ */
+export async function runReport(account, reportType, { start, end, options, parse = parseTsv } = {}, gateway = amazonGateway) {
   const body = { reportType, marketplaceIds: [US_MARKETPLACE] };
+  if (options) body.reportOptions = options;
   if (start) body.dataStartTime = start.toISOString();
   if (end) body.dataEndTime = end.toISOString();
   const created = await gateway.request(account, REGION, 'POST', '/reports/2021-06-30/reports', { body });
@@ -117,10 +121,10 @@ export async function runReport(account, reportType, { start, end } = {}, gatewa
     if (status === 'DONE') {
       const document = await gateway.request(account, REGION, 'GET',
         `/reports/2021-06-30/documents/${clean(report.reportDocumentId)}`);
-      return parseTsv(await gateway.download(document));
+      return parse(await gateway.download(document));
     }
     // 亚马逊对没有数据的时间段直接取消报告
-    if (status === 'CANCELLED') return [];
+    if (status === 'CANCELLED') return parse === parseTsv ? [] : null;
     if (status === 'FATAL') throw new Error(`亚马逊生成报告失败（${reportType}）`);
     await sleep(reportTiming.pollMs);
   }

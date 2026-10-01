@@ -7,6 +7,37 @@ import { regionOf } from './libs.js';
 import { ABA_PAGE_SIZES, abaMatcher } from '../../shared/aba.js';
 import { ASIN_COLUMNS, ASIN_COUNT_KEYS, parseAsinUpload, asinModelOptions, aggregateAsinView } from '../../shared/abaAsin.js';
 
+/** 同一份数据(无论来自上传还是亚马逊接口)算出同一个指纹,没变化就不重写 */
+export function asinContentHash(report) {
+  return createHash('sha256').update(JSON.stringify([report.asin, report.week_start, report.week_end, report.week_number,
+    [...report.rows].sort((a, b) => a.query.localeCompare(b.query))])).digest('hex');
+}
+
+/** 写入若干份 ASIN 周报;同 ASIN 同周覆盖。调用方负责事务和操作日志 */
+export function saveAsinReports(userId, marketplace, reports) {
+  const result = [];
+  const insert = db.prepare(`INSERT INTO aba_asin_queries (report_id, query, ${ASIN_COUNT_KEYS.join(',')})
+    VALUES (@report_id, @query, ${ASIN_COUNT_KEYS.map((k) => `@${k}`).join(',')})`);
+  const find = db.prepare('SELECT id, content_hash FROM aba_asin_reports WHERE user_id=? AND marketplace=? AND asin=? AND week_end=?');
+  for (const report of reports) {
+    const args = [userId, marketplace, report.asin, report.week_end];
+    const previous = find.get(...args);
+    if (previous?.content_hash !== report.content_hash) {
+      db.prepare(`INSERT INTO aba_asin_reports (user_id, marketplace, asin, week_start, week_end, week_number, source_file, content_hash)
+        VALUES (@user_id, @marketplace, @asin, @week_start, @week_end, @week_number, @source_file, @content_hash)
+        ON CONFLICT(user_id, marketplace, asin, week_end) DO UPDATE SET
+        week_start=excluded.week_start, week_number=excluded.week_number, source_file=excluded.source_file,
+        content_hash=excluded.content_hash, updated_at=datetime('now')`).run({ ...report, marketplace, user_id: userId });
+      const { id } = find.get(...args);
+      db.prepare('DELETE FROM aba_asin_queries WHERE report_id=?').run(id);
+      for (const row of report.rows) insert.run({ ...row, report_id: id });
+    }
+    result.push({ asin: report.asin, week_end: report.week_end, count: report.rows.length,
+      status: previous?.content_hash === report.content_hash ? 'unchanged' : previous ? 'updated' : 'added' });
+  }
+  return result;
+}
+
 // Mounted after the ABA account/market middleware.
 export const abaAsinRouter = express.Router();
 abaAsinRouter.post('/import', (req, res) => {
@@ -22,34 +53,14 @@ abaAsinRouter.post('/import', (req, res) => {
         const key = `${report.asin}|${report.week_end}`;
         if (seen.has(key)) throw new Error('同一批次同 ASIN 同周只能选择一份报告');
         seen.add(key);
-        return { ...report, content_hash: createHash('sha256').update(JSON.stringify([report.asin, report.week_start, report.week_end, report.week_number, [...report.rows].sort((a, b) => a.query.localeCompare(b.query))])).digest('hex') };
+        return { ...report, content_hash: asinContentHash(report) };
         });
       } catch (e) { throw new Error(`${String(f?.name ?? '未命名文件').slice(0, 255)}：${e.message}`); }
     });
     if (reports.length > 500) throw new Error('每批最多导入 500 份 ASIN 周报');
   } catch (e) { return res.status(400).json({ error: e.message }); }
-  const userId = businessUserId(req.session.user.id);
   const result = db.transaction(() => {
-    const result = [];
-    const insert = db.prepare(`INSERT INTO aba_asin_queries (report_id, query, ${ASIN_COUNT_KEYS.join(',')})
-      VALUES (@report_id, @query, ${ASIN_COUNT_KEYS.map((k) => `@${k}`).join(',')})`);
-    for (const report of reports) {
-      const find = db.prepare('SELECT id, content_hash FROM aba_asin_reports WHERE user_id=? AND marketplace=? AND asin=? AND week_end=?');
-      const args = [userId, req.abaMarket, report.asin, report.week_end];
-      const previous = find.get(...args);
-      if (previous?.content_hash !== report.content_hash) {
-        db.prepare(`INSERT INTO aba_asin_reports (user_id, marketplace, asin, week_start, week_end, week_number, source_file, content_hash)
-          VALUES (@user_id, @marketplace, @asin, @week_start, @week_end, @week_number, @source_file, @content_hash)
-          ON CONFLICT(user_id, marketplace, asin, week_end) DO UPDATE SET
-          week_start=excluded.week_start, week_number=excluded.week_number, source_file=excluded.source_file,
-          content_hash=excluded.content_hash, updated_at=datetime('now')`).run({ ...report, user_id: userId });
-        const { id } = find.get(...args);
-        db.prepare('DELETE FROM aba_asin_queries WHERE report_id=?').run(id);
-        for (const row of report.rows) insert.run({ ...row, report_id: id });
-      }
-      result.push({ asin: report.asin, week_end: report.week_end, count: report.rows.length,
-        status: previous?.content_hash === report.content_hash ? 'unchanged' : previous ? 'updated' : 'added' });
-    }
+    const result = saveAsinReports(businessUserId(req.session.user.id), req.abaMarket, reports);
     audit(req.session.user.id, req.abaMarket, 'import', 'aba_asin_reports', null, { reports: result });
     return result;
   })();

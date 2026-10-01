@@ -19,6 +19,8 @@ export const api = {
   priceSyncStatus: () => request('/price-strategy/status'),
   syncPriceStrategy: () => request('/price-strategy/sync', { method: 'POST', body: {} }),
   abaAsin: (params, signal) => request(`/aba/asin?${new URLSearchParams(Object.entries(params).filter(([, value]) => value !== undefined))}`, { signal }),
+  abaAmazonStatus: (marketplace) => request(`/aba/asin/amazon/status?marketplace=${encodeURIComponent(marketplace)}`),
+  syncAbaAmazon: (marketplace, weeks) => request('/aba/asin/amazon/sync', { method: 'POST', body: { marketplace, weeks } }),
   importAbaAsin: (marketplace, files) => request('/aba/asin/import', { method: 'POST', body: { marketplace, files } }),
   aba: (params, signal) => request(`/aba?${new URLSearchParams(Object.entries(params).filter(([, value]) => value !== undefined))}`, { signal }),
   importAba: (marketplace, files) => request('/aba/import', { method: 'POST', body: { marketplace, files } }),

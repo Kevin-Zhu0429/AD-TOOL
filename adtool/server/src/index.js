@@ -17,6 +17,7 @@ import { abaRouter } from './aba.js';
 import { captainRouter } from './captain.js';
 import { priceStrategyRouter } from './priceStrategy.js';
 import { startPriceSyncScheduler } from './priceStrategySync.js';
+import { startAbaSyncScheduler } from './petAbaSync.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -74,4 +75,5 @@ app.use((err, req, res, next) => {
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`[server] http://localhost:${PORT}`);
   startPriceSyncScheduler();
+  startAbaSyncScheduler();
 });

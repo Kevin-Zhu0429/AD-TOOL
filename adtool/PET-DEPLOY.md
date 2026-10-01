@@ -119,6 +119,16 @@ PET_SP_SELLER_ID=AXXXXXXXXXXXXX                          # 卖家编号（Mercha
 PET_SP_BRAND=                                             # 选填：新 SKU 写入 SKU 库时的品牌
 ```
 
-开发者应用需要的角色：亚马逊物流（库存）、库存和订单跟踪（订单报告）、商品信息（Listing 与目录）。改完执行 `docker compose --env-file /etc/amazon-app/app.env up -d --build`。只填了部分变量时，页面会提示缺哪一项。
+开发者应用需要的角色：亚马逊物流（库存）、库存和订单跟踪（订单报告）、商品信息（Listing 与目录）、品牌分析（ABA，需品牌备案）。改完执行 `docker compose --env-file /etc/amazon-app/app.env up -d --build`。只填了部分变量时，页面会提示缺哪一项。
 
 旧的船长缓存表（`pet_price_*_cache`、`pet_captain_api_usage`）和旧的价格策略快照表 `pet_price_strategy` 保留在数据库中，不再读取。
+
+## ABA ASIN 视图：亚马逊自动同步
+
+ABA 报告 → ASIN 视图顶部的「从亚马逊同步」读取品牌分析「搜索查询表现」（`GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT`）周报，ASIN 取自共享 SKU 库。字段与上传的 ASIN 视图 CSV 一一对应（搜索查询量、市场曝光/点击/购买、ASIN 曝光/点击/购买），写入同一张表，来源记为 `Amazon SP-API`；同 ASIN 同周的上传报告会被覆盖，内容相同时不重写。
+
+- 周按亚马逊的周日到周六，周数与卖家后台一致。一周结束 3 天后才去拉，数据还没出（报告被亚马逊取消）的周会跳过，下次自动补。
+- 默认只补还没有的 ASIN × 周；每天美西时间第一次检查时自动补最近 4 周，页面可选最近 1/4/8/12 周手动同步。
+- 每份报告最多 18 个 ASIN（接口限制 200 字符），ASIN 多时分批申请。
+- 亚马逊接口只提供按 ASIN 的数据，没有卖家后台的**品牌视图**，品牌视图继续上传 CSV。
+- 需要开发者应用勾选「品牌分析」角色，店铺需完成品牌备案；没有权限时页面会提示 403。

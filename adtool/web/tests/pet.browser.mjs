@@ -116,6 +116,8 @@ try {
   assert.equal(await page.getByLabel('词类型', { exact: true }).count(), 0);
   const brandDownload = page.waitForEvent('download'); await page.getByRole('button', { name: '导出 Excel', exact: true }).click(); await brandDownload;
   await page.getByRole('button', { name: 'ASIN 视图', exact: true }).click();
+  await page.locator('.aba-amazon-sync').filter({ hasText: '从亚马逊同步' }).waitFor();
+  assert.equal(await page.locator('.aba-amazon-sync').getByRole('button', { name: '从亚马逊同步' }).isDisabled(), true);
   await page.getByLabel('选择ASIN视图 CSV / XLSX', { exact: true }).setInputFiles(['B000000001', 'B000000002'].map((asin) => ({ name: `US_${asin}.csv`, mimeType: 'text/csv', buffer: Buffer.from(asinFixture({ asin, rows: [['dog raincoat', 100, 1000, 100, 20, 200, 10, 5]] })) })));
   await page.getByRole('button', { name: '上传并保存', exact: true }).click();
   await page.getByLabel('尺码', { exact: true }).selectOption('XL');
