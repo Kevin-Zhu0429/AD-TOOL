@@ -15,10 +15,14 @@ const entry = (asin, query, numbers) => ({
   purchaseData: { totalPurchaseCount: numbers[3], asinPurchaseCount: numbers[6] },
 });
 
-function fakeAmazon({ cancelled = false } = {}) {
+function fakeAmazon({ cancelled = false, throttled = 0 } = {}) {
   const created = [];
   const gateway = {
     async request(account, region, method, path, { body } = {}) {
+      if (method === 'POST' && throttled > 0) {
+        throttled -= 1;
+        throw Object.assign(new Error('亚马逊接口限流，请稍后再试'), { upstreamStatus: 429 });
+      }
       if (method === 'POST') { created.push(body); return { reportId: `r${created.length}` }; }
       const report = /\/reports\/(r\d+)$/.exec(path);
       if (report) return cancelled ? { processingStatus: 'CANCELLED' } : { processingStatus: 'DONE', reportDocumentId: report[1] };
@@ -51,6 +55,7 @@ test('ASIN view syncs from Amazon into the same tables as uploaded reports', asy
   const { syncAbaAsin, abaSyncStatus } = await import('../src/petAbaSync.js');
   const { reportTiming } = await import('../src/petAmazon.js');
   reportTiming.pollMs = 0;
+  reportTiming.throttleMs = 0;
 
   assert.equal((await call('/aba/asin/amazon/status?marketplace=US', owner)).data.configured, false);
   assert.equal((await call('/aba/asin/amazon/sync', owner, { marketplace: 'US' })).status, 503);
@@ -62,7 +67,8 @@ test('ASIN view syncs from Amazon into the same tables as uploaded reports', asy
     { sku: 'DOG-XL', asin: 'B000000002', style: '圆形狗窝', size: 'XL' },
   ] })).status, 200);
 
-  const amazon = fakeAmazon();
+  // 创建报告被限流:等一会再试,不直接失败
+  const amazon = fakeAmazon({ throttled: 3 });
   const result = await syncAbaAsin({ weeks: 1 }, 1, amazon.gateway, ENV, '2026-09-02');
   assert.deepEqual([result.added, result.updated, result.requested], [2, 0, 1]);
   assert.equal(amazon.created.length, 1);
