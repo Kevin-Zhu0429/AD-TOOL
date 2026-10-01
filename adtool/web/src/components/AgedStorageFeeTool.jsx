@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api.js';
 import { readInventoryRows } from '../agedStorageImport.js';
-import { AGE_BUCKETS, calculateInventory, compactInventoryRows, exportRow, FEE_BUCKETS, MARKET_RATES, OUTPUT_COLUMNS, resultForRow, sortAgedFeeRows } from '../../../shared/agedStorageFee.js';
+import { AGE_BUCKETS, calculateInventory, compactInventoryRows, exportRow, FEE_BUCKETS, EU_MARKETS, MARKET_RATES, OUTPUT_COLUMNS, ratesFor, resultForRow, sortAgedFeeRows } from '../../../shared/agedStorageFee.js';
 import Icon from './Icon.jsx';
 import './ToolsPage.css';
 import './AgedStorageFeeTool.css';
@@ -33,18 +33,29 @@ export default function AgedStorageFeeTool() {
   const [page, setPage] = useState(1);
   const [sortMetric, setSortMetric] = useState('');
   const [sortDirection, setSortDirection] = useState('desc');
+  const [sortVersion, setSortVersion] = useState(0);
+  const [savedSnapshot, setSavedSnapshot] = useState(null);
 
   const rows = shared?.rows ?? EMPTY_ROWS;
   const brands = useMemo(() => [...new Set(rows.map((row) => row.brand))].sort(), [rows]);
   const markets = useMemo(() => [...new Set(rows.map((row) => row.market))].sort(), [rows]);
-  const filtered = useMemo(() => rows.filter((row) => (!brand || row.brand === brand) && (!market || row.market === market)
-    && (!specialFilter || (corrections[row.id]?.special === true ? 'yes' : 'no') === specialFilter)), [rows, brand, market, specialFilter, corrections]);
-  const resolved = useMemo(() => filtered.map((row) => resultForRow(row, corrections[row.id], shared.batch.scenario)), [filtered, corrections, shared]);
-  const ordered = useMemo(() => sortAgedFeeRows(resolved, sortMetric, sortDirection), [resolved, sortMetric, sortDirection]);
-  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const rowById = useMemo(() => new Map(rows.map((row) => [row.id, row])), [rows]);
+  const buildOrder = () => sortAgedFeeRows(rows.filter((row) => (!brand || row.brand === brand) && (!market || row.market === market)
+    && (!specialFilter || (corrections[row.id]?.special === true ? 'yes' : 'no') === specialFilter))
+    .map((row) => resultForRow(row, corrections[row.id], shared.batch.scenario)), sortMetric, sortDirection);
+  // 行的顺序和筛选结果只在切换筛选/排序、刷新数据或点「重新排序」时更新；修正日销后行留在原位，不会跳走。
+  const orderInputs = [rows, brand, market, specialFilter, sortMetric, sortDirection, sortVersion];
+  let snapshot = savedSnapshot;
+  if (!snapshot || snapshot.inputs.some((value, index) => value !== orderInputs[index])) {
+    snapshot = { inputs: orderInputs, ids: buildOrder().map((row) => row.id), corrections };
+    setSavedSnapshot(snapshot);
+  }
+  const ordered = useMemo(() => snapshot.ids.map((id) => resultForRow(rowById.get(id), corrections[id], shared.batch.scenario)), [snapshot, rowById, corrections, shared]);
+  const orderStale = (!!sortMetric || !!specialFilter) && snapshot.corrections !== corrections;
+  const pageCount = Math.max(1, Math.ceil(ordered.length / PAGE_SIZE));
   const shown = ordered.slice((Math.min(page, pageCount) - 1) * PAGE_SIZE, Math.min(page, pageCount) * PAGE_SIZE);
-  const pending = resolved.reduce((count, row) => count + (!row.valid ? 1 : 0), 0);
-  const withoutRates = resolved.reduce((count, row) => count + (!MARKET_RATES[row.market] ? 1 : 0), 0);
+  const pending = ordered.reduce((count, row) => count + (!row.valid ? 1 : 0), 0);
+  const withoutRates = ordered.reduce((count, row) => count + (!ratesFor(row.market) ? 1 : 0), 0);
 
   function applyShared(data) {
     setShared(data);
@@ -103,9 +114,10 @@ export default function AgedStorageFeeTool() {
   }
 
   async function download() {
-    if (!filtered.length || pending || loading || savingId !== null || Object.values(corrections).some((item) => item.dirty) || saveError) return;
+    if (!ordered.length || pending || loading || savingId !== null || Object.values(corrections).some((item) => item.dirty) || saveError) return;
     const XLSX = await import('xlsx');
-    const rows = ordered.map(exportRow);
+    // 导出按最新的修正值重新筛选、排序，不受页面上暂时冻结的顺序影响。
+    const rows = buildOrder().map(exportRow);
     const sheet = XLSX.utils.aoa_to_sheet([OUTPUT_COLUMNS, ...rows]);
     sheet['!cols'] = OUTPUT_COLUMNS.map((header, index) => ({ wch: index === 4 ? 34 : Math.min(32, Math.max(12, header.length * 2 + 2)) }));
     sheet['!autofilter'] = { ref: sheet['!ref'] };
@@ -134,7 +146,7 @@ export default function AgedStorageFeeTool() {
     <p className="aged-help">支持 .zip、.xlsx、.xls、.csv；ZIP 内可放库存表。首张工作表需包含市场代码、SKU、7 日均销量和 8 个库龄列。7 天为 0 时取 14 天，两者都为 0 时按 0.14 计算。未配置费率的市场会保留数据，费用留空。任一账号导入新批次后，所有账号查看同一份最新结果。</p>
     <details className="aged-rate-panel" open>
       <summary><span className="aged-rate-title">各市场费率</span><span className="aged-rate-caption">按库龄阶段查看 · 每月 15 日库存快照</span><span className="aged-rate-toggle" aria-hidden="true">⌄</span></summary>
-      <div className="aged-rate-table-wrap"><table className="aged-rate-table"><caption>市场超龄仓储费率，美元 / 件 / 次</caption><thead><tr><th scope="col">市场</th>{FEE_BUCKETS.map((bucket) => <th scope="col" key={bucket}>{bucket === '456+' ? '456 天以上' : `${bucket.replace('-', '–')} 天`}</th>)}</tr></thead><tbody>{Object.entries(MARKET_RATES).map(([code, rates]) => <tr key={code}><th scope="row">{code}</th>{rates.map((rate, index) => <td key={FEE_BUCKETS[index]}>${rate.toFixed(2)}</td>)}</tr>)}</tbody></table></div>
+      <div className="aged-rate-table-wrap"><table className="aged-rate-table"><caption>市场超龄仓储费率，美元 / 件 / 次</caption><thead><tr><th scope="col">市场</th>{FEE_BUCKETS.map((bucket) => <th scope="col" key={bucket}>{bucket === '456+' ? '456 天以上' : `${bucket.replace('-', '–')} 天`}</th>)}</tr></thead><tbody>{Object.entries(MARKET_RATES).map(([code, rates]) => <tr key={code}><th scope="row">{code === 'EU' ? `EU（${EU_MARKETS.join('/')}）` : code}</th>{rates.map((rate, index) => <td key={FEE_BUCKETS[index]}>${rate.toFixed(2)}</td>)}</tr>)}</tbody></table></div>
     </details>
     {fileError && <div className="tool-error" role="alert"><Icon name="alert" />{fileError}</div>}
     {saveError && <div className="tool-error" role="alert"><Icon name="alert" />{saveError}</div>}
@@ -143,8 +155,8 @@ export default function AgedStorageFeeTool() {
     {!loading && shared?.batch && !rows.length && <p className="aged-empty">最新批次中没有库存数据。</p>}
     {!!rows.length && <>
       <div className="aged-summary" role="status">
-        <span><b>{rows.length}</b> 个可查看 SKU</span><span><b>{filtered.length}</b> 条符合筛选</span>
-        <span>已配置费率市场合计 <b>{pending ? '待补正' : money(resolved.reduce((sum, row) => sum + (row.fee.total || 0), 0))}</b></span>
+        <span><b>{rows.length}</b> 个可查看 SKU</span><span><b>{ordered.length}</b> 条符合筛选</span>
+        <span>已配置费率市场合计 <b>{pending ? '待补正' : money(ordered.reduce((sum, row) => sum + (row.fee.total || 0), 0))}</b></span>
         {withoutRates > 0 && <span className="aged-no-rate">{withoutRates} 条市场无费率，费用留空</span>}
         <span className="aged-source">批次 #{shared.batch.id} · {shared.batch.sourceFile} · {shared.batch.date} · {shared.batch.scenario === 'uniform' ? '区间均匀' : shared.batch.scenario === 'youngest' ? '最年轻端' : '最老端'}</span>
       </div>
@@ -154,14 +166,16 @@ export default function AgedStorageFeeTool() {
         <label className="field"><span>特殊情况</span><select className="inp" value={specialFilter} onChange={(event) => { setSpecialFilter(event.target.value); setPage(1); }}><option value="">全部</option><option value="yes">是</option><option value="no">否</option></select></label>
         <label className="field"><span>排序指标</span><select className="inp" value={sortMetric} onChange={(event) => { setSortMetric(event.target.value); setPage(1); }}><option value="">原始顺序</option><option value="average">套均仓储费</option><option value="total">仓储费总额</option><option value="sales">最终计算日销</option></select></label>
         <label className="field"><span>顺序</span><select className="inp" value={sortDirection} disabled={!sortMetric} onChange={(event) => { setSortDirection(event.target.value); setPage(1); }}><option value="desc">从高到低</option><option value="asc">从低到高</option></select></label>
+        {orderStale && <button className="btn" onClick={() => setSortVersion((value) => value + 1)} title="按最新修正值重新排序和筛选">重新排序</button>}
         <div className="spacer" />
-        <button className="btn primary" disabled={!filtered.length || pending > 0 || loading || savingId !== null || !!saveError || Object.values(corrections).some((item) => item.dirty)} onClick={download}><Icon name="download" />导出当前筛选 Excel</button>
+        <button className="btn primary" disabled={!ordered.length || pending > 0 || loading || savingId !== null || !!saveError || Object.values(corrections).some((item) => item.dirty)} onClick={download}><Icon name="download" />导出当前筛选 Excel</button>
       </div>
+      {orderStale && <p className="aged-hint" role="status">已修正的行暂时留在原位（浅色标出），方便继续核对；点击「重新排序」后按最新数值排列。</p>}
       {pending > 0 && <p className="aged-warning" role="alert">有 {pending} 条已设为“是”但尚未填写有效修正日销；填写大于 0 的数值后即可导出。</p>}
       <div className="aged-table-wrap"><table className="aged-table">
         <thead><tr>{OUTPUT_COLUMNS.map((column) => <th key={column} scope="col">{column}</th>)}</tr></thead>
-        <tbody>{shown.map((row) => <tr key={row.id}>
-          <td>{row.date}</td><td>{row.marketCode}</td><td>{row.brand}</td><td>{row.market || '—'}{!MARKET_RATES[row.market] && <small className="aged-source-label">无费率</small>}</td><td className="aged-sku">{row.sku}</td>
+        <tbody>{shown.map((row) => <tr key={row.id} className={snapshot.corrections[row.id] !== corrections[row.id] ? 'aged-row-edited' : undefined}>
+          <td>{row.date}</td><td>{row.marketCode}</td><td>{row.brand}</td><td>{row.market || '—'}{!ratesFor(row.market) && <small className="aged-source-label">无费率</small>}</td><td className="aged-sku">{row.sku}</td>
           <td className="aged-number">{money(row.fee.average)}</td><td className="aged-number">{money(row.fee.total)}</td>
           <td className="aged-number">{amount(row.dailySales)}<small className="aged-source-label">{row.salesSource}</small></td>
           <td><select className="inp aged-cell-select" aria-label={`${row.sku} 是否有特殊情况`} disabled={!row.canEdit || loading || savingId !== null} value={row.special ? 'yes' : 'no'} onChange={(event) => { const special = event.target.value === 'yes'; const next = updateCorrection(row.id, { special, value: special ? row.correctionValue : '', reason: special ? row.reason : '', dirty: true }); saveCorrection(row.id, next); }}><option value="no">否</option><option value="yes">是</option></select></td>
@@ -173,7 +187,7 @@ export default function AgedStorageFeeTool() {
           {AGE_BUCKETS.map((bucket, index) => <td className="aged-number" key={bucket}>{amount(row.buckets[index])}</td>)}
         </tr>)}</tbody>
       </table></div>
-      {!filtered.length && <p className="aged-empty">当前筛选条件下没有数据，请调整筛选条件。</p>}
+      {!ordered.length && <p className="aged-empty">当前筛选条件下没有数据，请调整筛选条件。</p>}
       <div className="aged-pagination"><span>每页 {PAGE_SIZE} 条 · 第 {Math.min(page, pageCount)} / {pageCount} 页</span>
         <button className="btn sm" disabled={page <= 1} onClick={() => setPage((value) => value - 1)}>上一页</button>
         <button className="btn sm" disabled={page >= pageCount} onClick={() => setPage((value) => value + 1)}>下一页</button>

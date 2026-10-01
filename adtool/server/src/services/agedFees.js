@@ -1,6 +1,6 @@
 // 超龄仓储费:库存计算、写批次、读批次。计算和 2 万行的 JSON 解析都在 worker 线程里执行。
 import { writeAudit } from '../dbConnect.js';
-import { calculateInventory } from '../../../shared/agedStorageFee.js';
+import { calculateInventory, calculateSkuFee, parseMarketCode, ratesFor } from '../../../shared/agedStorageFee.js';
 
 const badRequest = (message) => Object.assign(new Error(message), { status: 400 });
 
@@ -22,12 +22,18 @@ export function cleanBatch(db, batch) {
   return {
     batch: { id: batch.id, sourceFile: batch.source_file, date: batch.base_date, scenario: batch.scenario,
       rowCount: batch.row_count, createdAt: batch.created_at },
-    rows: items.map((item) => ({
-      ...JSON.parse(item.base_json), id: item.id,
-      correction: { special: !!item.special, value: item.correction_value == null ? '' : String(item.correction_value),
-        reason: item.reason, revision: item.revision },
-      canEdit: true,
-    })),
+    rows: items.map((item) => {
+      const base = JSON.parse(item.base_json);
+      // 旧批次按新规则纠正：品牌取市场代码第一个词（CC_EU → CC）；DE/FR/IT/ES 导入时没有费率的，按 EU 费率补算。
+      if (base.fee?.total == null && ratesFor(base.market)) {
+        try { base.fee = calculateSkuFee(base.buckets, base.dailySales, base.date, base.market, batch.scenario); } catch { /* 保持留空 */ }
+      }
+      return { ...base, brand: parseMarketCode(base.marketCode).brand, id: item.id,
+        correction: { special: !!item.special, value: item.correction_value == null ? '' : String(item.correction_value),
+          reason: item.reason, revision: item.revision },
+        canEdit: true,
+      };
+    }),
   };
 }
 

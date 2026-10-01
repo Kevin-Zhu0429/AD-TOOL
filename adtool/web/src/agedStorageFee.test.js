@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as XLSX from 'xlsx';
-import { AGE_BUCKETS, calculateInventory, calculateSkuFee, compactInventoryRows, exportRow, MARKET_RATES, OUTPUT_COLUMNS, resultForRow, sortAgedFeeRows } from '../../shared/agedStorageFee.js';
+import { AGE_BUCKETS, calculateInventory, calculateSkuFee, compactInventoryRows, exportRow, MARKET_RATES, OUTPUT_COLUMNS, parseMarketCode, resultForRow, sortAgedFeeRows } from '../../shared/agedStorageFee.js';
 
 const inventoryRow = (sku, sales7, sales14) => ({
   市场代码: 'CY_AE', SKU: sku, '7日均销量': sales7, '14日均销量': sales14,
@@ -11,6 +11,26 @@ const inventoryRow = (sku, sales7, sales14) => ({
 test('图片中的六个市场费率包含 AE', () => {
   assert.deepEqual(MARKET_RATES.AE, [0, 0.05, 0.18, 0.18]);
   assert.deepEqual(MARKET_RATES.US, [0.01, 0.12, 0.30, 0.35]);
+});
+
+test('DE/FR/IT/ES 按 EU 费率计算，市场列保留站点', () => {
+  const [de, eu] = calculateInventory([{ ...inventoryRow('de', 1, 1), 市场代码: 'CC_EU_DE' }, { ...inventoryRow('eu', 1, 1), 市场代码: 'CC_EU' }], '2026-09-01');
+  assert.equal(de.market, 'DE');
+  assert.ok(de.fee.total > 0);
+  assert.deepEqual(de.fee, eu.fee);
+  for (const market of ['FR', 'IT', 'ES']) assert.deepEqual(calculateSkuFee(de.buckets, 1, '2026-09-01', market), eu.fee);
+  assert.equal(resultForRow(de, { special: true, value: '2' }).fee.total, resultForRow(eu, { special: true, value: '2' }).fee.total);
+});
+
+test('市场代码第一个词是品牌，最后一个词是市场', () => {
+  assert.deepEqual(parseMarketCode('CC_EU_DE'), { brand: 'CC', market: 'DE' });
+  assert.deepEqual(parseMarketCode('CC_UK'), { brand: 'CC', market: 'UK' });
+  assert.deepEqual(parseMarketCode('cc-eu-fr'), { brand: 'cc', market: 'FR' });
+  assert.deepEqual(parseMarketCode('CY AE'), { brand: 'CY', market: 'AE' });
+  assert.deepEqual(parseMarketCode('CCUS'), { brand: 'CC', market: 'US' });
+  assert.deepEqual(parseMarketCode('123'), { brand: '123', market: '未识别' });
+  const rows = calculateInventory([{ ...inventoryRow('a', 1, 1), 市场代码: 'CC_EU_DE' }, { ...inventoryRow('b', 1, 1), 市场代码: 'CC_UK' }], '2026-09-01');
+  assert.deepEqual(rows.map(({ brand, market }) => [brand, market]), [['CC', 'DE'], ['CC', 'UK']]);
 });
 
 test('7 天为零时退到 14 天，两者为零时固定 0.14', () => {

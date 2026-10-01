@@ -9,9 +9,12 @@ export const MARKET_RATES = {
   AU: [0, 0.11, 0.23, 0.23],
   AE: [0, 0.05, 0.18, 0.18],
 };
+// 欧洲站点按 EU 费率计算；市场列仍显示站点本身（DE/FR/IT/ES）。
+export const EU_MARKETS = ['DE', 'FR', 'IT', 'ES'];
+export const ratesFor = (market) => MARKET_RATES[EU_MARKETS.includes(market) ? 'EU' : market];
 export const OUTPUT_COLUMNS = [
   '日期', '市场代码', '品牌', '市场', 'SKU', '至售罄日的套均仓储费', '至售罄日的仓储费总额',
-  '统计日期的日销', '是否有特殊情况', '如有，修正值是？', '修正备注理由', '最终计算日销',
+  '统计日期的日销', '是否有特殊情况', '如有，修正日销', '修正备注理由', '最终计算日销',
   '在库TTL', '据统计日实际日销下（修正后）的可售月', '当下是否有180+库存', ...AGE_BUCKETS,
 ];
 
@@ -24,6 +27,16 @@ const ALIASES = {
 const INTERVALS = [[0, 31], [31, 61], [61, 91], [91, 181], [181, 271], [271, 366], [366, 456], [456, Infinity]];
 const normalize = (value) => String(value ?? '').replace(/\s+/g, '').trim().toLowerCase();
 const round = (value, digits) => Math.round((value + Number.EPSILON) * 10 ** digits) / 10 ** digits;
+
+// 市场代码按 _ / - / 空格 拆词：第一个词是品牌，最后一个词是市场（如 CC_EU_DE → CC / DE）。
+// 只有一个词时（如 CCUS）退回到末尾两个字母作为市场。
+export function parseMarketCode(marketCode) {
+  const words = String(marketCode ?? '').trim().split(/[_\-\s]+/).filter(Boolean);
+  if (words.length > 1) return { brand: words[0], market: words.at(-1).toUpperCase() };
+  const code = words[0] ?? '';
+  const market = code.toUpperCase().match(/[A-Z]{2}$/)?.[0];
+  return market ? { brand: code.slice(0, -2) || code, market } : { brand: code, market: '未识别' };
+}
 
 function findColumn(headers, names) {
   const found = names.map((name) => headers.find((header) => normalize(header) === normalize(name))).find(Boolean);
@@ -85,7 +98,7 @@ export function calculateSkuFee(buckets, dailySales, date, market, scenario = 'u
   if (!inventory) return { average: 0, total: 0, months: 0 };
   if (!(dailySales > 0)) return { average: null, total: null, months: null };
   const base = parseDate(date);
-  const rates = MARKET_RATES[market];
+  const rates = ratesFor(market);
   if (!rates) throw new Error(`不支持市场 ${market}。`);
   const cohorts = makeCohorts(buckets, scenario);
   const selloutDays = inventory / dailySales;
@@ -119,8 +132,8 @@ export function calculateInventory(sourceRows, date, scenario = 'uniform') {
     const sku = String(source[skuCol] ?? '').trim();
     if (!sku) return;
     const marketCode = String(source[marketCol] ?? '').trim();
-    const market = marketCode.toUpperCase().match(/([A-Z]{2})$/)?.[1] ?? '未识别';
-    const hasRate = !!MARKET_RATES[market];
+    const { brand, market } = parseMarketCode(marketCode);
+    const hasRate = !!ratesFor(market);
     const sales7 = toNumber(source[sales7Col]);
     if (hasRate && !sales7 && !sales14Col) { errors.push(`第${index + 2}行 SKU ${sku}：7天日销为0，但缺少14天日销列`); return; }
     const sales14 = sales14Col ? toNumber(source[sales14Col]) : 0;
@@ -128,14 +141,12 @@ export function calculateInventory(sourceRows, date, scenario = 'uniform') {
     const salesSource = sales7 ? '7天' : sales14 ? '14天' : '近14天无日销修正';
     const buckets = bucketCols.map((column) => toNumber(source[column]));
     const inventory = buckets.reduce((sum, value) => sum + value, 0);
-    const brand = marketCode.includes('_') ? marketCode.slice(0, marketCode.lastIndexOf('_'))
-      : marketCode.includes('-') ? marketCode.slice(0, marketCode.lastIndexOf('-')) : marketCode.slice(0, -2).replace(/[_\- ]+$/, '') || marketCode;
     result.push({ id: index, date, marketCode, brand, market, sku, dailySales, salesSource, buckets, inventory });
   });
   if (errors.length) throw new Error(`${errors.slice(0, 8).join('；')}${errors.length > 8 ? `；另有${errors.length - 8}行` : ''}。未生成结果。`);
   if (!result.length) throw new Error('表格中没有可计算的 SKU。');
   // 输入逐行独立，导入即展示；修正后的金额在行级计算，避免每次改动重算整张表。
-  return result.map((row) => ({ ...row, fee: MARKET_RATES[row.market]
+  return result.map((row) => ({ ...row, fee: ratesFor(row.market)
     ? calculateSkuFee(row.buckets, row.dailySales, date, row.market, scenario)
     : { average: null, total: null, months: null } }));
 }
@@ -158,7 +169,7 @@ export function resultForRow(row, correction = {}, scenario = 'uniform') {
   let finalSales = valid ? (special ? revised : row.dailySales) : null;
   let fee = { average: null, total: null, months: null };
   if (valid) {
-    try { fee = !MARKET_RATES[row.market] ? fee : special ? calculateSkuFee(row.buckets, finalSales, row.date, row.market, scenario) : row.fee; }
+    try { fee = !ratesFor(row.market) ? fee : special ? calculateSkuFee(row.buckets, finalSales, row.date, row.market, scenario) : row.fee; }
     catch { valid = false; finalSales = null; }
   }
   return { ...row, salesSource: row.salesSource === '手动固定' ? '近14天无日销修正' : row.salesSource,
