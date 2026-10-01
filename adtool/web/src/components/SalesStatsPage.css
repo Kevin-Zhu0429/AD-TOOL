@@ -1,3 +1,4 @@
+.lib.sales-stats { max-width: none; padding: 18px 20px 28px; }
 .sales-stats > .card { padding: 14px 16px; margin-bottom: 16px; }
 .stats-head { margin-bottom: 10px; }
 .stats-head label { white-space: nowrap; display: flex; align-items: center; gap: 8px; }
