@@ -107,13 +107,16 @@ export async function downloadReportDocument(document) {
 
 export const amazonGateway = { request: spApiRequest, download: downloadReportDocument };
 
-/** 报告接口被限流(429)时等一会再试 */
-async function waitOutThrottle(call) {
+/** 报告接口被限流(429)时等一会再试;等的时候 onProgress 收到 { stage: 'throttled', retryAt },恢复后收到 stage */
+async function waitOutThrottle(call, onProgress, stage) {
   for (let wait = 0; ; wait += 1) {
     try {
-      return await call();
+      const result = await call();
+      if (wait) onProgress({ stage });
+      return result;
     } catch (error) {
       if (error?.upstreamStatus !== 429 || wait >= reportTiming.maxThrottleWaits) throw error;
+      onProgress({ stage: 'throttled', retryAt: new Date(Date.now() + reportTiming.throttleMs).toISOString(), waits: wait + 1 });
       await sleep(reportTiming.throttleMs);
     }
   }
@@ -121,22 +124,26 @@ async function waitOutThrottle(call) {
 
 /**
  * 申请一份报告、等它生成完、下载并解析。没有数据(CANCELLED)返回 parse 的空结果。
- * 平面文件默认按 TSV 解析;品牌分析这类 JSON 报告传 parse: JSON.parse
+ * 平面文件默认按 TSV 解析;品牌分析这类 JSON 报告传 parse: JSON.parse。
+ * onProgress 依次收到 stage: creating → throttled(被限流时)→ processing → downloading
  */
-export async function runReport(account, reportType, { start, end, options, parse = parseTsv } = {}, gateway = amazonGateway) {
+export async function runReport(account, reportType, { start, end, options, parse = parseTsv, onProgress = () => {} } = {}, gateway = amazonGateway) {
   const body = { reportType, marketplaceIds: [US_MARKETPLACE] };
   if (options) body.reportOptions = options;
   if (start) body.dataStartTime = start.toISOString();
   if (end) body.dataEndTime = end.toISOString();
-  const created = await waitOutThrottle(() => gateway.request(account, REGION, 'POST', '/reports/2021-06-30/reports', { body }));
+  onProgress({ stage: 'creating' });
+  const created = await waitOutThrottle(() => gateway.request(account, REGION, 'POST', '/reports/2021-06-30/reports', { body }), onProgress, 'creating');
   const reportId = clean(created?.reportId);
   if (!reportId) throw new Error(`亚马逊没有返回报告编号（${reportType}）`);
+  onProgress({ stage: 'processing' });
   for (let poll = 0; poll < reportTiming.maxPolls; poll += 1) {
-    const report = await waitOutThrottle(() => gateway.request(account, REGION, 'GET', `/reports/2021-06-30/reports/${reportId}`));
+    const report = await waitOutThrottle(() => gateway.request(account, REGION, 'GET', `/reports/2021-06-30/reports/${reportId}`), onProgress, 'processing');
     const status = clean(report?.processingStatus);
     if (status === 'DONE') {
+      onProgress({ stage: 'downloading' });
       const document = await waitOutThrottle(() => gateway.request(account, REGION, 'GET',
-        `/reports/2021-06-30/documents/${clean(report.reportDocumentId)}`));
+        `/reports/2021-06-30/documents/${clean(report.reportDocumentId)}`), onProgress, 'downloading');
       return parse(await gateway.download(document));
     }
     // 亚马逊对没有数据的时间段直接取消报告

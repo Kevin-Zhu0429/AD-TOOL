@@ -93,6 +93,8 @@ const setState = (key, value) => db.prepare(`INSERT INTO pet_price_sync_state(ke
   ON CONFLICT(key) DO UPDATE SET value=excluded.value`).run(key, JSON.stringify(value));
 
 let running = false;
+// 正在跑的同步进度,前端轮询状态时显示
+let progress = null;
 
 /**
  * 拉最近 weeks 周的 ASIN 视图。默认只补缺的 ASIN×周;refresh=true 时全部重拉(亚马逊偶尔回补数据)。
@@ -112,23 +114,33 @@ export async function syncAbaAsin({ weeks = 4, refresh = false } = {}, actorId =
   const have = db.prepare(`SELECT 1 FROM aba_asin_reports WHERE user_id=? AND marketplace='US' AND asin=? AND week_end=?`);
   const summary = { weeks: [], added: 0, updated: 0, unchanged: 0, notReady: [], requested: 0 };
   try {
-    for (const week of completeWeeks(today, Math.min(MAX_WEEKS, Math.max(1, Number(weeks) || 4)))) {
-      const missing = refresh ? asins : asins.filter((asin) => !have.get(PET_SHOP_ID, asin, week.week_end));
-      if (!missing.length) continue;
+    // 先算好每周要申请几份报告,进度按份数算
+    const plan = completeWeeks(today, Math.min(MAX_WEEKS, Math.max(1, Number(weeks) || 4)))
+      .map((week) => ({ week, batches: asinBatches(refresh ? asins : asins.filter((asin) => !have.get(PET_SHOP_ID, asin, week.week_end))) }))
+      .filter((item) => item.batches.length);
+    progress = { total: plan.reduce((sum, item) => sum + item.batches.length, 0), done: 0, weeks: plan.length, weekIndex: 0,
+      week: null, batch: 0, batches: 0, stage: 'starting', retryAt: null };
+    for (const [weekIndex, { week, batches }] of plan.entries()) {
+      Object.assign(progress, { weekIndex: weekIndex + 1, week: `${week.week_start}~${week.week_end}`, batches: batches.length });
       const reports = [];
       let ready = true;
-      for (const batch of asinBatches(missing)) {
+      for (const [batchIndex, batch] of batches.entries()) {
         summary.requested += 1;
+        Object.assign(progress, { batch: batchIndex + 1, stage: 'creating', retryAt: null });
         const payload = await runReport(account, REPORT_TYPE, {
           start: new Date(`${week.week_start}T00:00:00Z`), end: new Date(`${week.week_end}T00:00:00Z`),
           options: { reportPeriod: 'WEEK', asin: batch.join(' ') }, parse: JSON.parse,
+          onProgress: ({ stage, retryAt = null }) => Object.assign(progress, { stage, retryAt }),
         }, gateway).catch((error) => {
           throw new Error(`${week.week_start}~${week.week_end}：${error.message}`);
         });
+        progress.done += 1;
         if (payload === null) { ready = false; break; }
         reports.push(...asinReportsFromJson(payload, week));
       }
-      if (!ready) { summary.notReady.push(week.week_end); continue; }
+      // 这一周没出数据,剩下的批次不用再申请
+      if (!ready) { progress.done += batches.length - progress.batch; summary.notReady.push(week.week_end); continue; }
+      progress.stage = 'saving';
       const saved = db.transaction(() => saveAsinReports(PET_SHOP_ID, 'US', reports))();
       for (const item of saved) summary[item.status] += 1;
       summary.weeks.push({ week_end: week.week_end, asins: reports.length });
@@ -144,12 +156,12 @@ export async function syncAbaAsin({ weeks = 4, refresh = false } = {}, actorId =
     const message = String(error.message).slice(0, 300);
     setState('aba_last_error', { at: new Date().toISOString(), message });
     throw Object.assign(new Error(message), { status: error.status });
-  } finally { running = false; }
+  } finally { running = false; progress = null; }
 }
 
 export function abaSyncStatus(env = process.env) {
   const { account, issues } = petSpConfig(env);
-  return { configured: !!account, issues, running,
+  return { configured: !!account, issues, running, progress,
     lastSuccess: state('aba_last_success'), lastAttempt: state('aba_last_attempt'), lastError: state('aba_last_error') };
 }
 

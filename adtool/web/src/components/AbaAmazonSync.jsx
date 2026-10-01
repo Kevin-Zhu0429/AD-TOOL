@@ -3,12 +3,43 @@ import { api } from '../api.js';
 
 const when = (iso) => new Date(iso).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
 
+const STAGES = {
+  starting: '准备中',
+  creating: '向亚马逊申请报告',
+  processing: '亚马逊正在生成报告，一般要 1～5 分钟',
+  downloading: '下载报告',
+  saving: '写入数据',
+};
+
+/** 后台同步进度:第几份报告、哪一周、现在在等什么 */
+function SyncProgress({ progress, now }) {
+  const { total, done, week, batch, batches, stage, retryAt } = progress;
+  const percent = total ? Math.round((done / total) * 100) : 0;
+  const wait = retryAt ? Math.max(0, Math.ceil((Date.parse(retryAt) - now) / 1000)) : 0;
+  const step = stage === 'throttled'
+    ? `亚马逊接口限流，${wait ? `${wait} 秒后` : '马上'}自动重试`
+    : STAGES[stage] ?? '同步中';
+  return <div className="aba-sync-progress" role="status">
+    <div className="aba-sync-progress-head">
+      <strong>{total ? `第 ${Math.min(done + 1, total)} / ${total} 份报告` : '准备中'}</strong>
+      <span>{percent}%</span>
+    </div>
+    <div className="aba-sync-progress-bar" role="progressbar" aria-label="ABA 同步进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}>
+      <span style={{ width: `${percent}%` }} />
+    </div>
+    <p className={`hint${stage === 'throttled' ? ' warn' : ''}`}>
+      {week ? `${week} 这周${batches > 1 ? `（第 ${batch}/${batches} 批 ASIN）` : ''} · ` : ''}{step}
+    </p>
+  </div>;
+}
+
 /** 宠物版 ASIN 视图:从亚马逊品牌分析按周拉取搜索查询表现 */
 export default function AbaAmazonSync({ market, onSynced }) {
   const [status, setStatus] = useState(null);
   const [weeks, setWeeks] = useState(4);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
+  const [now, setNow] = useState(Date.now());
   const wasRunning = useRef(false);
 
   async function refresh() {
@@ -33,9 +64,16 @@ export default function AbaAmazonSync({ market, onSynced }) {
   useEffect(() => { refresh(); }, [market]);
   useEffect(() => {
     if (!status?.running) return undefined;
-    const timer = setInterval(refresh, 10_000);
+    const timer = setInterval(refresh, 5_000);
     return () => clearInterval(timer);
   }, [status?.running]);
+  // 限流等待时每秒刷新倒计时
+  const throttled = status?.running && status.progress?.stage === 'throttled';
+  useEffect(() => {
+    if (!throttled) return undefined;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [throttled]);
 
   async function sync() {
     setBusy(true);
@@ -43,7 +81,6 @@ export default function AbaAmazonSync({ market, onSynced }) {
     try {
       await api.syncAbaAmazon(market, weeks);
       wasRunning.current = true;
-      setMsg({ kind: 'ok', text: '已在后台开始同步，品牌分析报告生成需要几分钟，完成后自动刷新。' });
       await refresh();
     } catch (e) {
       setMsg({ kind: 'err', text: e.message });
@@ -68,6 +105,7 @@ export default function AbaAmazonSync({ market, onSynced }) {
         </button>
       </div>
     </div>
+    {status?.running && status.progress && <SyncProgress progress={status.progress} now={now} />}
     {msg && <div className={`note ${msg.kind}`} role={msg.kind === 'err' ? 'alert' : 'status'}>{msg.text}</div>}
   </section>;
 }

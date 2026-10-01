@@ -69,7 +69,19 @@ test('ASIN view syncs from Amazon into the same tables as uploaded reports', asy
 
   // 创建报告被限流:等一会再试,不直接失败
   const amazon = fakeAmazon({ throttled: 3 });
+  const stages = [];
+  const request = amazon.gateway.request;
+  amazon.gateway.request = async (...args) => { stages.push(abaSyncStatus(ENV).progress?.stage); return request(...args); };
+  const download = amazon.gateway.download;
+  let during;
+  amazon.gateway.download = async (document) => { during = { ...abaSyncStatus(ENV).progress }; return download(document); };
   const result = await syncAbaAsin({ weeks: 1 }, 1, amazon.gateway, ENV, '2026-09-02');
+  // 同步中状态接口带进度:第几份报告、哪一周、限流时在等
+  assert.deepEqual([during.total, during.done, during.week, during.batch, during.batches, during.stage],
+    [1, 0, '2026-08-23~2026-08-29', 1, 1, 'downloading']);
+  assert.deepEqual(stages.slice(0, 4), ['creating', 'throttled', 'throttled', 'throttled']);
+  assert.ok(stages.includes('processing'));
+  assert.equal(abaSyncStatus(ENV).progress, null);
   assert.deepEqual([result.added, result.updated, result.requested], [2, 0, 1]);
   assert.equal(amazon.created.length, 1);
   assert.deepEqual(amazon.created[0], {
