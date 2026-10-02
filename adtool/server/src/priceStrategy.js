@@ -5,6 +5,7 @@ import { isPet, PET_SHOP_ID } from './profile.js';
 import { pacificDay, shiftDay } from './petAmazon.js';
 import { priceSyncStatus, syncAmazonData } from './priceStrategySync.js';
 import { buildPriceBoard, monthlySummary, recentDays, weeklySummary } from './petSales.js';
+import { withProfit } from './petCosts.js';
 
 export const priceStrategyRouter = express.Router();
 priceStrategyRouter.use(requireLogin);
@@ -20,7 +21,10 @@ priceStrategyRouter.get('/', (req, res) => {
   const skus = db.prepare("SELECT sku,asin,style,size,color,stock,transit FROM sku_items WHERE user_id=? AND country='US'").all(PET_SHOP_ID);
   const sales = db.prepare('SELECT day,sku,asin,units FROM pet_daily_sales WHERE day>=? AND day<=?').all(from, today);
   const listings = db.prepare('SELECT sku,asin,price,status FROM pet_listing_cache').all();
-  res.json({ ...buildPriceBoard({ skus, sales, listings, today }), sync: priceSyncStatus() });
+  const board = buildPriceBoard({ skus, sales, listings, today });
+  // 每行带上单件毛利和毛利率(成本、FBA 费、佣金来自 SKU 库)
+  board.rows = withProfit(board.rows).map(({ fob, firstLeg, duty, referralRate, feeUpdatedAt, costUpdatedAt, ...row }) => row);
+  res.json({ ...board, sync: priceSyncStatus() });
 });
 
 /** 销售统计:周销量 + 每月数据 */

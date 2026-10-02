@@ -151,6 +151,9 @@ test('Amazon sync fills the SKU library and daily sales; the price board and sta
   assert.deepEqual([library.landedCost, library.fbaFee, library.referralFee, library.profit, library.margin, library.breakEven],
     [14, 7.25, 6, 12.74, 31.86, 25]);
   assert.deepEqual(skuRows.items.find((row) => row.sku === 'DOG-XL').missing, ['成本', 'FBA 费', '佣金']);
+  // 价格策略表同样带上单件毛利和毛利率
+  const boardDog = (await call('/price-strategy', user)).data.rows.find((row) => row.sku === 'DOG-L');
+  assert.deepEqual([boardDog.profit, boardDog.margin, boardDog.fob], [12.74, 31.86, undefined]);
   assert.equal(skuRows.fees.lastSuccess.skus, 1);
 
   const sales = backend.db.prepare("SELECT * FROM pet_daily_sales WHERE sku='DOG-XL' AND day='2026-09-21'").get();
