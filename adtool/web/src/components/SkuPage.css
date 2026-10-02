@@ -60,3 +60,5 @@
 .sku-change-col li small { color: var(--text-dim); }
 .sku-change-col .btn { align-self: flex-start; }
 .sku-change .hint { margin: 0; }
+/* 款式、颜色有时是亚马逊目录里的长文本,限宽省略,鼠标放上去看全 */
+.sku-profit-table td.sku-text { max-width: 120px; overflow: hidden; text-overflow: ellipsis; }

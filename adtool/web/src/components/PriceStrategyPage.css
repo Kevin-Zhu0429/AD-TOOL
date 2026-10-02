@@ -50,3 +50,5 @@
   .price-toolbar .inp { width: 100%; }
   .price-table .col-sku { position: static; }
 }
+.price-sync-card { display: grid; gap: 8px; margin-bottom: 14px; padding: 12px 16px; }
+.price-sync-card .hint { margin: 0; }

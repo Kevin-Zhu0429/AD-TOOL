@@ -107,7 +107,17 @@ test('Amazon sync fills the SKU library and daily sales; the price board and sta
   // 9/22 中午(太平洋时间)
   const now = () => new Date('2026-09-22T19:00:00Z');
   const amazon = fakeAmazon();
+  // 同步过程中 /status 带进度:Listing、库存、尺码颜色、SKU 库、9 段订单、FBA 费用共 14 步
+  const seen = [];
+  const request = amazon.gateway.request;
+  amazon.gateway.request = (...args) => { seen.push({ ...priceSyncStatus(ENV).progress }); return request(...args); };
   const result = await syncAmazonData(1, amazon.gateway, ENV, now);
+  assert.equal(seen[0].total, 14);
+  assert.deepEqual([seen[0].done, seen[0].step], [0, '读取 Listing']);
+  const lastStep = seen.at(-1);
+  assert.deepEqual([lastStep.done, lastStep.step], [13, '读取 FBA 费用']);
+  assert.ok(seen.some((entry) => entry.step === '读取订单报告 9/9（2026-08-29 起）' && entry.done === 12 && entry.stage === 'processing'));
+  assert.equal(priceSyncStatus(ENV).progress, null, '同步完清掉进度');
   assert.equal(result.from, '2026-01-01', '第一次回填到年初');
   assert.deepEqual([result.listings, result.inventorySkus, result.skuAdded, result.skuUpdated], [2, 2, 1, 1]);
 
@@ -184,6 +194,14 @@ test('Amazon sync fills the SKU library and daily sales; the price board and sta
   assert.deepEqual([stats.monthly.months[7].units, stats.monthly.months[7].sales], [4, 100]);
   assert.equal(stats.monthly.months[9].units, null, '未来月份没有实际值');
   assert.equal(stats.monthly.total.units, 12);
+  // 没手填实际利润的月份按成本和费用自动算:8 月 DOG-L 4 件 $100,毛利 100 − 4×(14+7.25) − 15% 佣金 = 0,再减广告花费 10
+  assert.equal((await call('/price-strategy/targets/2026-08', user, { adSpend: 10 }, 'PUT')).status, 200);
+  const august = (await call('/price-strategy/stats?weeks=2', user)).data.monthly.months[7];
+  assert.deepEqual([august.profitSource, august.grossProfit, august.actualProfit, august.margin, august.coverage], ['auto', 0, -10, -10, 100]);
+  assert.equal(september.profitSource, 'manual', '手填的实际利润额优先');
+  // 9 月 DOG-XL 没有成本,不算进毛利,覆盖率低于 100%
+  const septAuto = (await call('/price-strategy/stats?weeks=2', user)).data.monthly.months[8];
+  assert.deepEqual(septAuto.missingCostSkus, ['DOG-XL']);
 
   // 自动同步一天内不重拉费用;费用报告失败不影响其他数据,只记错误,旧费用保留
   const { saveCosts } = await import('../src/petCosts.js');

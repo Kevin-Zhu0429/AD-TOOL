@@ -1,0 +1,8 @@
+/* 亚马逊后台同步进度条,样式和 ABA 同步一致 */
+.sync-progress { display: grid; gap: 6px; }
+.sync-progress-head { display: flex; justify-content: space-between; align-items: baseline; font-size: 13px; }
+.sync-progress-head span { font-variant-numeric: tabular-nums; color: var(--text-dim); }
+.sync-progress-bar { height: 6px; border-radius: 999px; background: var(--border-soft); overflow: hidden; }
+.sync-progress-bar span { display: block; height: 100%; background: var(--accent); border-radius: inherit; transition: width .4s ease; }
+.sync-progress .hint { margin: 0; }
+.sync-progress .hint.warn { color: var(--amber-text); }

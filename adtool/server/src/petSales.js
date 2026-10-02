@@ -94,7 +94,21 @@ const daysInMonth = (month) => new Date(Date.UTC(Number(month.slice(0, 4)), Numb
  * 每月数据:1–12 月。实际销量、销售额来自同步的订单;目标、实际利润、广告花费是人工填写。
  * 早于数据起点的月份实际值为 null(不是 0),数据只覆盖一部分的月份标 partial。
  */
-export function monthlySummary({ year, actuals = new Map(), targets = new Map(), today, coveredFrom = null }) {
+/**
+ * 每月数据。profits 是按成本和亚马逊费用自动算的毛利(petCosts.yearGrossProfit):
+ * 实际利润额没手填时 = 毛利 − 广告花费;手填了以手填为准。
+ * 自动算的利润率 = 实际利润额 ÷ 算进毛利的那部分销售额(缺成本的 SKU 不在分母里)。
+ */
+function profitOf({ manual, auto, adSpend, sales, target }) {
+  const grossProfit = auto?.coveredSales ? auto.grossProfit : null;
+  const actualProfit = manual ?? (grossProfit != null ? round(grossProfit - (adSpend ?? 0)) : null);
+  const profitBase = manual != null ? sales : grossProfit != null ? auto.coveredSales : null;
+  return { actualProfit, profitSource: manual != null ? 'manual' : grossProfit != null ? 'auto' : null,
+    grossProfit, profitBase, coverage: grossProfit != null ? ratio(auto.coveredSales, sales) : null,
+    missingCostSkus: auto?.missingSkus ?? [], profitRate: ratio(actualProfit, target), margin: ratio(actualProfit, profitBase) };
+}
+
+export function monthlySummary({ year, actuals = new Map(), targets = new Map(), today, coveredFrom = null, profits = new Map() }) {
   const currentMonth = today.slice(0, 7);
   const months = Array.from({ length: 12 }, (_, index) => {
     const month = `${year}-${String(index + 1).padStart(2, '0')}`;
@@ -111,8 +125,8 @@ export function monthlySummary({ year, actuals = new Map(), targets = new Map(),
       targetUnits: pick('targetUnits'), units: actual?.units ?? null, unitsRate: ratio(actual?.units, pick('targetUnits')),
       targetSales: pick('targetSales'), sales, estimatedSales: actual ? round(actual.estimatedSales) : null,
       salesRate: ratio(sales, pick('targetSales')),
-      targetProfit: pick('targetProfit'), actualProfit: pick('actualProfit'), profitRate: ratio(pick('actualProfit'), pick('targetProfit')),
-      adSpend: pick('adSpend'), adRatio: ratio(pick('adSpend'), sales), margin: ratio(pick('actualProfit'), sales) };
+      targetProfit: pick('targetProfit'), adSpend: pick('adSpend'), adRatio: ratio(pick('adSpend'), sales),
+      ...profitOf({ manual: pick('actualProfit'), auto: actual ? profits.get(month) : null, adSpend: pick('adSpend'), sales, target: pick('targetProfit') }) };
   });
   const sum = (key) => {
     const values = months.map((row) => row[key]).filter((value) => value != null);
@@ -120,9 +134,10 @@ export function monthlySummary({ year, actuals = new Map(), targets = new Map(),
   };
   const total = { month: String(year), label: '全年', targetUnits: sum('targetUnits'), units: sum('units'),
     targetSales: sum('targetSales'), sales: sum('sales'), estimatedSales: sum('estimatedSales'),
-    targetProfit: sum('targetProfit'), actualProfit: sum('actualProfit'), adSpend: sum('adSpend') };
+    targetProfit: sum('targetProfit'), actualProfit: sum('actualProfit'), adSpend: sum('adSpend'),
+    grossProfit: sum('grossProfit'), profitBase: sum('profitBase') };
   Object.assign(total, { unitsRate: ratio(total.units, total.targetUnits), salesRate: ratio(total.sales, total.targetSales),
     profitRate: ratio(total.actualProfit, total.targetProfit), adRatio: ratio(total.adSpend, total.sales),
-    margin: ratio(total.actualProfit, total.sales) });
+    margin: ratio(total.actualProfit, total.profitBase), coverage: ratio(total.profitBase, total.sales) });
   return { months, total };
 }

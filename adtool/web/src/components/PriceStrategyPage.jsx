@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import * as XLSX from 'xlsx';
 import { api } from '../api.js';
+import SyncProgress from './SyncProgress.jsx';
 import './LibraryPage.css';
 import './PriceStrategyPage.css';
 
@@ -53,7 +54,7 @@ export default function PriceStrategyPage() {
   const running = data?.sync?.running;
   useEffect(() => {
     if (!running) return undefined;
-    const timer = setInterval(() => { void load(true); }, 10_000);
+    const timer = setInterval(() => { void load(true); }, 5_000);
     return () => clearInterval(timer);
   }, [running]);
 
@@ -86,7 +87,7 @@ export default function PriceStrategyPage() {
 
   async function syncNow() {
     setBusy(true); setError(''); setMessage('');
-    try { await api.syncPriceStrategy(); setMessage('已在后台开始同步亚马逊数据，完成后表格自动刷新。'); }
+    try { await api.syncPriceStrategy(); setMessage(''); }
     catch (err) { setError(err.message); }
     finally { await load(true); setBusy(false); }
   }
@@ -102,7 +103,8 @@ export default function PriceStrategyPage() {
       <div className="row wrap">
         <button className="btn" disabled={!rows.length} onClick={() => exportRows(data, rows)}>导出 Excel</button>
         <button className="btn primary" disabled={busy || !sync?.configured || running} onClick={syncNow}>{running ? '后台同步中…' : '立即同步'}</button></div></div>
-    {running && <p className="note" role="status">亚马逊同步正在后台运行，订单报告生成需要几分钟；第一次同步会回填今年以来的订单，时间更久。</p>}
+    {running && <div className="card price-sync-card"><SyncProgress progress={data.sync.progress} />
+      <p className="hint">订单报告每段 30 天，生成需要几分钟；第一次同步会回填今年以来的订单，时间更久。完成后表格自动刷新。</p></div>}
     {sync?.lastError && (!sync.lastSuccess || sync.lastError.at > sync.lastSuccess.completedAt) && <p className="note err" role="status">上次同步失败（{new Date(sync.lastError.at).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })}）：{sync.lastError.message}</p>}
     {message && <p className="note ok" role="status">{message}</p>}
     {error && <p className="note err" role="alert">{error}</p>}
