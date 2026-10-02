@@ -132,3 +132,38 @@ ABA 报告 → ASIN 视图顶部的「从亚马逊同步」读取品牌分析「
 - 每份报告最多 18 个 ASIN（接口限制 200 字符），ASIN 多时分批申请。
 - 亚马逊接口只提供按 ASIN 的数据，没有卖家后台的**品牌视图**，品牌视图继续上传 CSV。
 - 需要开发者应用勾选「品牌分析」角色，店铺需完成品牌备案；没有权限时页面会提示 403。
+
+## Claude 连接器（MCP，只读）
+
+网站提供一个 MCP 接口，加到 claude.ai 的自定义连接器后，在 Claude 网页版、桌面版、手机 App 里就能直接问“分析一下某款狗窝最近为什么掉单”，Claude 会自己调用下面的工具查数据。全部只读：不写数据库，也不改亚马逊上的任何东西。
+
+| 工具 | 内容 | 来源 |
+|---|---|---|
+| `store_overview` | 数据新鲜度、近 7 天/前 7 天销量销售额、本月目标完成、最近几周周销量、断货/库存不足/积压/有货不动销提醒 | 数据库 |
+| `list_skus` | 价格策略表同款：每个 SKU 的属性、售价、在库在途、近 7 天每日销量、动销、可售天数、预估售罄日 | 数据库 |
+| `get_sales_trend` | 按天/周/月的销量、订单、销售额，可按 SKU、ASIN、款式、尺码、颜色筛选 | 数据库 |
+| `get_search_terms` | ABA 搜索查询表现：搜索量、市场与本店曝光/点击/购买、份额、点击率、转化率 | 数据库 |
+| `get_listing` | 本店 Listing 实时内容：标题、五点、描述、后台搜索词、图片、报价、Listing 问题、全部属性 | SP-API Listings Items |
+| `get_catalog_items` | 任意 ASIN（含竞品）的标题、品牌、五点、BSR、变体、图片和属性，一次最多 10 个 | SP-API Catalog Items |
+| `get_product_images` | 下载某个 ASIN 的主图和副图给 Claude 看 | SP-API Catalog Items + 亚马逊图片 |
+
+广告数据要等亚马逊广告 API 开通后再加。
+
+### 开启
+
+1. 在 `.env`（或 `/etc/amazon-app/app.env`）加一行网站的 https 地址，只写到域名：
+
+   ```bash
+   MCP_PUBLIC_URL=https://你的域名
+   ```
+
+   同时确认 `TRUST_PROXY=true`（登录页按真实 IP 限流需要）。然后照常 `docker compose ... up -d --build`。日志里出现 `[mcp] Claude 连接器地址 https://你的域名/mcp` 就是开好了。不填这一项时连接器关闭，`/mcp` 返回 503。
+2. 反向代理要把 `/mcp`、`/authorize`、`/token`、`/register`、`/revoke` 和 `/.well-known/` 开头的路径转给网站（整站都转发的话不用改）。接口直接返回 JSON，不用开 SSE 或长连接。
+3. 打开 claude.ai → 设置 → 连接器 → 添加自定义连接器，名称随意，地址填 `https://你的域名/mcp`，其他留空。点连接后会跳到网站的授权页，用**超级管理员**账号登录并授权，跳回 Claude 即可使用。
+
+### 安全
+
+- 授权用网站自己的账号密码（OAuth 2.1 + PKCE），只有在用的超级管理员能授权；账号停用或改成非超级管理员后，已发的令牌立即失效。
+- 只接受 Claude 的回调地址（`https://claude.ai/api/mcp/auth_callback`）和本机回环地址（Claude Code、MCP Inspector 用），别人注册的客户端没法把授权码转到自己的网站。
+- 访问令牌 1 小时有效，刷新令牌 30 天、每用一次换新的；数据库只存令牌的 SHA-256 摘要。授权页同一 IP 15 分钟最多 30 次请求。
+- 每次授权记一条操作日志（`authorize` / `mcp_client`）。想让 Claude 断开，在 Claude 的连接器设置里删除即可；要立刻作废全部令牌，清空 `mcp_oauth_tokens` 表。

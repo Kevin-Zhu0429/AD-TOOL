@@ -392,3 +392,34 @@ CREATE TABLE IF NOT EXISTS pet_monthly_targets (
   updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
   updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
+
+-- ---------- Claude 连接器(MCP)授权 ----------
+-- 网站自己当 OAuth 授权服务器:Claude 先注册客户端,再跳到网站登录页由超级管理员授权,
+-- 换到的访问令牌只能只读调用 /mcp。令牌和授权码只存 SHA-256 摘要,数据库泄露也拿不到原值。
+CREATE TABLE IF NOT EXISTS mcp_oauth_clients (
+  client_id  TEXT PRIMARY KEY,
+  data_json  TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+CREATE TABLE IF NOT EXISTS mcp_oauth_codes (
+  code_hash      TEXT PRIMARY KEY,
+  client_id      TEXT NOT NULL,
+  user_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  redirect_uri   TEXT NOT NULL,
+  code_challenge TEXT NOT NULL,
+  scopes         TEXT NOT NULL,
+  resource       TEXT,
+  expires_at     INTEGER NOT NULL
+);
+-- kind: access = 调用 /mcp 用的短期令牌;refresh = 换新访问令牌用,每用一次换一个新的
+CREATE TABLE IF NOT EXISTS mcp_oauth_tokens (
+  token_hash TEXT PRIMARY KEY,
+  kind       TEXT NOT NULL CHECK (kind IN ('access', 'refresh')),
+  client_id  TEXT NOT NULL,
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  scopes     TEXT NOT NULL,
+  resource   TEXT,
+  expires_at INTEGER NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_mcp_tokens_expiry ON mcp_oauth_tokens (expires_at);

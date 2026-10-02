@@ -30,6 +30,7 @@ services:
       PET_SP_LWA_REFRESH_TOKEN: ${PET_SP_LWA_REFRESH_TOKEN:-}
       PET_SP_SELLER_ID: ${PET_SP_SELLER_ID:-}
       PET_SP_BRAND: ${PET_SP_BRAND:-}
+      MCP_PUBLIC_URL: ${MCP_PUBLIC_URL:-}
     volumes:
       - ./data-pet-prod:/data:Z
     logging:
