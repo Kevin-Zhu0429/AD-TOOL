@@ -34,6 +34,8 @@ services:
       PET_SP_LWA_REFRESH_TOKEN: ${PET_SP_LWA_REFRESH_TOKEN:-}
       PET_SP_SELLER_ID: ${PET_SP_SELLER_ID:-}
       PET_SP_BRAND: ${PET_SP_BRAND:-}
+      # 网站的 https 地址(如 https://example.com),填了才开启 Claude 连接器 <地址>/mcp
+      MCP_PUBLIC_URL: ${MCP_PUBLIC_URL:-}
       TRUST_PROXY: ${TRUST_PROXY:-false}
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
     volumes:

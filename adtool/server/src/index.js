@@ -18,6 +18,7 @@ import { captainRouter } from './captain.js';
 import { priceStrategyRouter } from './priceStrategy.js';
 import { startPriceSyncScheduler } from './priceStrategySync.js';
 import { startAbaSyncScheduler } from './petAbaSync.js';
+import { mountMcp } from './mcp.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -28,6 +29,8 @@ if (process.env.TRUST_PROXY === 'true') {
 const SqliteStore = SqliteStoreFactory(session);
 
 app.use(express.json({ limit: '50mb' }));
+// Claude 连接器(MCP)和它的 OAuth 授权页,不用网站登录 Cookie,放在 session 之前
+mountMcp(app);
 app.use(
   session({
     name: process.env.SESSION_COOKIE_NAME || (isPet ? 'adtool.pet.sid' : 'connect.sid'),
