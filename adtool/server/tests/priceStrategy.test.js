@@ -186,8 +186,18 @@ test('Amazon sync fills the SKU library and daily sales; the price board and sta
   const { saveCosts } = await import('../src/petCosts.js');
   assert.equal(saveCosts(1, [{ sku: 'DOG-L', duty: '0.5' }]).saved, 1);
   assert.deepEqual(Object.values(backend.db.prepare('SELECT fob, first_leg, duty FROM pet_sku_costs').get()), [12.5, 1.5, 0.5], '没带的成本字段不动');
+  // 库存变动:同步前 DOG-L 在库 0、DOG-XL 在库 5,亚马逊返回 25 和 0 → 一个补货、一个新断货
+  backend.db.prepare("UPDATE sku_items SET stock=0 WHERE sku='DOG-L'").run();
+  backend.db.prepare("UPDATE sku_items SET stock=5 WHERE sku='DOG-XL'").run();
   const auto = fakeAmazon({ failOn: 'FEES' });
-  assert.equal((await syncAmazonData(null, auto.gateway, ENV, now)).feeSkus, null);
+  const changed = await syncAmazonData(null, auto.gateway, ENV, now);
+  assert.equal(changed.feeSkus, null);
+  assert.deepEqual([changed.newOutOfStock, changed.restocked], [1, 1]);
+  const library2 = (await call('/sku', user)).data;
+  assert.deepEqual([library2.stockSync.outOfStock.map((e) => e.sku), library2.stockSync.restocked.map((e) => e.sku)], [['DOG-XL'], ['DOG-L']]);
+  assert.equal(library2.items.find((row) => row.sku === 'DOG-XL').stockEvent.kind, 'out');
+  assert.equal(library2.items.find((row) => row.sku === 'DOG-L').stockEvent.kind, 'restock');
+  assert.equal(library2.items.find((row) => row.sku === 'DOG-L').profit, 12.24, '库存标记和毛利同时挂上(关税已改成 0.5)');
   assert.equal([...auto.reports.values()].some((body) => body.reportType.includes('FEES')), false);
   const feeFail = await syncAmazonData(1, fakeAmazon({ failOn: 'FEES' }).gateway, ENV, now);
   assert.equal(feeFail.feeSkus, null);

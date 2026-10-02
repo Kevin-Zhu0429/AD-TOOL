@@ -7,6 +7,7 @@ import { MARKETPLACES } from './libs.js';
 import { SKU_COLS, dedupeKey, normRow } from './skuLib.js';
 import { saveCosts, withProfit } from './petCosts.js';
 import { priceSyncStatus } from './priceStrategySync.js';
+import { STOCK_EVENT_DAYS, attachStockEvents, latestSync } from './stockEvents.js';
 
 export const skuRouter = express.Router();
 
@@ -51,8 +52,11 @@ skuRouter.get('/', (req, res) => {
     marketplaces: MARKETPLACES,
     scope: all ? 'all' : 'mine',
     canViewAll: !isPet && me.role === 'owner',
+    stockEventDays: STOCK_EVENT_DAYS,
+    // 最近一次库存同步带来的新断货 / 补货;只看自己的库时才给
+    stockSync: all ? null : latestSync(businessUserId(me.id)),
     // 宠物版每行带上成本、FBA 费、佣金、售价和单件毛利
-    items: isPet ? withProfit(items) : items,
+    items: (isPet ? withProfit : (rows) => rows)(attachStockEvents(items, all ? items.map((item) => item.user_id) : [businessUserId(me.id)])),
     ...(isPet ? { fees: priceSyncStatus().fees } : {}),
   });
 });

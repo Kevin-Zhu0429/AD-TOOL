@@ -1,6 +1,7 @@
 import { db, audit } from './db.js';
 import { isPet, PET_SHOP_ID } from './profile.js';
 import { saveFees } from './petCosts.js';
+import { recordStockChanges, snapshotStock } from './stockEvents.js';
 import {
   amazonGateway, fetchCatalogAttributes, fetchFeePreview, fetchInventory, fetchListings, fetchOrderLines,
   pacificDay, pacificMidnight, petSpConfig, shiftDay,
@@ -157,7 +158,10 @@ export async function syncAmazonData(actorId = null, gateway = amazonGateway, en
     }).map((item) => item.asin);
     const attributes = await fetchCatalogAttributes(account, needAttributes, gateway);
     stage = '更新 SKU 库';
+    // 写库存前后对比在库,记下这次的新断货 / 补货
+    const before = snapshotStock(PET_SHOP_ID);
     const library = applySkuLibrary({ listings, inventory, attributes, brand: account.brand });
+    const stockSync = recordStockChanges(PET_SHOP_ID, before);
 
     const priceBySku = new Map(listings.filter((item) => item.price).map((item) => [item.sku.toLowerCase(), item.price]));
     const coverage = savedState('sales_coverage');
@@ -179,7 +183,8 @@ export async function syncAmazonData(actorId = null, gateway = amazonGateway, en
     }
     const fees = await syncFees(account, gateway, now, !!actorId);
     const result = { today, from, listings: listings.length, inventorySkus: inventory.length, orderLines,
-      skuAdded: library.added, skuUpdated: library.updated, feeSkus: fees };
+      skuAdded: library.added, skuUpdated: library.updated, feeSkus: fees,
+      newOutOfStock: stockSync?.outCount ?? 0, restocked: stockSync?.restockCount ?? 0 };
     db.transaction(() => {
       stateUpsert.run('last_success', JSON.stringify({ ...result, startedAt, completedAt: now().toISOString() }));
       db.prepare("DELETE FROM pet_price_sync_state WHERE key='last_error'").run();

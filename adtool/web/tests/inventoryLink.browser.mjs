@@ -52,6 +52,7 @@ function workbook() {
     { Product: 'Sponsored Products', Entity: 'Product Ad', 'Campaign ID': 'c1', 'Ad Group ID': 'g1', 'Ad ID': 'a1', SKU: 'zero-sku', ASIN: 'B000000001', State: 'enabled', Impressions: 300, Clicks: 18, Spend: 18, Orders: 0, Sales: 0 },
     { Product: 'Sponsored Products', Entity: 'Product Ad', 'Campaign ID': 'c1', 'Ad Group ID': 'g1', 'Ad ID': 'a2', SKU: 'GOOD-SKU', ASIN: 'B000000002', State: 'enabled', Impressions: 200, Clicks: 8, Spend: 6, Orders: 2, Sales: 40 },
     { Product: 'Sponsored Products', Entity: 'Product Ad', 'Campaign ID': 'c1', 'Ad Group ID': 'g1', 'Ad ID': 'a3', SKU: 'UNKNOWN-SKU', ASIN: 'B000000003', State: 'enabled', Impressions: 50, Clicks: 1, Spend: 1, Orders: 0, Sales: 0 },
+    { Product: 'Sponsored Products', Entity: 'Product Ad', 'Campaign ID': 'c1', 'Ad Group ID': 'g1', 'Ad ID': 'a4', SKU: 'BACK-SKU', ASIN: 'B000000004', State: 'paused', Impressions: 0, Clicks: 0, Spend: 0, Orders: 0, Sales: 0 },
   ];
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Sponsored Products Campaigns');
   return {
@@ -100,6 +101,49 @@ try {
   ]));
   assert.equal(await page.locator('.inventory-alert').count(), 0);
   assert.equal(await page.locator('tr.stock-zero').count(), 0);
+
+  // 库存同步:ZERO-SKU 新断货但广告还在投,BACK-SKU 补货但广告还停着
+  await page.evaluate(() => {
+    document.documentElement.dataset.theme = 'light';
+    document.querySelector('#host').dataset.theme = 'light';
+  });
+  await page.evaluate(() => window.updateInventory([
+    { sku: 'ZERO-SKU', stock: 0, transit: 0, stockEvent: { kind: 'out', at: '2026-09-28 09:30:00', prevStock: 40 } },
+    { sku: 'GOOD-SKU', stock: 24, transit: 0 },
+    { sku: 'UNKNOWN-SKU', stock: null, transit: null },
+    { sku: 'BACK-SKU', stock: 15, transit: 0, stockEvent: { kind: 'restock', at: '2026-09-28 09:30:00', prevStock: 0 } },
+  ]));
+  // 按活动优化的 SKU 页签:在投的新断货 SKU 建议关闭,暂停的补货 SKU 建议开启
+  await page.locator('[data-view="work"]').click();
+  await page.locator('#raillist .crow').first().click();
+  await page.locator('[data-tab="sku"]').click();
+  assert.equal(await page.locator('.flagchip', { hasText: '新断货 · 建议关闭' }).count(), 1);
+  assert.equal(await page.locator('.flagchip', { hasText: '已补货 · 可重新开启' }).count(), 1);
+  await page.locator('[data-view="analysis"]').click();
+
+  await page.locator('[data-anmark=""]').click();
+  const alert = page.locator('.inventory-alert');
+  assert.match(await alert.innerText(), /其中 1 个 SKU 是最近一次库存同步新断货[\s\S]*还有 1 条商品广告在投/);
+  assert.match(await zeroRow.locator('.inventory-cell').innerText(), /新断货[\s\S]*1 条广告在投/);
+  const restock = page.locator('.stock-act.restock');
+  assert.match(await restock.innerText(), /已补货 1 个 SKU[\s\S]*有 1 条商品广告还处于暂停/);
+  const backRow = page.locator('tr[data-anexp="BACK-SKU"]');
+  assert.equal(await backRow.evaluate((row) => row.classList.contains('stock-restock')), true);
+  assert.match(await backRow.locator('.inventory-cell').innerText(), /已补货[\s\S]*1 条广告暂停中/);
+  await page.locator('[data-anmark="newout"]').click();
+  assert.equal(await page.locator('.antbl tbody > tr.anrow').count(), 1);
+  await page.locator('[data-anmark="restock"]').click();
+  assert.equal(await page.locator('.antbl tbody > tr.anrow').count(), 1);
+  await page.locator('[data-anmark=""]').click();
+  await page.screenshot({ path: output + 'inventory-stock-change.png' });
+
+  await page.locator('[data-stockact="pause"]').click();
+  assert.match(await alert.innerText(), /这些 SKU 的广告已经都关了/);
+  assert.equal(await page.locator('[data-stockact="pause"]').count(), 0);
+  await page.locator('[data-stockact="enable"]').click();
+  assert.match(await restock.innerText(), /这些 SKU 的广告都已在投放/);
+  assert.match(await page.locator('#chgCount').innerText(), /2 处改动/);
+
   assert.deepEqual(errors, []);
   console.log('Inventory-linked SKU matrix browser workflow passed');
 } finally {
