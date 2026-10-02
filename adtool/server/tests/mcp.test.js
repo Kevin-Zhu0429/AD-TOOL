@@ -79,6 +79,9 @@ function seed(db) {
   sale.run('2026-09-21', 'CAT-S', 'B000000003', 2, 2, 40);
   sale.run('2026-09-10', 'DOG-XL', 'B000000002', 1, 1, 49.99);
   db.prepare("INSERT INTO pet_listing_cache (sku, asin, price, status) VALUES ('DOG-L', 'B000000001', 39.99, 'Active')").run();
+  db.prepare("INSERT INTO pet_listing_cache (sku, asin, price, status) VALUES ('DOG-XL', 'B000000002', 19.99, 'Active')").run();
+  db.prepare("INSERT INTO pet_sku_costs (sku, fob, first_leg, duty) VALUES ('DOG-L', 12, 1.5, 0.5), ('DOG-XL', 14, 2, 1)").run();
+  db.prepare("INSERT INTO pet_sku_fees (sku, fba_fee, referral_fee, referral_rate) VALUES ('DOG-L', 7.25, 6, 0.15), ('DOG-XL', 8, 3, 0.15)").run();
   const report = db.prepare(`INSERT INTO aba_asin_reports (user_id, marketplace, asin, week_start, week_end, week_number, source_file, content_hash)
     VALUES (-1, 'US', ?, '2026-09-13', '2026-09-19', 38, 'Amazon SP-API', ?)`);
   const query = db.prepare(`INSERT INTO aba_asin_queries (report_id, query, query_volume, market_impressions, market_clicks, market_purchases,
@@ -189,12 +192,17 @@ test('Claude connector: OAuth login, read-only tools and token lifecycle', async
     assert.deepEqual(overview.alerts.soldOutWithDemand.map((row) => row.sku), ['CAT-S']);
     assert.deepEqual(overview.alerts.under21DaysOfStock.map((row) => row.sku), ['DOG-L']);
     assert.deepEqual(overview.alerts.stockButNoSales7d.map((row) => row.sku), ['DOG-XL']);
+    // DOG-XL:19.99 − 17 − 8 − 3.00 = −8.01,每卖一件亏钱;CAT-S 近 7 天有销量但没有成本
+    assert.deepEqual(overview.alerts.losingMoneyPerUnit.map((row) => [row.sku, row.profit]), [['DOG-XL', -8.01]]);
+    assert.deepEqual(overview.alerts.missingCost, ['CAT-S']);
 
     const list = await call('list_skus', { style: '圆窝' });
     assert.deepEqual(list.rows.map((row) => row.sku), ['DOG-L', 'DOG-XL']);
     assert.equal(list.rows[0].price, 39.99);
     assert.equal(list.rows[0].sales7d, 7);
     assert.equal(list.rows[0].stockDays, 6);
+    assert.deepEqual([list.rows[0].landedCost, list.rows[0].fbaFee, list.rows[0].profit, list.rows[0].margin], [14, 7.25, 12.74, 31.86]);
+    assert.deepEqual((await call('list_skus', { sortBy: 'profit' })).rows.map((row) => row.sku), ['DOG-XL', 'DOG-L', 'CAT-S']);
 
     const trend = await call('get_sales_trend', { asin: 'B000000001', from: '2026-09-01', groupBy: 'week' });
     // 9/20 是周日,算 9/14 那周;9/21 是周一,新的一周

@@ -1,7 +1,9 @@
 import { db, audit } from './db.js';
 import { isPet, PET_SHOP_ID } from './profile.js';
+import { saveFees } from './petCosts.js';
+import { recordStockChanges, snapshotStock } from './stockEvents.js';
 import {
-  amazonGateway, fetchCatalogAttributes, fetchInventory, fetchListings, fetchOrderLines,
+  amazonGateway, fetchCatalogAttributes, fetchFeePreview, fetchInventory, fetchListings, fetchOrderLines,
   pacificDay, pacificMidnight, petSpConfig, shiftDay,
 } from './petAmazon.js';
 
@@ -11,6 +13,8 @@ const REPORT_LAG_MS = 5 * 60_000;
 const WINDOW_DAYS = 30;
 // 每次同步重拉最近几天:待付款转发货、取消都会改动最近的订单
 const REFRESH_DAYS = 9;
+// FBA 费用很少变,自动同步每天拉一次;手动点同步时总是重拉
+const FEE_EVERY_MS = 20 * 60 * 60_000;
 const savedState = (key) => {
   const value = db.prepare('SELECT value FROM pet_price_sync_state WHERE key=?').get(key)?.value;
   return value ? JSON.parse(value) : null;
@@ -106,8 +110,30 @@ export function applySkuLibrary({ listings, inventory, attributes = new Map(), b
   return { added, updated };
 }
 
+/**
+ * 读 Fee Preview 报告更新 FBA 配送费和佣金。失败不影响库存和销量同步,只记下错误,下次再试。
+ * 返回更新了几个 SKU;这次不需要拉返回 null。
+ */
+async function syncFees(account, gateway, now, force) {
+  const last = savedState('fees_attempt');
+  if (!force && last?.at && now().getTime() - Date.parse(last.at) < FEE_EVERY_MS) return null;
+  stateUpsert.run('fees_attempt', JSON.stringify({ at: now().toISOString() }));
+  try {
+    const count = saveFees(await fetchFeePreview(account, now(), gateway));
+    db.transaction(() => {
+      stateUpsert.run('fees_success', JSON.stringify({ at: now().toISOString(), skus: count }));
+      db.prepare("DELETE FROM pet_price_sync_state WHERE key='fees_error'").run();
+    })();
+    return count;
+  } catch (error) {
+    stateUpsert.run('fees_error', JSON.stringify({ at: now().toISOString(), message: `读取 FBA 费用：${String(error.message)}`.slice(0, 300) }));
+    console.error('[fee-sync]', error.message);
+    return null;
+  }
+}
+
 let running = false;
-/** 同步一次:Listing → FBA 库存 → 尺码颜色 → SKU 库 → 订单(按 30 天一段写入每日销量) */
+/** 同步一次:Listing → FBA 库存 → 尺码颜色 → SKU 库 → 订单(按 30 天一段写入每日销量)→ FBA 费用 */
 export async function syncAmazonData(actorId = null, gateway = amazonGateway, env = process.env, now = () => new Date()) {
   if (!isPet) throw new Error('只支持宠物版');
   if (running) throw Object.assign(new Error('亚马逊数据正在同步'), { status: 409 });
@@ -132,7 +158,10 @@ export async function syncAmazonData(actorId = null, gateway = amazonGateway, en
     }).map((item) => item.asin);
     const attributes = await fetchCatalogAttributes(account, needAttributes, gateway);
     stage = '更新 SKU 库';
+    // 写库存前后对比在库,记下这次的新断货 / 补货
+    const before = snapshotStock(PET_SHOP_ID);
     const library = applySkuLibrary({ listings, inventory, attributes, brand: account.brand });
+    const stockSync = recordStockChanges(PET_SHOP_ID, before);
 
     const priceBySku = new Map(listings.filter((item) => item.price).map((item) => [item.sku.toLowerCase(), item.price]));
     const coverage = savedState('sales_coverage');
@@ -152,8 +181,10 @@ export async function syncAmazonData(actorId = null, gateway = amazonGateway, en
       stateUpsert.run('sales_coverage', JSON.stringify(covered));
       day = next;
     }
+    const fees = await syncFees(account, gateway, now, !!actorId);
     const result = { today, from, listings: listings.length, inventorySkus: inventory.length, orderLines,
-      skuAdded: library.added, skuUpdated: library.updated };
+      skuAdded: library.added, skuUpdated: library.updated, feeSkus: fees,
+      newOutOfStock: stockSync?.outCount ?? 0, restocked: stockSync?.restockCount ?? 0 };
     db.transaction(() => {
       stateUpsert.run('last_success', JSON.stringify({ ...result, startedAt, completedAt: now().toISOString() }));
       db.prepare("DELETE FROM pet_price_sync_state WHERE key='last_error'").run();
@@ -173,7 +204,8 @@ export function priceSyncStatus(env = process.env) {
   return { source: 'amazon', configured: !!account, issues, running, today: pacificDay(new Date()),
     coverage: states.sales_coverage ?? null,
     lastSuccess: states.last_success?.completedAt ? states.last_success : null,
-    lastAttempt: states.last_attempt ?? null, lastError: states.last_error ?? null };
+    lastAttempt: states.last_attempt ?? null, lastError: states.last_error ?? null,
+    fees: { lastSuccess: states.fees_success ?? null, lastError: states.fees_error ?? null } };
 }
 
 const SYNC_EVERY_MS = 3 * 60 * 60_000;

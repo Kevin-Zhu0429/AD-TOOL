@@ -8,6 +8,7 @@ import { amazonGateway, pacificDay, petSpConfig, shiftDay, US_MARKETPLACE } from
 import { buildPriceBoard, monthlySummary, recentDays, weeklySummary } from './petSales.js';
 import { priceSyncStatus } from './priceStrategySync.js';
 import { abaSyncStatus } from './petAbaSync.js';
+import { withProfit } from './petCosts.js';
 
 // 测试可以用 PET_TODAY 固定「今天」;正式环境始终是美国太平洋时间的今天
 const todayOf = () => (process.env.NODE_ENV === 'test' && process.env.PET_TODAY) || pacificDay(new Date());
@@ -33,7 +34,7 @@ function priceBoard(today = todayOf()) {
   const listings = db.prepare('SELECT sku,asin,price,status FROM pet_listing_cache').all();
   const board = buildPriceBoard({ skus, sales, listings, today });
   const extra = new Map(skus.map((item) => [lower(item.sku), item]));
-  board.rows = board.rows.map((row) => ({ ...row, brand: extra.get(lower(row.sku))?.brand ?? null, fabric: extra.get(lower(row.sku))?.fabric ?? null }));
+  board.rows = withProfit(board.rows.map((row) => ({ ...row, brand: extra.get(lower(row.sku))?.brand ?? null, fabric: extra.get(lower(row.sku))?.fabric ?? null })));
   return board;
 }
 
@@ -92,26 +93,32 @@ export function storeOverview({ weeks = 8 } = {}) {
       under21DaysOfStock: selling.filter((row) => row.stockDays != null && row.stockDays < 21 && !row.soldOut).sort((a, b) => a.stockDays - b.stockDays).map(brief),
       over180DaysOfStock: selling.filter((row) => row.stockDays >= 180).sort((a, b) => b.stockDays - a.stockDays).map(brief),
       stockButNoSales7d: board.rows.filter((row) => row.stock > 0 && row.sales7d === 0).map(brief),
+      losingMoneyPerUnit: board.rows.filter((row) => row.profit != null && row.profit < 0)
+        .map((row) => ({ ...brief(row), price: row.price, profit: row.profit, breakEven: row.breakEven })),
+      missingCost: board.rows.filter((row) => row.landedCost == null && (row.stock > 0 || row.sales7d > 0)).map((row) => row.sku),
     },
     notes: ['销量来自亚马逊订单报告,按太平洋时间切日;待付款订单金额按 Listing 售价估算。',
-      '广告数据(花费、点击、ACOS)要等亚马逊广告 API 开通,目前没有。月度利润和广告花费是人工填写的。'],
+      '广告数据(花费、点击、ACOS)要等亚马逊广告 API 开通,目前没有。月度利润和广告花费是人工填写的。',
+      '单件毛利 = 售价 − 落地成本(FOB+头程+关税,人工维护) − FBA 配送费 − 佣金(来自亚马逊 Fee Preview 报告),未扣广告费和仓储费。'],
   };
 }
 
 // ---------- SKU 列表 ----------
 
-const SORTS = ['sales7d', 'monthUnits', 'stock', 'stockDays', 'speed7d', 'price', 'sku'];
+const SORTS = ['sales7d', 'monthUnits', 'stock', 'stockDays', 'speed7d', 'price', 'profit', 'margin', 'sku'];
 export function listSkus({ query, style, size, color, sortBy = 'sales7d', limit = 200 } = {}) {
   const board = priceBoard();
   const rows = matchRows(board.rows, { query, style, size, color });
   const key = SORTS.includes(sortBy) ? sortBy : 'sales7d';
   rows.sort((a, b) => key === 'sku' ? a.sku.localeCompare(b.sku)
-    : (a[key] == null) - (b[key] == null) || (key === 'stockDays' ? a[key] - b[key] : b[key] - a[key]) || a.sku.localeCompare(b.sku));
+    : (a[key] == null) - (b[key] == null) || (['stockDays', 'profit', 'margin'].includes(key) ? a[key] - b[key] : b[key] - a[key]) || a.sku.localeCompare(b.sku));
   return { today: board.today, last7Days: board.days, total: rows.length, sortBy: key,
     rows: rows.slice(0, limit).map((row) => ({ sku: row.sku, asin: row.asin, style: row.style, size: row.size, color: row.color, fabric: row.fabric,
       price: row.price, listingStatus: row.listingStatus, stock: row.stock, transit: row.transit, dailyLast7: row.daily, today: row.today,
       sales7d: row.sales7d, movement3d: row.movement3d, speed7d: row.speed7d, monthUnits: row.monthUnits,
-      stockDays: row.stockDays, stockTransitDays: row.stockTransitDays, selloutDate: row.selloutDate, soldOut: row.soldOut })) };
+      stockDays: row.stockDays, stockTransitDays: row.stockTransitDays, selloutDate: row.selloutDate, soldOut: row.soldOut,
+      fob: row.fob, firstLeg: row.firstLeg, duty: row.duty, landedCost: row.landedCost, fbaFee: row.fbaFee, referralFee: row.referralFee,
+      profit: row.profit, margin: row.margin, breakEven: row.breakEven, profitMissing: row.missing })) };
 }
 
 // ---------- 销量趋势 ----------
@@ -371,11 +378,11 @@ export function createPetMcpServer(deps = {}) {
 
   server.registerTool('list_skus', {
     title: 'SKU 列表与实时指标',
-    description: '价格策略表同款:每个 SKU 的 ASIN、款式、尺码、颜色、面料、售价、在库、在途、近 7 天每日销量、近 3 日动销、7 天动销速度、本月销量、可售天数、预估售罄日。可按关键字和属性筛选、排序。',
+    description: '价格策略表同款:每个 SKU 的 ASIN、款式、尺码、颜色、面料、售价、在库、在途、近 7 天每日销量、近 3 日动销、7 天动销速度、本月销量、可售天数、预估售罄日;以及成本(FOB、头程、关税、落地成本)、FBA 配送费、佣金、单件毛利(美元)、毛利率(%)、保本价。毛利未扣广告费和仓储费,缺数据时 profitMissing 列出缺哪项。可按关键字和属性筛选、排序。',
     inputSchema: {
       query: optionalText('模糊匹配 SKU、ASIN、款式、尺码、颜色、面料'),
       style: optionalText('款式(精确匹配)'), size: optionalText('尺码(精确匹配)'), color: optionalText('颜色(精确匹配)'),
-      sortBy: z.enum(SORTS).default('sales7d').describe('排序字段;stockDays 从少到多,其余从多到少'),
+      sortBy: z.enum(SORTS).default('sales7d').describe('排序字段;stockDays、profit、margin 从少到多(先看亏损的),其余从多到少'),
       limit: z.number().int().min(1).max(500).default(200),
     },
     annotations: local,

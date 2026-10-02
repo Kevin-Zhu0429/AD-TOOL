@@ -5,6 +5,9 @@ import { db, audit } from './db.js';
 import { requireLogin } from './auth.js';
 import { MARKETPLACES } from './libs.js';
 import { SKU_COLS, dedupeKey, normRow } from './skuLib.js';
+import { saveCosts, withProfit } from './petCosts.js';
+import { priceSyncStatus } from './priceStrategySync.js';
+import { STOCK_EVENT_DAYS, attachStockEvents, latestSync } from './stockEvents.js';
 
 export const skuRouter = express.Router();
 
@@ -43,13 +46,32 @@ skuRouter.get('/', (req, res) => {
   const sql = `${SELECT}${where.length ? ` WHERE ${where.join(' AND ')}` : ''}
                ORDER BY s.country, s.brand, s.model, s.sku`;
 
+  const items = db.prepare(sql).all(...args);
   res.json({
     cols: SKU_COLS,
     marketplaces: MARKETPLACES,
     scope: all ? 'all' : 'mine',
     canViewAll: !isPet && me.role === 'owner',
-    items: db.prepare(sql).all(...args),
+    stockEventDays: STOCK_EVENT_DAYS,
+    // 最近一次库存同步带来的新断货 / 补货;只看自己的库时才给
+    stockSync: all ? null : latestSync(businessUserId(me.id)),
+    // 宠物版每行带上成本、FBA 费、佣金、售价和单件毛利
+    items: (isPet ? withProfit : (rows) => rows)(attachStockEvents(items, all ? items.map((item) => item.user_id) : [businessUserId(me.id)])),
+    ...(isPet ? { fees: priceSyncStatus().fees } : {}),
   });
+});
+
+/**
+ * 宠物版写成本:{ rows: [{ sku, fob, firstLeg, duty }] }。
+ * 导入成本表和在 SKU 库里改一行都走这里;没带的字段不动,空值清空。
+ */
+skuRouter.post('/costs', (req, res) => {
+  if (!isPet) return res.status(404).json({ error: '只有宠物版有成本表' });
+  const rows = Array.isArray(req.body?.rows) ? req.body.rows : null;
+  if (!rows?.length) return res.status(400).json({ error: '没有要写入的成本' });
+  if (rows.length > 5000) return res.status(400).json({ error: '一次最多 5000 行' });
+  const result = saveCosts(req.session.user.id, rows);
+  res.status(result.errorCount ? 400 : 200).json(result.errorCount ? { ...result, error: result.errors[0] } : result);
 });
 
 /**

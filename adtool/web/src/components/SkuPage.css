@@ -21,3 +21,42 @@
 .sku-zero-row td:first-child { box-shadow: inset 3px 0 0 var(--red); }
 .sku-zero-row:hover td { background: var(--red-soft); }
 .sku-zero-tag { margin-left: 6px; }
+
+/* 宠物版:SKU 库带成本和毛利,列多,页面铺满宽度 */
+.lib.pet-sku { max-width: none; }
+.pet-sku .lib-body { grid-template-columns: 280px minmax(0, 1fr); }
+.sku-view-bar { justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+.sku-view-tabs { margin: 0; padding-bottom: 0; border-bottom: none; }
+.sku-profit-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.sku-profit-note { margin: -2px 0 10px; }
+.sku-fee-error { color: var(--red-text); }
+.tbl th.num, .tbl td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.tbl td.strong { font-weight: 650; }
+.sku-group-row th.sku-group { text-align: center; color: var(--text-dim); font-weight: 650; border-bottom: 1px solid var(--border); }
+.sku-profit-table td, .sku-profit-table th { white-space: nowrap; }
+.sku-profit-table .cellinp { min-width: 56px; width: 62px; }
+.tbl td.sku-loss { color: var(--red-text); }
+.tbl td.sku-thin { color: var(--amber-text); }
+.tbl td.sku-ok { color: var(--green-text); }
+
+.sku-restock-row td:first-child { box-shadow: inset 3px 0 0 var(--green); }
+
+/* 库存同步后的变动:本次新断货 / 补货 */
+.sku-change { display: flex; flex-direction: column; gap: 10px; margin-bottom: 11px; padding: 11px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-2); }
+.sku-change-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.sku-change-head > div:first-child { display: flex; align-items: baseline; gap: 4px 10px; flex-wrap: wrap; min-width: 0; }
+.sku-change-head span { color: var(--text-dim); font-size: 12px; }
+.sku-change-body { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; }
+.sku-change-col { display: flex; flex-direction: column; gap: 6px; min-width: 0; padding: 9px 10px; border-radius: 6px; border-left: 3px solid; }
+.sku-change-col.out { background: var(--red-soft); border-color: var(--red); }
+.sku-change-col.out b { color: var(--red-text); }
+.sku-change-col.restock { background: var(--green-soft); border-color: var(--green); }
+.sku-change-col.restock b { color: var(--green-text); }
+.sku-change-col-head { display: flex; align-items: baseline; gap: 4px 10px; flex-wrap: wrap; }
+.sku-change-col-head span { color: var(--text-dim); font-size: 12px; }
+.sku-change-col ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.sku-change-col li { display: flex; flex-direction: column; min-width: 0; font-size: 12px; }
+.sku-change-col li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sku-change-col li small { color: var(--text-dim); }
+.sku-change-col .btn { align-self: flex-start; }
+.sku-change .hint { margin: 0; }
