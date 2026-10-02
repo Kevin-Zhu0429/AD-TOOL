@@ -114,12 +114,15 @@ export function applySkuLibrary({ listings, inventory, attributes = new Map(), b
  * 读 Fee Preview 报告更新 FBA 配送费和佣金。失败不影响库存和销量同步,只记下错误,下次再试。
  * 返回更新了几个 SKU;这次不需要拉返回 null。
  */
-async function syncFees(account, gateway, now, force) {
+const feesDue = (now, force) => {
   const last = savedState('fees_attempt');
-  if (!force && last?.at && now().getTime() - Date.parse(last.at) < FEE_EVERY_MS) return null;
+  return force || !last?.at || now().getTime() - Date.parse(last.at) >= FEE_EVERY_MS;
+};
+
+async function syncFees(account, gateway, now, onProgress) {
   stateUpsert.run('fees_attempt', JSON.stringify({ at: now().toISOString() }));
   try {
-    const count = saveFees(await fetchFeePreview(account, now(), gateway));
+    const count = saveFees(await fetchFeePreview(account, now(), gateway, onProgress));
     db.transaction(() => {
       stateUpsert.run('fees_success', JSON.stringify({ at: now().toISOString(), skus: count }));
       db.prepare("DELETE FROM pet_price_sync_state WHERE key='fees_error'").run();
@@ -133,6 +136,11 @@ async function syncFees(account, gateway, now, force) {
 }
 
 let running = false;
+/**
+ * 后台同步进度,前端轮询 /status 拿去画进度条:
+ * total / done 是总步数和已完成步数,step 是当前步骤,stage / retryAt 是报告步骤里正在等什么(同 ABA)。
+ */
+let progress = null;
 /** 同步一次:Listing → FBA 库存 → 尺码颜色 → SKU 库 → 订单(按 30 天一段写入每日销量)→ FBA 费用 */
 export async function syncAmazonData(actorId = null, gateway = amazonGateway, env = process.env, now = () => new Date()) {
   if (!isPet) throw new Error('只支持宠物版');
@@ -144,12 +152,25 @@ export async function syncAmazonData(actorId = null, gateway = amazonGateway, en
   const today = pacificDay(now());
   stateUpsert.run('last_attempt', JSON.stringify({ today, startedAt }));
   let stage = '读取 Listing';
+  const from = orderSyncStart(today, savedState('sales_coverage'));
+  let segments = 0;
+  for (let day = from; day <= today; day = [shiftDay(day, WINDOW_DAYS), shiftDay(today, 1)].sort()[0]) segments += 1;
+  const withFees = feesDue(now, !!actorId);
+  progress = { total: 4 + segments + (withFees ? 1 : 0), done: 0, step: stage, stage: 'starting', retryAt: null };
+  // 进入下一步:上一步算完成
+  const advance = (name, report = false) => {
+    stage = name;
+    if (progress.step !== name) progress.done += 1;
+    Object.assign(progress, { step: name, stage: report ? 'creating' : 'working', retryAt: null });
+  };
+  const onReport = ({ stage: reportStage, retryAt = null }) => Object.assign(progress, { stage: reportStage, retryAt });
   try {
-    const listings = await fetchListings(account, gateway);
+    progress.stage = 'creating';
+    const listings = await fetchListings(account, gateway, onReport);
     saveListings(listings);
-    stage = '读取 FBA 库存';
+    advance('读取 FBA 库存');
     const inventory = await fetchInventory(account, gateway);
-    stage = '读取商品尺码颜色';
+    advance('读取商品尺码颜色');
     const known = new Map(db.prepare("SELECT lower(sku) AS sku, size, color FROM sku_items WHERE user_id=? AND country='US'").all(PET_SHOP_ID)
       .map((row) => [row.sku, row]));
     const needAttributes = [...listings, ...inventory].filter((item) => {
@@ -157,7 +178,7 @@ export async function syncAmazonData(actorId = null, gateway = amazonGateway, en
       return item.asin && (!current || !current.size || !current.color);
     }).map((item) => item.asin);
     const attributes = await fetchCatalogAttributes(account, needAttributes, gateway);
-    stage = '更新 SKU 库';
+    advance('更新 SKU 库');
     // 写库存前后对比在库,记下这次的新断货 / 补货
     const before = snapshotStock(PET_SHOP_ID);
     const library = applySkuLibrary({ listings, inventory, attributes, brand: account.brand });
@@ -165,14 +186,15 @@ export async function syncAmazonData(actorId = null, gateway = amazonGateway, en
 
     const priceBySku = new Map(listings.filter((item) => item.price).map((item) => [item.sku.toLowerCase(), item.price]));
     const coverage = savedState('sales_coverage');
-    const from = orderSyncStart(today, coverage);
     let orderLines = 0;
+    let segment = 0;
     for (let day = from; day <= today;) {
       const next = [shiftDay(day, WINDOW_DAYS), shiftDay(today, 1)].sort()[0];
-      stage = `读取订单报告（${day} 起）`;
+      segment += 1;
+      advance(`读取订单报告 ${segment}/${segments}（${day} 起）`, true);
       const end = new Date(Math.min(pacificMidnight(next).getTime(), now().getTime() - REPORT_LAG_MS));
       // 只留落在这一段日期里的行,和相邻一段的整天替换互不干扰
-      const lines = (await fetchOrderLines(account, pacificMidnight(day), end, gateway))
+      const lines = (await fetchOrderLines(account, pacificMidnight(day), end, gateway, onReport))
         .filter((line) => line.day >= day && line.day < next);
       replaceDailySales(day, next, aggregateDailySales(lines, priceBySku));
       orderLines += lines.length;
@@ -181,7 +203,11 @@ export async function syncAmazonData(actorId = null, gateway = amazonGateway, en
       stateUpsert.run('sales_coverage', JSON.stringify(covered));
       day = next;
     }
-    const fees = await syncFees(account, gateway, now, !!actorId);
+    let fees = null;
+    if (withFees) {
+      advance('读取 FBA 费用', true);
+      fees = await syncFees(account, gateway, now, onReport);
+    }
     const result = { today, from, listings: listings.length, inventorySkus: inventory.length, orderLines,
       skuAdded: library.added, skuUpdated: library.updated, feeSkus: fees,
       newOutOfStock: stockSync?.outCount ?? 0, restocked: stockSync?.restockCount ?? 0 };
@@ -195,13 +221,13 @@ export async function syncAmazonData(actorId = null, gateway = amazonGateway, en
     const message = `${stage}：${String(error.message)}`.slice(0, 300);
     stateUpsert.run('last_error', JSON.stringify({ today, at: now().toISOString(), stage, message }));
     throw Object.assign(new Error(message), { status: error.status });
-  } finally { running = false; }
+  } finally { running = false; progress = null; }
 }
 
 export function priceSyncStatus(env = process.env) {
   const states = Object.fromEntries(db.prepare('SELECT key,value FROM pet_price_sync_state').all().map(({ key, value }) => [key, JSON.parse(value)]));
   const { account, issues } = petSpConfig(env);
-  return { source: 'amazon', configured: !!account, issues, running, today: pacificDay(new Date()),
+  return { source: 'amazon', configured: !!account, issues, running, progress, today: pacificDay(new Date()),
     coverage: states.sales_coverage ?? null,
     lastSuccess: states.last_success?.completedAt ? states.last_success : null,
     lastAttempt: states.last_attempt ?? null, lastError: states.last_error ?? null,

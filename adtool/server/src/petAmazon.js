@@ -157,8 +157,8 @@ export async function runReport(account, reportType, { start, end, options, pars
 // ---------- 数据 ----------
 
 /** 店铺全部 Listing:SKU、ASIN、标题、价格、状态 */
-export async function fetchListings(account, gateway = amazonGateway) {
-  const rows = await runReport(account, 'GET_MERCHANT_LISTINGS_ALL_DATA', {}, gateway);
+export async function fetchListings(account, gateway = amazonGateway, onProgress = () => {}) {
+  const rows = await runReport(account, 'GET_MERCHANT_LISTINGS_ALL_DATA', { onProgress }, gateway);
   const listings = new Map();
   for (const row of rows) {
     const sku = clean(row['seller-sku']);
@@ -203,11 +203,11 @@ export async function fetchInventory(account, gateway = amazonGateway) {
  * 订单明细行(按下单时间)。超过 30 天的区间拆成几份报告。
  * 取消的订单行不算;待付款(Pending)和卖家后台「已订购商品数量」一样计入。
  */
-export async function fetchOrderLines(account, start, end, gateway = amazonGateway) {
+export async function fetchOrderLines(account, start, end, gateway = amazonGateway, onProgress = () => {}) {
   const lines = [];
   for (let from = start; from < end;) {
     const to = new Date(Math.min(end.getTime(), from.getTime() + REPORT_WINDOW_DAYS * DAY_MS));
-    const rows = await runReport(account, 'GET_FLAT_FILE_ALL_ORDERS_DATA_BY_ORDER_DATE_GENERAL', { start: from, end: to }, gateway);
+    const rows = await runReport(account, 'GET_FLAT_FILE_ALL_ORDERS_DATA_BY_ORDER_DATE_GENERAL', { start: from, end: to, onProgress }, gateway);
     for (const row of rows) {
       const sku = clean(row.sku);
       const orderId = clean(row['amazon-order-id']);
@@ -258,10 +258,10 @@ const moneyOf = (value) => {
  * Fee Preview 报告:每个在售 FBA SKU 的预估配送费和佣金。亚马逊至少每 72 小时更新一次,
  * 申请时开始时间要早于现在 72 小时以上、结束时间比开始晚 72 小时以上,所以取最近 4 天。
  */
-export async function fetchFeePreview(account, now = new Date(), gateway = amazonGateway) {
+export async function fetchFeePreview(account, now = new Date(), gateway = amazonGateway, onProgress = () => {}) {
   const end = new Date(now.getTime() - 5 * 60_000);
   const rows = await runReport(account, 'GET_FBA_ESTIMATED_FBA_FEES_TXT_DATA',
-    { start: new Date(end.getTime() - 4 * DAY_MS), end }, gateway);
+    { start: new Date(end.getTime() - 4 * DAY_MS), end, onProgress }, gateway);
   const fees = new Map();
   for (const row of rows) {
     const sku = clean(row.sku);

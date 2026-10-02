@@ -1,6 +1,7 @@
 import { isPet } from '../profile.js';
 import { PET_SKU_FIELDS } from '../../../shared/profile.js';
 import { useConfirm } from './AppDialog.jsx';
+import SyncProgress from './SyncProgress.jsx';
 import { AbaPagination } from './AbaTable.jsx';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import * as XLSX from 'xlsx';
@@ -39,7 +40,7 @@ function AmazonSyncCard({ onSynced }) {
   useEffect(() => { refresh(); }, []);
   useEffect(() => {
     if (!status?.running) return undefined;
-    const timer = setInterval(refresh, 10_000);
+    const timer = setInterval(refresh, 5_000);
     return () => clearInterval(timer);
   }, [status?.running]);
 
@@ -49,7 +50,6 @@ function AmazonSyncCard({ onSynced }) {
     try {
       await api.syncPriceStrategy();
       wasRunning.current = true;
-      setMsg({ kind: 'ok', text: '已在后台开始同步，完成后自动刷新。' });
       await refresh();
     } catch (e) {
       setMsg({ kind: 'err', text: e.message });
@@ -88,6 +88,7 @@ function AmazonSyncCard({ onSynced }) {
       >
         {status?.running ? '后台同步中…' : busy ? '正在开始…' : '从亚马逊同步'}
       </button>
+      {status?.running && <SyncProgress progress={status.progress} />}
       {msg && <div className={`note ${msg.kind}`} role={msg.kind === 'err' ? 'alert' : 'status'}>{msg.text}</div>}
     </div>
   );
@@ -794,8 +795,8 @@ export default function SkuPage({ market }) {
                         </td>
                       )}
                       {profitView && tableCols.map((c) => (
-                        <td key={c.key} className={`mono${c.money || c.pct || c.num ? ' num' : ''}${c.strong ? ' strong' : ''}${['profit', 'margin'].includes(c.key) ? ` sku-${profitTone(it)}` : ''}`}
-                          title={c.key === 'profit' && it.missing?.length ? `缺${it.missing.join('、')}` : c.key === 'fbaFee' && it.feeUpdatedAt ? `亚马逊预估，${it.feeUpdatedAt} 更新` : c.edit && it.costUpdatedAt ? `${it.costUpdatedAt} 更新` : undefined}>
+                        <td key={c.key} className={`mono${c.money || c.pct || c.num ? ' num' : ''}${c.strong ? ' strong' : ''}${['profit', 'margin'].includes(c.key) ? ` sku-${profitTone(it)}` : ''}${['style', 'color'].includes(c.key) ? ' sku-text' : ''}`}
+                          title={c.key === 'profit' && it.missing?.length ? `缺${it.missing.join('、')}` : c.key === 'fbaFee' && it.feeUpdatedAt ? `亚马逊预估，${it.feeUpdatedAt} 更新` : c.edit && it.costUpdatedAt ? `${it.costUpdatedAt} 更新` : ['style', 'color'].includes(c.key) && it[c.key] ? it[c.key] : undefined}>
                           {editing && c.edit ? (
                             <input
                               className="inp cellinp" type="number" min="0" step="0.01"

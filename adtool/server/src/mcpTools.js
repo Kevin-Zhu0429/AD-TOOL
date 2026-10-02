@@ -8,7 +8,7 @@ import { amazonGateway, pacificDay, petSpConfig, shiftDay, US_MARKETPLACE } from
 import { buildPriceBoard, monthlySummary, recentDays, weeklySummary } from './petSales.js';
 import { priceSyncStatus } from './priceStrategySync.js';
 import { abaSyncStatus } from './petAbaSync.js';
-import { withProfit } from './petCosts.js';
+import { withProfit, yearGrossProfit } from './petCosts.js';
 
 // 测试可以用 PET_TODAY 固定「今天」;正式环境始终是美国太平洋时间的今天
 const todayOf = () => (process.env.NODE_ENV === 'test' && process.env.PET_TODAY) || pacificDay(new Date());
@@ -74,7 +74,7 @@ export function storeOverview({ weeks = 8 } = {}) {
   const targets = new Map(db.prepare(`SELECT month, target_units AS targetUnits, target_sales AS targetSales,
     target_profit AS targetProfit, actual_profit AS actualProfit, ad_spend AS adSpend FROM pet_monthly_targets WHERE month LIKE ?`)
     .all(`${year}-%`).map((row) => [row.month, row]));
-  const monthly = monthlySummary({ year, actuals, targets, today, coveredFrom });
+  const monthly = monthlySummary({ year, actuals, targets, today, coveredFrom, profits: yearGrossProfit(year) });
   const brief = (row) => ({ sku: row.sku, asin: row.asin, style: row.style, size: row.size, color: row.color,
     stock: row.stock, transit: row.transit, sales7d: row.sales7d, speed7d: row.speed7d, stockDays: row.stockDays });
   const selling = board.rows.filter((row) => row.sales7d > 0);

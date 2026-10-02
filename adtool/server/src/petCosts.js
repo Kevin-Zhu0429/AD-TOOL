@@ -104,3 +104,40 @@ export function saveCosts(actorId, rows) {
   if (ok.size) audit(actorId, 'US', 'import', 'pet_sku_costs', null, { saved: ok.size, unknown: unknown.length });
   return { saved: ok.size, unknown, errors: [], errorCount: 0 };
 }
+
+/**
+ * 每月毛利:按每天每个 SKU 的实际销售额算。
+ * 毛利 = 销售额 − 销量 × (落地成本 + FBA 配送费) − 佣金(销售额 × 费率,每件最低 0.30)。
+ * 缺成本或 FBA 费的 SKU 不算进毛利,coveredSales 记下算进去的那部分销售额,好说明覆盖了多少。
+ * rows: [{ month, sku, units, sales }];返回 Map(month → { grossProfit, coveredSales, sales, missingSkus })
+ */
+export function monthlyGrossProfit(rows) {
+  const costs = new Map(db.prepare('SELECT * FROM pet_sku_costs').all().map((row) => [lower(row.sku), row]));
+  const fees = new Map(db.prepare('SELECT * FROM pet_sku_fees').all().map((row) => [lower(row.sku), row]));
+  const months = new Map();
+  for (const row of rows) {
+    if (!months.has(row.month)) months.set(row.month, { grossProfit: 0, coveredSales: 0, sales: 0, missing: new Set() });
+    const month = months.get(row.month);
+    month.sales += row.sales;
+    const cost = costs.get(lower(row.sku));
+    const fee = fees.get(lower(row.sku));
+    const landed = cost && [cost.fob, cost.first_leg, cost.duty].some((part) => part != null)
+      ? (cost.fob ?? 0) + (cost.first_leg ?? 0) + (cost.duty ?? 0) : null;
+    const referral = fee?.referral_rate != null ? Math.max(row.sales * fee.referral_rate, MIN_REFERRAL * row.units)
+      : fee?.referral_fee != null ? fee.referral_fee * row.units : null;
+    if (landed == null || fee?.fba_fee == null || referral == null) {
+      if (row.units > 0) month.missing.add(row.sku);
+      continue;
+    }
+    month.grossProfit += row.sales - row.units * (landed + fee.fba_fee) - referral;
+    month.coveredSales += row.sales;
+  }
+  return new Map([...months].map(([key, month]) => [key, { grossProfit: round(month.grossProfit), coveredSales: round(month.coveredSales),
+    sales: round(month.sales), missingSkus: [...month.missing].sort() }]));
+}
+
+/** 某年每天每个 SKU 的销量、销售额按月汇总,再算每月毛利 */
+export function yearGrossProfit(year) {
+  return monthlyGrossProfit(db.prepare(`SELECT substr(day,1,7) AS month, sku, SUM(units) AS units, SUM(sales) AS sales
+    FROM pet_daily_sales WHERE day>=? AND day<=? GROUP BY month, lower(sku)`).all(`${year}-01-01`, `${year}-12-31`));
+}

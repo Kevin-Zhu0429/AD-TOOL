@@ -24,3 +24,4 @@
 .progress em { position: relative; display: block; text-align: center; font-style: normal; font-size: 11px; line-height: 18px; }
 .stats-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 8px 0; }
 @media (max-width: 760px) { .stats-fields { grid-template-columns: 1fr; } }
+.auto-tag { margin-left: 5px; font-size: 10px; font-weight: 500; color: var(--text-faint); }
