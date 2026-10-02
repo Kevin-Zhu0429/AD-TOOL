@@ -21,3 +21,20 @@
 .sku-zero-row td:first-child { box-shadow: inset 3px 0 0 var(--red); }
 .sku-zero-row:hover td { background: var(--red-soft); }
 .sku-zero-tag { margin-left: 6px; }
+
+/* 宠物版:SKU 库带成本和毛利,列多,页面铺满宽度 */
+.lib.pet-sku { max-width: none; }
+.pet-sku .lib-body { grid-template-columns: 280px minmax(0, 1fr); }
+.sku-view-bar { justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+.sku-view-tabs { margin: 0; padding-bottom: 0; border-bottom: none; }
+.sku-profit-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.sku-profit-note { margin: -2px 0 10px; }
+.sku-fee-error { color: var(--red-text); }
+.tbl th.num, .tbl td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.tbl td.strong { font-weight: 650; }
+.sku-group-row th.sku-group { text-align: center; color: var(--text-dim); font-weight: 650; border-bottom: 1px solid var(--border); }
+.sku-profit-table td, .sku-profit-table th { white-space: nowrap; }
+.sku-profit-table .cellinp { min-width: 56px; width: 62px; }
+.tbl td.sku-loss { color: var(--red-text); }
+.tbl td.sku-thin { color: var(--amber-text); }
+.tbl td.sku-ok { color: var(--green-text); }

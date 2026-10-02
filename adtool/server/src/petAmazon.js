@@ -247,3 +247,33 @@ export async function fetchCatalogAttributes(account, asins, gateway = amazonGat
   }
   return result;
 }
+
+const moneyOf = (value) => {
+  const text = clean(value);
+  const number = Number(text);
+  return text && text !== '--' && Number.isFinite(number) && number >= 0 ? number : null;
+};
+
+/**
+ * Fee Preview 报告:每个在售 FBA SKU 的预估配送费和佣金。亚马逊至少每 72 小时更新一次,
+ * 申请时开始时间要早于现在 72 小时以上、结束时间比开始晚 72 小时以上,所以取最近 4 天。
+ */
+export async function fetchFeePreview(account, now = new Date(), gateway = amazonGateway) {
+  const end = new Date(now.getTime() - 5 * 60_000);
+  const rows = await runReport(account, 'GET_FBA_ESTIMATED_FBA_FEES_TXT_DATA',
+    { start: new Date(end.getTime() - 4 * DAY_MS), end }, gateway);
+  const fees = new Map();
+  for (const row of rows) {
+    const sku = clean(row.sku);
+    const fbaFee = moneyOf(row['expected-fulfillment-fee-per-unit']);
+    const referralFee = moneyOf(row['estimated-referral-fee-per-unit']);
+    if (!sku || (fbaFee == null && referralFee == null)) continue;
+    const price = moneyOf(row['sales-price']) || moneyOf(row['your-price']);
+    fees.set(sku.toLowerCase(), {
+      sku, asin: validAsin(row.asin), fbaFee, referralFee, price: price || null,
+      referralRate: referralFee != null && price ? Number((referralFee / price).toFixed(4)) : null,
+      sizeTier: clean(row['product-size-tier']) || null,
+    });
+  }
+  return [...fees.values()];
+}

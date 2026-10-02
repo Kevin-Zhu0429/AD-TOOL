@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import * as XLSX from 'xlsx';
 import { api } from '../api.js';
 import { isOutOfStock, isZeroStock } from '../skuMatch.js';
+import { COST_KEYS, PROFIT_COLS, PROFIT_FILTERS, formatCell, groupSpans, mapCostSheet, profitTone } from '../petProfit.js';
 import './LibraryPage.css';
 import './SkuPage.css';
 
@@ -56,17 +57,26 @@ function AmazonSyncCard({ onSynced }) {
   }
 
   const last = status?.lastSuccess;
+  const fees = status?.fees;
+  const feeFailed = fees?.lastError && (!fees.lastSuccess || fees.lastError.at > fees.lastSuccess.at);
   return (
     <div className="card captain-sync-card">
       <div className="card-title">亚马逊同步</div>
       <p className="hint">
-        读取美国店铺全部 Listing、FBA 库存和商品尺码颜色：新 SKU 自动加入，已有 SKU 更新 ASIN 和库存，款式、面料等人工字段保留。价格策略表和销售统计同时更新。每 3 小时自动同步一次。
+        读取美国店铺全部 Listing、FBA 库存和商品尺码颜色：新 SKU 自动加入，已有 SKU 更新 ASIN 和库存，款式、面料等人工字段保留。价格策略表和销售统计同时更新。每 3 小时自动同步一次；FBA 配送费和佣金来自亚马逊 Fee Preview 报告，每天读取一次。
       </p>
       {!status?.configured ? (
         <p className="hint captain-sync-empty">{status?.issues?.[0] ?? '服务器尚未配置宠物店铺的亚马逊 SP-API 凭证。'}</p>
       ) : (
         <p className="hint captain-sync-empty">
           {last ? `上次同步：${new Date(last.completedAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}（数据至美西 ${last.today ?? last.date}）` : '还没有同步过'}
+        </p>
+      )}
+      {status?.configured && (
+        <p className={`hint captain-sync-empty${feeFailed ? ' sku-fee-error' : ''}`}>
+          {feeFailed ? fees.lastError.message
+            : fees?.lastSuccess ? `FBA 费用：${new Date(fees.lastSuccess.at).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })} 更新 ${fees.lastSuccess.skus} 个 SKU，每天自动一次`
+              : 'FBA 费用：还没有同步过，点同步会一起读取'}
         </p>
       )}
       <button
@@ -76,6 +86,63 @@ function AmazonSyncCard({ onSynced }) {
       >
         {status?.running ? '后台同步中…' : busy ? '正在开始…' : '从亚马逊同步'}
       </button>
+      {msg && <div className={`note ${msg.kind}`} role={msg.kind === 'err' ? 'alert' : 'status'}>{msg.text}</div>}
+    </div>
+  );
+}
+
+/** 宠物版:导入成本表(SKU / FOB / 头程 / 关税),导出现有成本方便在 Excel 里补 */
+function CostCard({ items, onSaved }) {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState(null);
+  const missing = items.filter((item) => item.landedCost == null && (item.stock > 0 || item.transit > 0)).length;
+
+  async function importCosts(file) {
+    if (!file) return;
+    setBusy(true);
+    setMsg(null);
+    try {
+      const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+      const sheet = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: '', raw: false });
+      const mapped = mapCostSheet(sheet);
+      if (mapped.error) throw new Error(mapped.error);
+      if (!mapped.rows.length) throw new Error('这份文件里没读到数据行');
+      const result = await api.saveSkuCosts(mapped.rows);
+      await onSaved();
+      setMsg({ kind: result.unknown.length ? 'warn' : 'ok',
+        text: `已写入 ${result.saved} 个 SKU 的成本` + (result.unknown.length ? `，其中 ${result.unknown.length} 个不在 SKU 库里（${result.unknown.slice(0, 3).join('、')}…），成本已保存，SKU 同步进来后自动对上` : '') });
+    } catch (e) {
+      setMsg({ kind: 'err', text: e.message });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function exportCosts() {
+    const rows = [['SKU', '款式', '尺码', '颜色', 'FOB', '头程', '关税'],
+      ...items.map((item) => [item.sku, item.style ?? '', item.size ?? '', item.color ?? '', item.fob ?? '', item.firstLeg ?? '', item.duty ?? ''])];
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    ws['!cols'] = [{ wch: 22 }, { wch: 16 }, { wch: 8 }, { wch: 10 }, { wch: 9 }, { wch: 9 }, { wch: 9 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, '成本表');
+    XLSX.writeFile(wb, `SKU成本表_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  }
+
+  return (
+    <div className="card captain-sync-card">
+      <div className="card-title">成本表</div>
+      <p className="hint">
+        每件美元成本：FOB + 头程 + 关税 = 落地成本。导入 Excel / CSV，第一行表头写 SKU、FOB、头程、关税（fob_usd 这类英文也认）；文件里没有的列不会改动。也可以在右边表格里逐行改。
+      </p>
+      {missing > 0 && <p className="hint sku-fee-error">{missing} 个有库存的 SKU 还没填成本</p>}
+      <div className="row" style={{ gap: 8 }}>
+        <label className={`btn primary${busy ? ' disabled' : ''}`} style={{ cursor: 'pointer', flex: 1, justifyContent: 'center' }}>
+          {busy ? '正在导入…' : '导入成本表'}
+          <input type="file" accept=".xlsx,.xls,.csv" style={{ display: 'none' }} disabled={busy}
+            onChange={(e) => { importCosts(e.target.files[0]); e.target.value = ''; }} />
+        </label>
+        <button className="btn" onClick={exportCosts} title="导出全部 SKU 的成本，空着的在 Excel 里补完再导入">导出成本表</button>
+      </div>
       {msg && <div className={`note ${msg.kind}`} role={msg.kind === 'err' ? 'alert' : 'status'}>{msg.text}</div>}
     </div>
   );
@@ -132,6 +199,12 @@ export default function SkuPage({ market }) {
   const [captain, setCaptain] = useState(null);
   const [syncBusy, setSyncBusy] = useState(false);
   const [syncMsg, setSyncMsg] = useState(null);
+  // 宠物版两种视图:成本与毛利 / 基础信息,记住上次看的
+  const [view, setView] = useState(() => {
+    if (!isPet) return 'info';
+    try { return localStorage.getItem('adtool:sku-view') === 'info' ? 'info' : 'profit'; } catch { return 'profit'; }
+  });
+  const [profitFilter, setProfitFilter] = useState('');
   const filterRef = useRef(null);
 
   async function load(next = scope) {
@@ -156,6 +229,15 @@ export default function SkuPage({ market }) {
 
   const cols = useMemo(() => data?.cols ?? [], [data]);
   const items = useMemo(() => data?.items ?? [], [data]);
+  const profitView = isPet && view === 'profit';
+  const tableCols = profitView ? PROFIT_COLS : cols;
+  const profitCounts = useMemo(() => Object.fromEntries(PROFIT_FILTERS.filter(([, , test]) => test)
+    .map(([id, , test]) => [id, items.filter(test).length])), [items]);
+  function switchView(next) {
+    setView(next);
+    setEdit(null);
+    try { localStorage.setItem('adtool:sku-view', next); } catch { /* 无痕模式存不了,不影响使用 */ }
+  }
   const zeroStockItems = useMemo(() => items.filter(isZeroStock), [items]);
 
   const facetValues = useMemo(() => {
@@ -174,12 +256,13 @@ export default function SkuPage({ market }) {
       if (facet.country && it.country !== facet.country) return false;
       if (facet.brand && it.brand !== facet.brand) return false;
       if (isPet && ['style', 'size', 'color', 'fabric'].some((key) => facet[key] && it[key] !== facet[key])) return false;
+      if (isPet && profitFilter && !PROFIT_FILTERS.find(([id]) => id === profitFilter)[2](it)) return false;
       if (!f) return true;
       return cols.some((c) => String(it[c.key] ?? '').toLowerCase().includes(f));
     });
-  }, [items, filter, facet, cols]);
+  }, [items, filter, facet, cols, profitFilter]);
 
-  useEffect(() => setPage(1), [items, filter, facet]);
+  useEffect(() => setPage(1), [items, filter, facet, profitFilter]);
   const currentPage = Math.min(page, Math.max(1, Math.ceil(shown.length / pageSize)));
   const pageRows = shown.slice((currentPage - 1) * pageSize, currentPage * pageSize);
   const mine = scope !== 'all';
@@ -229,6 +312,15 @@ export default function SkuPage({ market }) {
 
   function saveEdit() {
     if (busy) return;
+    if (profitView) {
+      const row = { sku: edit.sku, ...Object.fromEntries(COST_KEYS.map((key) => [key, String(edit[key] ?? '')])) };
+      act(async () => {
+        const result = await api.saveSkuCosts([row]);
+        setEdit(null);
+        return result;
+      }, '成本已保存');
+      return;
+    }
     const body = {};
     for (const c of cols) body[c.key] = String(edit[c.key] ?? '');
     const id = edit.id;
@@ -277,11 +369,13 @@ export default function SkuPage({ market }) {
   }
 
   function exportXlsx() {
-    const head = [...cols.map((c) => c.label), '更新时间', ...(mine ? [] : ['上传人'])];
+    // 宠物版导出时把成本、费用和毛利也带上
+    const extra = isPet ? PROFIT_COLS.filter((c) => !cols.some((base) => base.key === c.key)) : [];
+    const head = [...cols.map((c) => c.label), ...extra.map((c) => c.label + (c.pct ? '(%)' : c.money ? '($)' : '')), '更新时间', ...(mine ? [] : ['上传人'])];
     const rows = [head];
     for (const it of shown) {
       rows.push([
-        ...cols.map((c) => val(it, c.key)),
+        ...cols.map((c) => val(it, c.key)), ...extra.map((c) => val(it, c.key)),
         it.updated_at ?? '', ...(mine ? [] : [it.owner_name ?? '']),
       ]);
     }
@@ -335,13 +429,13 @@ export default function SkuPage({ market }) {
   if (!data) return <div className="lib"><div className="empty">加载中…</div></div>;
 
   return (
-    <div className="lib">
+    <div className={`lib${isPet ? ' pet-sku' : ''}`}>
       {confirmation}
       <div className="lib-head">
         <div>
           <h1>我的 SKU 库</h1>
           <p className="hint">
-            {isPet ? '美国站 SKU 库。按款式、尺码、颜色和面料外观筛选，开广告时一键选择。所有账号共享并可维护这份 SKU 库，填写 ASIN 后关联共享 ABA 报告。' : '每个账号一份自己的库，开广告时按站点和型号挑选。填写 ASIN 后，ABA ASIN 视图会关联该 SKU 的型号、品牌和套组。'}
+            {isPet ? '美国站 SKU 库，所有账号共享。每个 SKU 一份档案：款式尺码、库存、成本、亚马逊费用和单件毛利。开广告时一键选择，填写 ASIN 后关联共享 ABA 报告。' : '每个账号一份自己的库，开广告时按站点和型号挑选。填写 ASIN 后，ABA ASIN 视图会关联该 SKU 的型号、品牌和套组。'}
           </p>
         </div>
         <div className="spacer" />
@@ -382,6 +476,7 @@ export default function SkuPage({ market }) {
       <div className="lib-body">
         <div className="stack">
           {mine && isPet && <AmazonSyncCard onSynced={() => load(scope)} />}
+          {mine && isPet && <CostCard items={items} onSaved={() => load(scope)} />}
           {mine && !isPet && (
             <div className="card captain-sync-card">
               <div className="card-title">船长库存</div>
@@ -455,6 +550,26 @@ export default function SkuPage({ market }) {
         </div>
 
         <div className="card lib-main">
+          {isPet && (
+            <div className="row wrap sku-view-bar">
+              <div className="lib-tabs sku-view-tabs" role="tablist">
+                {[['profit', '成本与毛利'], ['info', '基础信息']].map(([id, label]) => (
+                  <button key={id} role="tab" aria-selected={view === id} className={`lib-tab${view === id ? ' on' : ''}`} onClick={() => switchView(id)}>{label}</button>
+                ))}
+              </div>
+              <div className="sku-profit-chips">
+                {PROFIT_FILTERS.map(([id, label]) => (
+                  <button key={id || 'all'} className={`btn sm${profitFilter === id ? ' primary' : ''}`} aria-pressed={profitFilter === id}
+                    onClick={() => setProfitFilter(id)} disabled={id && !profitCounts[id] && profitFilter !== id}>
+                    {label}{id ? ` ${profitCounts[id]}` : ''}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          {isPet && profitView && (
+            <p className="hint sku-profit-note">单件毛利 = 售价 − 落地成本 − FBA 配送费 − 佣金（按当前售价重算），未扣广告费、仓储费和退货。保本价是毛利刚好为 0 的售价。</p>
+          )}
           {isPet && <div className="pet-filters">{PET_SKU_FIELDS.filter((c) => ['style', 'size', 'color', 'fabric'].includes(c.key)).map((c) => <label key={c.key}>{c.label}<select className="inp" aria-label={c.label} value={facet[c.key]} onChange={(e) => setFacet({ ...facet, [c.key]: e.target.value })}><option value="">全部{c.label}</option>{[...new Set(items.map((it) => it[c.key]).filter(Boolean))].sort().map((v) => <option key={v}>{v}</option>)}</select></label>)}</div>}
           <div className="row wrap" style={{ marginBottom: 11 }}>
             <div className="sku-search">
@@ -511,8 +626,15 @@ export default function SkuPage({ market }) {
             )}
 
           <div className="scroll">
-            <table className="tbl">
+            <table className={`tbl${profitView ? ' sku-profit-table' : ''}`}>
               <thead>
+                {profitView && (
+                  <tr className="sku-group-row">
+                    {mine && <th />}
+                    {groupSpans(tableCols).map((group) => <th key={group.label} colSpan={group.span} className="sku-group">{group.label}</th>)}
+                    {mine && <th />}
+                  </tr>
+                )}
                 <tr>
                   {mine && (
                     <th style={{ width: 30 }}>
@@ -525,9 +647,9 @@ export default function SkuPage({ market }) {
                       />
                     </th>
                   )}
-                  {cols.map((c) => <th key={c.key}>{c.label}</th>)}
+                  {tableCols.map((c) => <th key={c.key} className={c.money || c.pct || c.num ? 'num' : undefined}>{c.label}</th>)}
                   {!mine && <th style={{ width: 90 }}>上传人</th>}
-                  <th style={{ width: 128 }}>更新时间</th>
+                  {!profitView && <th style={{ width: 128 }}>更新时间</th>}
                   {mine && <th style={{ width: 92 }} />}
                 </tr>
               </thead>
@@ -551,7 +673,27 @@ export default function SkuPage({ market }) {
                           />
                         </td>
                       )}
-                      {cols.map((c) => (
+                      {profitView && tableCols.map((c) => (
+                        <td key={c.key} className={`mono${c.money || c.pct || c.num ? ' num' : ''}${c.strong ? ' strong' : ''}${['profit', 'margin'].includes(c.key) ? ` sku-${profitTone(it)}` : ''}`}
+                          title={c.key === 'profit' && it.missing?.length ? `缺${it.missing.join('、')}` : c.key === 'fbaFee' && it.feeUpdatedAt ? `亚马逊预估，${it.feeUpdatedAt} 更新` : c.edit && it.costUpdatedAt ? `${it.costUpdatedAt} 更新` : undefined}>
+                          {editing && c.edit ? (
+                            <input
+                              className="inp cellinp" type="number" min="0" step="0.01"
+                              aria-label={`${c.label} ${it.sku}`}
+                              value={edit[c.key] ?? ''}
+                              onChange={(e) => setEdit({ ...edit, [c.key]: e.target.value })}
+                            />
+                          ) : (
+                            <>
+                              {formatCell(c, it[c.key])}
+                              {c.key === 'stock' && zeroStock && (
+                                <span className="tag red sku-zero-tag">{outOfStock ? '已断货' : '在库 0'}</span>
+                              )}
+                            </>
+                          )}
+                        </td>
+                      ))}
+                      {!profitView && cols.map((c) => (
                         <td key={c.key} className="mono">
                           {editing ? (
                             <input
@@ -577,7 +719,7 @@ export default function SkuPage({ market }) {
                       {!mine && (
                         <td style={{ color: 'var(--text-faint)' }}>{it.owner_name ?? '—'}</td>
                       )}
-                      <td style={{ color: 'var(--text-faint)' }}>{it.updated_at ?? '—'}</td>
+                      {!profitView && <td style={{ color: 'var(--text-faint)' }}>{it.updated_at ?? '—'}</td>}
                       {mine && (
                         <td>
                           {editing ? (
@@ -591,6 +733,7 @@ export default function SkuPage({ market }) {
                               onClick={() => setEdit({
                                 id: it.id,
                                 ...Object.fromEntries(cols.map((c) => [c.key, val(it, c.key)])),
+                                ...(profitView ? Object.fromEntries(COST_KEYS.map((key) => [key, val(it, key)])) : {}),
                               })}
                             >编辑</button>
                           )}
@@ -601,7 +744,7 @@ export default function SkuPage({ market }) {
                 })}
                 {!shown.length && (
                   <tr>
-                    <td colSpan={cols.length + 3} className="empty">
+                    <td colSpan={tableCols.length + 3} className="empty">
                       {items.length
                         ? '没有匹配的行'
                         : mine

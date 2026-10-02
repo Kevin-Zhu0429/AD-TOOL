@@ -73,6 +73,7 @@ export const api = {
     request('/sku/rows', { method: 'POST', body: { rows, replace } }),
   updateSku: (id, body) => request(`/sku/${id}`, { method: 'PATCH', body }),
   deleteSkus: (ids) => request('/sku/delete', { method: 'POST', body: { ids } }),
+  saveSkuCosts: (rows) => request('/sku/costs', { method: 'POST', body: { rows } }),
 
   // ---------- 船长 BI 库存同步 ----------
   captainStatus: () => request('/captain/status'),

@@ -28,6 +28,13 @@ const ORDERS = tsv([
   ['111-6', '2026-08-10T20:00:00+00:00', 'Shipped', 'Amazon.com', 'DOG-L', 'B000000001', 'Shipped', '4', '100'],
 ]);
 
+// Fee Preview:DOG-L 售价 39.99 时佣金 6.00(15%),DOG-XL 没有费用数据的行要跳过
+const FEES = tsv([
+  ['sku', 'asin', 'your-price', 'sales-price', 'product-size-tier', 'estimated-referral-fee-per-unit', 'expected-fulfillment-fee-per-unit'],
+  ['DOG-L', 'B000000001', '39.99', '--', 'Large Standard', '6.00', '7.25'],
+  ['DOG-XL', 'B000000002', '49.99', '--', 'Large Standard', '--', '--'],
+]);
+
 function fakeAmazon({ failOn } = {}) {
   const calls = [];
   const reports = new Map();
@@ -64,7 +71,9 @@ function fakeAmazon({ failOn } = {}) {
     },
     async download(document) {
       const body = reports.get(document.url);
-      return body.reportType === 'GET_MERCHANT_LISTINGS_ALL_DATA' ? LISTINGS : ORDERS;
+      if (failOn && body.reportType.includes(failOn)) throw new Error('下载亚马逊报告失败 (403)');
+      return body.reportType === 'GET_MERCHANT_LISTINGS_ALL_DATA' ? LISTINGS
+        : body.reportType === 'GET_FBA_ESTIMATED_FBA_FEES_TXT_DATA' ? FEES : ORDERS;
     },
   };
   return { gateway, calls, reports };
@@ -127,6 +136,23 @@ test('Amazon sync fills the SKU library and daily sales; the price board and sta
   assert.equal(xl.selloutDate, null);
   assert.equal(xl.stockTransitDays, 140);
 
+  // FBA 费用:申请最近 4 天的 Fee Preview,写进费用表
+  const feeReport = [...amazon.reports.values()].find((body) => body.reportType === 'GET_FBA_ESTIMATED_FBA_FEES_TXT_DATA');
+  assert.equal(feeReport.dataEndTime, '2026-09-22T18:55:00.000Z');
+  assert.equal(feeReport.dataStartTime, '2026-09-18T18:55:00.000Z');
+  assert.equal(result.feeSkus, 1);
+  assert.equal((await call('/sku/costs', user, { rows: [{ sku: 'DOG-L', fob: '$12.50', firstLeg: '1.5', duty: '' }] })).status, 200);
+  const bad = await call('/sku/costs', user, { rows: [{ sku: 'DOG-XL', fob: 'abc' }] });
+  assert.equal(bad.status, 400);
+  assert.match(bad.data.error, /FOB「abc」不是有效金额/);
+  const skuRows = (await call('/sku', user)).data;
+  const library = skuRows.items.find((row) => row.sku === 'DOG-L');
+  // 39.99 − 14.00 − 7.25 − 6.00(15% 佣金按当前售价)= 12.74
+  assert.deepEqual([library.landedCost, library.fbaFee, library.referralFee, library.profit, library.margin, library.breakEven],
+    [14, 7.25, 6, 12.74, 31.86, 25]);
+  assert.deepEqual(skuRows.items.find((row) => row.sku === 'DOG-XL').missing, ['成本', 'FBA 费', '佣金']);
+  assert.equal(skuRows.fees.lastSuccess.skus, 1);
+
   const sales = backend.db.prepare("SELECT * FROM pet_daily_sales WHERE sku='DOG-XL' AND day='2026-09-21'").get();
   assert.deepEqual([sales.units, sales.orders, sales.sales, sales.estimated_sales], [2, 1, 99.98, 99.98]);
 
@@ -155,6 +181,18 @@ test('Amazon sync fills the SKU library and daily sales; the price board and sta
   assert.deepEqual([stats.monthly.months[7].units, stats.monthly.months[7].sales], [4, 100]);
   assert.equal(stats.monthly.months[9].units, null, '未来月份没有实际值');
   assert.equal(stats.monthly.total.units, 12);
+
+  // 自动同步一天内不重拉费用;费用报告失败不影响其他数据,只记错误,旧费用保留
+  const { saveCosts } = await import('../src/petCosts.js');
+  assert.equal(saveCosts(1, [{ sku: 'DOG-L', duty: '0.5' }]).saved, 1);
+  assert.deepEqual(Object.values(backend.db.prepare('SELECT fob, first_leg, duty FROM pet_sku_costs').get()), [12.5, 1.5, 0.5], '没带的成本字段不动');
+  const auto = fakeAmazon({ failOn: 'FEES' });
+  assert.equal((await syncAmazonData(null, auto.gateway, ENV, now)).feeSkus, null);
+  assert.equal([...auto.reports.values()].some((body) => body.reportType.includes('FEES')), false);
+  const feeFail = await syncAmazonData(1, fakeAmazon({ failOn: 'FEES' }).gateway, ENV, now);
+  assert.equal(feeFail.feeSkus, null);
+  assert.match(priceSyncStatus(ENV).fees.lastError.message, /读取 FBA 费用/);
+  assert.equal((await call('/sku', user)).data.items.find((row) => row.sku === 'DOG-L').fbaFee, 7.25);
 
   // 失败会记录阶段,已保存的数据不动
   await assert.rejects(syncAmazonData(1, fakeAmazon({ failOn: '/fba/inventory' }).gateway, ENV, now), /读取 FBA 库存.*403/);

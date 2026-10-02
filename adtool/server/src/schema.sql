@@ -381,6 +381,29 @@ CREATE TABLE IF NOT EXISTS pet_listing_cache (
   updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
 
+-- 宠物 SKU 成本:人工导入或在 SKU 库里改,单位美元/件。按 SKU 单独存,SKU 库整表替换不会清掉成本
+CREATE TABLE IF NOT EXISTS pet_sku_costs (
+  sku TEXT PRIMARY KEY COLLATE NOCASE,
+  fob REAL CHECK (fob >= 0),
+  first_leg REAL CHECK (first_leg >= 0),
+  duty REAL CHECK (duty >= 0),
+  updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+
+-- 亚马逊 Fee Preview 报告里的预估费用,每天同步一次。报告里没有的 SKU(比如断货下架)保留上次的值
+-- referral_rate = 佣金 / 报告时的售价,改价后按新售价重算佣金
+CREATE TABLE IF NOT EXISTS pet_sku_fees (
+  sku TEXT PRIMARY KEY COLLATE NOCASE,
+  asin TEXT,
+  fba_fee REAL,
+  referral_fee REAL,
+  referral_rate REAL,
+  fee_price REAL,
+  size_tier TEXT,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+
 -- 每月目标与人工数据：目标、实际利润和广告花费由人填写,实际销量和销售额由同步数据计算
 CREATE TABLE IF NOT EXISTS pet_monthly_targets (
   month TEXT PRIMARY KEY,
