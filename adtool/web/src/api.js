@@ -12,8 +12,17 @@ async function request(path, options = {}) {
   return data;
 }
 
+// 待确认改动有变化(确认、拒绝、撤回)时发这个事件,导航栏刷新角标
+export const CHANGES_EVENT = 'adtool:changes';
+
 export const api = {
   priceStrategy: () => request('/price-strategy'),
+  changes: (view) => request(`/changes?view=${encodeURIComponent(view)}`),
+  changeCounts: () => request('/changes/counts'),
+  changeLog: () => request('/changes/log'),
+  editChange: (id, value) => request(`/changes/${id}`, { method: 'PUT', body: { value } }),
+  changeAction: (action, ids) => request(`/changes/${action}`, { method: 'POST', body: { ids } }),
+  revertChange: (id) => request(`/changes/${id}/revert`, { method: 'POST', body: {} }),
   competitorOverview: () => request('/competitors/overview'),
   competitorStyle: (key) => request(`/competitors/style?key=${encodeURIComponent(key)}`),
   competitorHealth: () => request('/competitors/health'),

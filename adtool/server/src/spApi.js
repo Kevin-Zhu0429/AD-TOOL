@@ -211,7 +211,8 @@ function spApiMessage(payload, status) {
 
 const tokenCache = new Map();
 
-async function accessToken(account) {
+/** 用 refresh token 换 LWA access token,缓存到过期前一分钟。广告 API 也用同一套 LWA 授权 */
+export async function accessToken(account) {
   const cached = tokenCache.get(account.refreshToken);
   if (cached?.expiresAt > Date.now() + 30_000) return cached.value;
   let response;

@@ -1,6 +1,6 @@
 import { isPet, profile } from '../profile.js';
 import { useEffect, useRef, useState } from 'react';
-import { api } from '../api.js';
+import { api, CHANGES_EVENT } from '../api.js';
 import Icon from './Icon.jsx';
 import './AppShell.css';
 
@@ -14,7 +14,19 @@ export default function AppShell({
   user, page, onNav, market, onMarket, onLoggedOut, theme, onToggleTheme, children,
 }) {
   const [menu, setMenu] = useState(false);
+  const [changeCount, setChangeCount] = useState(0);
   const popRef = useRef(null);
+  const reviewsChanges = isPet && user.role === 'owner';
+
+  // 待确认改动的角标:待确认 + 待导出批量表 + 失败,切页面时刷新
+  useEffect(() => {
+    if (!reviewsChanges) return undefined;
+    let alive = true;
+    const refresh = () => api.changeCounts().then((counts) => alive && setChangeCount(counts.pending + counts.export + counts.failed)).catch(() => {});
+    refresh();
+    window.addEventListener(CHANGES_EVENT, refresh);
+    return () => { alive = false; window.removeEventListener(CHANGES_EVENT, refresh); };
+  }, [reviewsChanges, page]);
   const role = ROLE[user.role] ?? { label: user.role, cls: 'gray' };
 
   useEffect(() => {
@@ -26,6 +38,8 @@ export default function AppShell({
 
   const nav = [
     { id: 'home', label: '首页', icon: 'home' },
+    // Claude 提议的改动在这里确认;导航栏放不下时后面的会被挤出去,所以放在前面
+    ...(reviewsChanges ? [{ id: 'changes', label: '待确认', icon: 'check', badge: changeCount }] : []),
     { id: 'builder', label: '自动广告', icon: 'layers' },
     ...(user.manualAds ? [{ id: 'manual', label: '手动广告', icon: 'sliders' }] : []),
     ...(user.adOpt ? [{ id: 'optimizer', label: '广告优化', icon: 'chart' }] : []),
@@ -57,6 +71,7 @@ export default function AppShell({
             >
               <Icon name={it.icon} className="ico-sm" />
               <span>{it.label}</span>
+              {it.badge > 0 && <span className="topnav-badge" aria-label={`${it.badge} 条待处理`}>{it.badge}</span>}
             </button>
           ))}
         </nav>

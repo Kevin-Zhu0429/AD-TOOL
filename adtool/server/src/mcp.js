@@ -44,7 +44,7 @@ export function mountMcp(app, { publicUrl = process.env.MCP_PUBLIC_URL, deps = {
   // 无状态:每个请求新建一个 MCP 服务和传输,直接返回 JSON,不开 SSE 长连接,反向代理不用改配置
   app.post('/mcp', bearer, async (req, res, next) => {
     try {
-      const server = createPetMcpServer(deps);
+      const server = createPetMcpServer({ ...deps, siteUrl: issuerUrl.href });
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
       res.on('close', () => { void transport.close(); void server.close(); });
       await server.connect(transport);

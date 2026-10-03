@@ -36,6 +36,11 @@ services:
       PET_SP_BRAND: ${PET_SP_BRAND:-}
       # 网站的 https 地址(如 https://example.com),填了才开启 Claude 连接器 <地址>/mcp
       MCP_PUBLIC_URL: ${MCP_PUBLIC_URL:-}
+      # 亚马逊广告 API(可选),不填时确认过的广告改动生成批量表人工上传
+      PET_ADS_REFRESH_TOKEN: ${PET_ADS_REFRESH_TOKEN:-}
+      PET_ADS_PROFILE_ID: ${PET_ADS_PROFILE_ID:-}
+      PET_ADS_CLIENT_ID: ${PET_ADS_CLIENT_ID:-}
+      PET_ADS_CLIENT_SECRET: ${PET_ADS_CLIENT_SECRET:-}
       TRUST_PROXY: ${TRUST_PROXY:-false}
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
     volumes:

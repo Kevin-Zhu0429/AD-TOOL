@@ -1,5 +1,5 @@
-// Claude 连接器(MCP)的只读工具。数据库里的数据直接查;Listing、竞品目录和图片实时调 SP-API。
-// 所有工具都只读,不写数据库,也不改亚马逊上的任何东西。
+// Claude 连接器(MCP)的工具。数据库里的数据直接查;Listing、竞品目录和图片实时调 SP-API。
+// 查数据的工具只读。提议类工具只往网站的「待确认改动」队列里加记录,不改亚马逊;超级管理员在网站上确认后才执行。
 import * as z from 'zod/v4';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { db } from './db.js';
@@ -11,6 +11,7 @@ import { abaSyncStatus } from './petAbaSync.js';
 import { withProfit, yearGrossProfit } from './petCosts.js';
 import { latestSync } from './stockEvents.js';
 import { competitorSyncStatus, listingHealth, ownStyles, recentChanges, styleDetail } from './petCompetitors.js';
+import { AD_ACTIONS, AD_ENTITIES, listChanges, proposeAdChanges, proposeListingChanges, STATUS_LABEL, targetLabel } from './petChanges.js';
 
 // 测试可以用 PET_TODAY 固定「今天」;正式环境始终是美国太平洋时间的今天
 const todayOf = () => (process.env.NODE_ENV === 'test' && process.env.PET_TODAY) || pacificDay(new Date());
@@ -434,22 +435,61 @@ export async function getProductImages({ asin, limit = 7 }, { gateway = amazonGa
   return { content };
 }
 
+// ---------- 改动提议 ----------
+
+/** 确认页地址:网站首页加 #changes */
+function confirmUrl(siteUrl) {
+  try { return new URL('/#changes', siteUrl).href; } catch { return null; }
+}
+
+const NEXT_STEP = '这些改动已放进网站「待确认改动」页，还没有改亚马逊。请店主到网站上逐条确认，确认后 Listing 改动通过 SP-API 提交，广告改动在广告 API 开通前会生成批量表。';
+
+export async function proposeListing(input, { userId, gateway = amazonGateway, env = process.env, siteUrl } = {}) {
+  const result = await proposeListingChanges(input, { userId, gateway, env });
+  return { ...result, confirmUrl: confirmUrl(siteUrl), next: result.created.length ? NEXT_STEP : '没有改动进入待确认队列，原因见 rejected。' };
+}
+
+export function proposeAds(input, { userId, siteUrl } = {}) {
+  const result = proposeAdChanges(input, { userId });
+  return { ...result, confirmUrl: confirmUrl(siteUrl), next: result.created.length ? NEXT_STEP : '没有改动进入待确认队列，原因见 rejected。',
+    notes: ['网站里还没有广告数据，编号和当前值按你给的记录，确认页会标成「未核实」。'] };
+}
+
+const ALL_STATUSES = Object.keys(STATUS_LABEL);
+const PROPOSAL_VIEWS = { pending: ['pending'], active: ['queued', 'running', 'submitted', 'export', 'exported', 'failed'],
+  done: ['applied', 'not_applied'], closed: ['rejected', 'superseded'], all: ALL_STATUSES };
+
+export function changeProposals({ status = 'all', limit = 50 } = {}, { env = process.env } = {}) {
+  const { items, batches, byStatus, config } = listChanges({ statuses: PROPOSAL_VIEWS[status] ?? ALL_STATUSES, limit: 1000, env });
+  const titles = new Map(batches.map((batch) => [batch.id, batch.title]));
+  const rows = items.sort((a, b) => b.id - a.id).slice(0, limit).map((item) => ({
+    id: item.id, batch: titles.get(item.batchId) ?? null, kind: item.kind, change: item.kindLabel, status: item.status, statusLabel: item.statusLabel,
+    target: targetLabel(item.kind, item.target), asin: item.target.asin ?? null, before: item.before, after: item.after, reason: item.reason,
+    warnings: item.warnings, error: item.error, channel: item.channel, createdAt: item.createdAt, decidedAt: item.decidedAt, decidedBy: item.decidedBy,
+    executedAt: item.executedAt, verifiedAt: item.verifiedAt, amazonIssues: item.result?.listingIssues ?? item.result?.issues ?? [] }));
+  return { counts: byStatus, statusLabels: STATUS_LABEL, total: items.length, rows, writeChannels: { listing: config.spApi ? 'SP-API' : '未配置 SP-API',
+    ads: config.adsApi ? '广告 API' : '批量表（广告 API 未配置）' },
+  notes: ['时间是服务器本地时间(北京时间)。submitted 表示亚马逊已接受、等生效，网站每 20 分钟核对一次，生效后变 applied;48 小时还没生效变 not_applied。'] };
+}
+
 // ---------- 注册到 MCP ----------
 
 const INSTRUCTIONS = `这是一家亚马逊美国站宠物用品店(主营宠物狗窝)的运营数据,来自店主自建的 AD-TOOL 网站。
-所有工具只读:查数据库里同步好的销量、库存、价格、ABA 搜索词,以及实时调亚马逊 SP-API 看 Listing、竞品目录和图片。不能修改任何东西。
-日期都是美国太平洋时间。广告数据(花费、ACOS、搜索词报告)要等亚马逊广告 API 开通,目前没有。
+查数据的工具都只读:数据库里同步好的销量、库存、价格、利润、ABA 搜索词、竞品,以及实时调亚马逊 SP-API 看 Listing、竞品目录和图片。
+propose_listing_changes、propose_ad_changes 只把改动放进网站的「待确认改动」队列,不会直接改亚马逊;店主在网站上逐条确认后才执行。执行结果用 list_change_proposals 查。
+日期都是美国太平洋时间。广告数据(花费、ACOS、搜索词报告)要等亚马逊广告 API 开通,目前网站里没有。
 分析某个产品的常用顺序:store_overview 看全店(含利润、断货补货、竞品变化提醒) → list_skus 找到 SKU/ASIN、看单件毛利 → get_sales_trend 看趋势 → get_search_terms 看流量词和份额 → get_style_intel 看这个款式的竞品、价格带和核心词覆盖 → get_listing_health 看文案体检 → get_listing 看实时文案 → get_catalog_items / get_product_images 对比竞品。
 看月度目标和利润用 get_sales_stats;看竞品最近的降价、改标题、换主图用 get_competitor_overview。
+提改动前:先用 get_listing 看现在的文案;尺寸、材质、填充物等产品规格只写有依据的,拿不准就先问用户,不要编;同一款的不同尺码、颜色是不同 SKU,要分别提;改五点要给出全部条目;reason 写清依据的数据(搜索词份额、竞品对比、体检问题、毛利)。改价前看 list_skus 的保本价。广告改动需要广告活动、广告组、关键词等的数字编号,只有用户给了批量表或报告时才能提。提完把 confirmUrl 告诉用户去确认。
 用户是中文卖家,回答用中文;给优化建议时说明依据的数据。`;
 
 export function createPetMcpServer(deps = {}) {
   const server = new McpServer({ name: 'adtool-pet', version: '1.0.0' }, { instructions: INSTRUCTIONS });
   const local = { readOnlyHint: true, openWorldHint: false };
   const remote = { readOnlyHint: true, openWorldHint: true };
-  const wrap = (handler) => async (args) => {
+  const wrap = (handler) => async (args, extra) => {
     try {
-      const result = await handler(args);
+      const result = await handler(args, extra);
       return result?.content ? result : json(result);
     } catch (error) {
       return fail(error.message || String(error));
@@ -550,6 +590,64 @@ export function createPetMcpServer(deps = {}) {
     inputSchema: { asin: z.string().trim().describe('ASIN'), limit: z.number().int().min(1).max(9).default(7).describe('最多几张,主图在前') },
     annotations: remote,
   }, wrap((args) => getProductImages(args, deps)));
+
+  // 提议类:只写网站自己的待确认队列,不碰亚马逊
+  const propose = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false };
+  const userOf = (extra) => extra?.authInfo?.extra?.userId ?? null;
+  const reason = z.string().trim().min(1).max(1000).describe('为什么改:写依据的数据');
+
+  server.registerTool('propose_listing_changes', {
+    title: '提议修改 Listing',
+    description: '把标题、五点描述、后台搜索词、售价的修改放进网站「待确认改动」队列,店主确认后网站才用 SP-API 提交到亚马逊。会实时读亚马逊上的当前值记为「改动前」,并检查标题 200 字符、后台搜索词 249 字节、和现在一样、低于保本价等;不合格的放在 rejected 里。同一个 SKU 同一项还没确认的旧提议会被替代。',
+    inputSchema: {
+      title: z.string().trim().min(1).max(100).describe('这批改动的标题,如「方窝牛津 S/M 标题和五点」'),
+      summary: z.string().trim().max(2000).optional().describe('整批的思路和依据,显示在确认页上'),
+      changes: z.array(z.object({
+        sku: z.string().trim().min(1).max(100).describe('卖家 SKU(list_skus 里的 sku)'),
+        field: z.enum(['title', 'bullets', 'search_terms', 'price']).describe('title 标题 / bullets 五点 / search_terms 后台搜索词 / price 售价'),
+        value: z.union([z.string(), z.array(z.string()).max(10), z.number()])
+          .describe('新值:title、search_terms 填文字(后台词用空格分隔);bullets 填文字数组,按顺序给全部条目;price 填美元数字'),
+        reason,
+      })).min(1).max(40),
+    },
+    annotations: { ...propose, openWorldHint: true },
+  }, wrap((args, extra) => proposeListing(args, { ...deps, userId: userOf(extra) })));
+
+  server.registerTool('propose_ad_changes', {
+    title: '提议修改广告',
+    description: '把广告改动放进网站「待确认改动」队列:暂停/启用广告活动、广告组、关键词、商品定向、商品广告,改竞价、广告组默认竞价、每日预算,加否定关键词或否定商品。店主确认后:配置了亚马逊广告 API 就直接执行,没配置就生成批量表让店主上传。需要广告后台的数字编号(批量表里的广告活动编号、广告组编号、关键词编号、商品投放 ID、广告编号)。',
+    inputSchema: {
+      title: z.string().trim().min(1).max(100).describe('这批改动的标题'),
+      summary: z.string().trim().max(2000).optional().describe('整批的思路和依据'),
+      changes: z.array(z.object({
+        action: z.enum(AD_ACTIONS).describe('pause 暂停 / enable 启用 / set_bid 改竞价 / set_budget 改每日预算 / add_negative 加否定'),
+        entity: z.enum(AD_ENTITIES).optional().describe('pause、enable、set_bid 时的对象:campaign 广告活动 / adGroup 广告组(set_bid 时是默认竞价) / keyword 关键词 / productTarget 商品定向 / productAd 商品广告'),
+        campaignId: z.string().trim().min(1).max(20).describe('广告活动编号'),
+        adGroupId: z.string().trim().max(20).optional().describe('广告组编号:对象不是广告活动时、以及广告组级否定时必填'),
+        entityId: z.string().trim().max(20).optional().describe('关键词编号、商品投放 ID 或广告编号(对象是 keyword、productTarget、productAd 时必填)'),
+        campaignName: z.string().trim().max(200).optional().describe('广告活动名称,显示用'),
+        adGroupName: z.string().trim().max(200).optional().describe('广告组名称,显示用'),
+        label: z.string().trim().max(300).optional().describe('关键词文本、定向表达式或 SKU,显示用'),
+        bid: z.number().optional().describe('set_bid 的新竞价(美元)'),
+        budget: z.number().optional().describe('set_budget 的新每日预算(美元)'),
+        current: z.union([z.number(), z.string()]).optional().describe('当前竞价/预算,或当前状态 enabled/paused,来自用户给的数据'),
+        level: z.enum(['adGroup', 'campaign']).optional().describe('add_negative 加在广告组(默认)还是广告活动上'),
+        matchType: z.enum(['exact', 'phrase', 'asin']).optional().describe('add_negative:exact 否定精准 / phrase 否定词组 / asin 否定商品'),
+        negativeText: z.string().trim().max(100).optional().describe('add_negative 的否定词或 ASIN'),
+        reason,
+      })).min(1).max(40),
+    },
+    annotations: propose,
+  }, wrap((args, extra) => proposeAds(args, { ...deps, userId: userOf(extra) })));
+
+  server.registerTool('list_change_proposals', {
+    title: '待确认改动的进度',
+    description: '查看提过的改动现在什么状态:待确认、已确认排队、已提交亚马逊等生效、已生效、未生效、待导出批量表、失败(带原因和亚马逊报的问题)、已拒绝。',
+    inputSchema: { status: z.enum(['all', 'pending', 'active', 'done', 'closed']).default('all')
+      .describe('pending 待确认 / active 执行中、待导出、失败 / done 已生效或未生效 / closed 已拒绝或被替代'),
+    limit: z.number().int().min(1).max(200).default(50) },
+    annotations: local,
+  }, wrap((args) => changeProposals(args, deps)));
 
   return server;
 }
