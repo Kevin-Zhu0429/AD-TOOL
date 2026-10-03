@@ -109,15 +109,21 @@ export async function downloadReportDocument(document) {
  * 边下载边解码报告,每收到一段文字调一次 onText。只用于 UTF-8 的 JSON 报告。
  * 品牌分析搜索词报告整个美国站一周有几个 GB,不能像小报告那样整份读进内存。
  */
-export async function streamReportDocument(document, onText) {
+export async function streamReportDocument(document, onText, onBytes = () => {}) {
   let response;
   try {
-    response = await fetch(document.url, { signal: AbortSignal.timeout(60 * 60_000) });
+    // 不设总超时:几 GB 的文件在慢的线路上可能要下一个多小时,只要还在收数据就继续
+    response = await fetch(document.url);
   } catch (error) {
     throw new Error(`下载亚马逊报告失败：${clean(error.message) || '网络错误'}`);
   }
   if (!response.ok || !response.body) throw new Error(`下载亚马逊报告失败 (${response.status})`);
-  let stream = response.body;
+  const total = Number(response.headers.get('content-length')) || null;
+  let received = 0;
+  // 统计已下载的(压缩后)字节数,给页面显示进度
+  let stream = response.body.pipeThrough(new TransformStream({
+    transform(chunk, controller) { received += chunk.byteLength; onBytes(received, total); controller.enqueue(chunk); },
+  }));
   if (clean(document.compressionAlgorithm).toUpperCase() === 'GZIP') stream = stream.pipeThrough(new DecompressionStream('gzip'));
   for await (const text of stream.pipeThrough(new TextDecoderStream('utf-8'))) onText(text);
 }
@@ -128,7 +134,7 @@ export const amazonGateway = { request: spApiRequest, download: downloadReportDo
  * 从流式 JSON 里逐条取出「根对象里某个数组」的元素对象,不把整个文件拼成一个字符串。
  * 只认根对象下一层数组里的对象(品牌分析报告的 dataByDepartmentAndSearchTerm),字符串里的括号不算。
  */
-export function createArrayRecordScanner(onRecord) {
+export function createArrayRecordScanner(onRecord, { keep = () => true } = {}) {
   const stack = [];
   let inString = false, escaped = false, pieces = null;
   return (text) => {
@@ -151,7 +157,8 @@ export function createArrayRecordScanner(onRecord) {
           pieces.push(text.slice(start, index + 1));
           const raw = pieces.join('');
           pieces = null; start = -1;
-          onRecord(JSON.parse(raw));
+          // keep 先看原文,不要的记录不做 JSON.parse(整站报告几千万行,解析是大头)
+          if (keep(raw)) onRecord(JSON.parse(raw));
         }
       }
     }
@@ -179,17 +186,24 @@ async function waitOutThrottle(call, onProgress, stage) {
  * 平面文件默认按 TSV 解析;品牌分析这类 JSON 报告传 parse: JSON.parse。
  * onProgress 依次收到 stage: creating → throttled(被限流时)→ processing → downloading
  */
-export async function runReport(account, reportType, { start, end, options, parse = parseTsv, onDocument, onProgress = () => {} } = {}, gateway = amazonGateway) {
+export async function runReport(account, reportType, { start, end, options, parse = parseTsv, onDocument, onProgress = () => {},
+  maxWaitMs = null, reuse = false } = {}, gateway = amazonGateway) {
   const body = { reportType, marketplaceIds: [US_MARKETPLACE] };
   if (options) body.reportOptions = options;
   if (start) body.dataStartTime = start.toISOString();
   if (end) body.dataEndTime = end.toISOString();
   onProgress({ stage: 'creating' });
-  const created = await waitOutThrottle(() => gateway.request(account, REGION, 'POST', '/reports/2021-06-30/reports', { body }), onProgress, 'creating');
-  const reportId = clean(created?.reportId);
+  // 很慢的报告:先找最近 3 天里同类型、同时间段已经申请过的,接着等它或直接下载,不重新排队
+  let reportId = reuse ? await findRecentReport(account, reportType, start, end, gateway, onProgress) : '';
+  if (!reportId) {
+    const created = await waitOutThrottle(() => gateway.request(account, REGION, 'POST', '/reports/2021-06-30/reports', { body }), onProgress, 'creating');
+    reportId = clean(created?.reportId);
+  }
   if (!reportId) throw new Error(`亚马逊没有返回报告编号（${reportType}）`);
-  onProgress({ stage: 'processing' });
-  for (let poll = 0; poll < reportTiming.maxPolls; poll += 1) {
+  const startedAt = Date.now();
+  onProgress({ stage: 'processing', waitedMs: 0 });
+  const deadline = maxWaitMs ?? reportTiming.pollMs * reportTiming.maxPolls;
+  for (let poll = 0; ; poll += 1) {
     const report = await waitOutThrottle(() => gateway.request(account, REGION, 'GET', `/reports/2021-06-30/reports/${reportId}`), onProgress, 'processing');
     const status = clean(report?.processingStatus);
     if (status === 'DONE') {
@@ -202,9 +216,24 @@ export async function runReport(account, reportType, { start, end, options, pars
     // 亚马逊对没有数据的时间段直接取消报告
     if (status === 'CANCELLED') return parse === parseTsv && !onDocument ? [] : null;
     if (status === 'FATAL') throw new Error(`亚马逊生成报告失败（${reportType}）`);
+    if (poll + 1 >= reportTiming.maxPolls && Date.now() - startedAt + reportTiming.pollMs > deadline) break;
     await sleep(reportTiming.pollMs);
+    onProgress({ stage: 'processing', waitedMs: Date.now() - startedAt });
   }
   throw new Error(`亚马逊报告长时间未生成完（${reportType}），请稍后再同步`);
+}
+
+/** 最近 3 天申请过、时间段相同、还没失败的报告;有已完成的优先 */
+async function findRecentReport(account, reportType, start, end, gateway, onProgress) {
+  const payload = await waitOutThrottle(() => gateway.request(account, REGION, 'GET', '/reports/2021-06-30/reports', { query: {
+    reportTypes: reportType, processingStatuses: 'IN_QUEUE,IN_PROGRESS,DONE', marketplaceIds: US_MARKETPLACE, pageSize: 100,
+    createdSince: new Date(Date.now() - 3 * DAY_MS).toISOString(),
+  } }), onProgress, 'creating').catch(() => null);
+  const day = (value) => clean(value).slice(0, 10);
+  const same = (payload?.reports ?? []).filter((report) => (!start || day(report.dataStartTime) === day(start.toISOString()))
+    && (!end || day(report.dataEndTime) === day(end.toISOString())));
+  const pick = same.find((report) => report.processingStatus === 'DONE') ?? same.find((report) => report.processingStatus !== 'DONE');
+  return clean(pick?.reportId);
 }
 
 // ---------- 数据 ----------

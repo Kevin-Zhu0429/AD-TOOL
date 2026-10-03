@@ -320,6 +320,11 @@ function MetricsImport({ onClose, onDone }) {
   </AppDialog>;
 }
 
+const JOB_LABEL = {
+  suggest: { label: '竞品推荐进度', hint: '搜索词报告是整个美国站一周的数据，亚马逊生成常要半小时到一个多小时，下载筛选再要十几分钟。' },
+  daily: { label: '竞品同步进度', hint: '竞品价格接口每 10 秒只能查 20 个 ASIN，竞品多时要几分钟。' },
+};
+
 export default function PetIntelPage({ market }) {
   const [tab, setTab] = useState('monitor');
   const [overview, setOverview] = useState(null), [styleKey, setStyleKey] = useState('');
@@ -333,13 +338,16 @@ export default function PetIntelPage({ market }) {
     } catch (e) { setError(e.message); }
   }
   useEffect(() => { load(); }, [revision]);
-  const running = overview?.sync?.running;
+  const jobs = overview?.sync?.jobs ?? {};
+  const running = Object.keys(JOB_LABEL).filter((name) => jobs[name]).join(',');
   useEffect(() => {
     if (!running) return undefined;
     const timer = setInterval(async () => {
       const status = await api.competitorStatus().catch(() => null);
       if (!status) return;
-      if (!status.running) setRevision((n) => n + 1);
+      const still = Object.keys(JOB_LABEL).filter((name) => status.jobs?.[name]).join(',');
+      // 有任务跑完就整页重新读,数据才是新的
+      if (still !== running) setRevision((n) => n + 1);
       else setOverview((old) => old && { ...old, sync: status });
     }, 5000);
     return () => clearInterval(timer);
@@ -357,10 +365,11 @@ export default function PetIntelPage({ market }) {
         {sync_ && (sync_.configured ? ` 上次同步：${daily?.lastSuccess ? beijing(daily.lastSuccess.completedAt) : '尚未同步'}；上次推荐：${suggest?.lastSuccess ? `${beijing(suggest.lastSuccess.completedAt)}（${suggest.lastSuccess.week} 那周）` : '尚未生成'}（北京时间）。` : ` ${sync_.issues?.[0] ?? '服务器还没有配置宠物店铺的亚马逊 SP-API 凭证。'}`)}</p></div>
       <div className="row wrap">
         <button className="btn" onClick={() => setImporting(true)}>导入卖家精灵数据</button>
-        <button className="btn" disabled={busy || !sync_?.configured || !!running} onClick={() => sync('suggest')} title="下载最近一周的品牌分析搜索词报告(整站几 GB,要几分钟到十几分钟)">重新推荐竞品</button>
-        <button className="btn primary" disabled={busy || !sync_?.configured || !!running} onClick={() => sync('daily')}>{running ? '后台同步中…' : '同步竞品数据'}</button></div></header>
-    {running && <div className="card intel-sync"><SyncProgress progress={sync_.progress} label={running === 'daily' ? '竞品同步进度' : '竞品推荐进度'} />
-      <p className="hint">{running === 'suggest' ? '搜索词报告是整个美国站的数据，下载和筛选要几分钟到十几分钟。' : '竞品价格接口每 10 秒只能查 20 个 ASIN，竞品多时要几分钟。'}完成后自动刷新。</p></div>}
+        <button className="btn" disabled={busy || !sync_?.configured || !!jobs.suggest} onClick={() => sync('suggest')} title="下载最近一周的品牌分析搜索词报告(整站几 GB,亚马逊生成常要半小时以上)">{jobs.suggest ? '推荐生成中…' : '重新推荐竞品'}</button>
+        <button className="btn primary" disabled={busy || !sync_?.configured || !!jobs.daily} onClick={() => sync('daily')}>{jobs.daily ? '后台同步中…' : '同步竞品数据'}</button></div></header>
+    {Object.entries(JOB_LABEL).filter(([name]) => jobs[name]).map(([name, { label, hint }]) =>
+      <div key={name} className="card intel-sync"><SyncProgress progress={jobs[name]} label={label} />
+        <p className="hint">{hint}完成后自动刷新，关掉页面也会在后台继续。</p></div>)}
     {failed(daily) && <p className="note err" role="status">上次同步失败（{beijing(daily.lastError.at)}）：{daily.lastError.message}</p>}
     {failed(suggest) && <p className="note err" role="status">上次推荐失败（{beijing(suggest.lastError.at)}）：{suggest.lastError.message}</p>}
     {daily?.pricingError && <p className="note warn" role="status">竞品价格没读到：{daily.pricingError.message}。需要在开发者应用里勾选「定价」角色并重新授权，其它数据不受影响。</p>}

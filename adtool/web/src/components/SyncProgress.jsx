@@ -12,7 +12,7 @@ const STAGES = {
 
 /**
  * 亚马逊后台同步的进度条(和 ABA 同步同一个样式)。
- * progress: { total, done, step, stage, retryAt },来自 /price-strategy/status
+ * progress: { total, done, step, stage, retryAt, detail? },来自各同步接口的 status;有 detail 时显示它
  */
 export default function SyncProgress({ progress, label = '亚马逊同步进度' }) {
   const [now, setNow] = useState(Date.now());
@@ -24,10 +24,10 @@ export default function SyncProgress({ progress, label = '亚马逊同步进度'
     return () => clearInterval(timer);
   }, [throttled]);
   if (!progress) return null;
-  const { total, done, step, stage, retryAt } = progress;
+  const { total, done, step, stage, retryAt, detail: custom } = progress;
   const percent = total ? Math.min(99, Math.round((done / total) * 100)) : 0;
   const wait = retryAt ? Math.max(0, Math.ceil((Date.parse(retryAt) - now) / 1000)) : 0;
-  const detail = throttled ? `亚马逊接口限流，${wait ? `${wait} 秒后` : '马上'}自动重试` : STAGES[stage] ?? '同步中';
+  const detail = throttled ? `亚马逊接口限流，${wait ? `${wait} 秒后` : '马上'}自动重试` : custom || STAGES[stage] || '同步中';
   return <div className="sync-progress" role="status">
     <div className="sync-progress-head">
       <strong>{total ? `第 ${Math.min(done + 1, total)} / ${total} 步` : '准备中'}</strong>

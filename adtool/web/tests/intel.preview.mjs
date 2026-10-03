@@ -140,6 +140,20 @@ try {
   await page.getByRole('tab', { name: '竞品监控' }).click();
   await page.getByText('竞品对比').waitFor();
   await page.screenshot({ path: `${output}/产品情报-手机.png` });
+  // 推荐任务在等亚马逊生成整站报告时的进度卡片
+  await page.setViewportSize({ width: 1600, height: 1100 });
+  const running = { total: 4, done: 0, step: '搜索词报告（09-20~09-26 那周）', stage: 'processing', retryAt: null, detail: '亚马逊正在生成整站报告，已等 27 分钟（常要 30–90 分钟）' };
+  await page.route('**/api/competitors/overview', async (route) => {
+    const response = await route.fetch(); const data = await response.json();
+    data.sync.jobs = { daily: null, suggest: running }; data.sync.running = 'suggest';
+    await route.fulfill({ response, json: data });
+  });
+  await page.route('**/api/competitors/status', (route) => route.fulfill({ json: { configured: true, issues: [], running: 'suggest', jobs: { daily: null, suggest: running }, daily: {}, suggest: {} } }));
+  await page.reload();
+  await page.locator('.topnav').getByRole('button', { name: '产品情报', exact: true }).click({ timeout: 5000 }).catch(() => {});
+  await page.locator('.intel-sync').waitFor();
+  await page.locator('.lib-head').screenshot({ path: `${output}/产品情报-推荐进行中.png` });
+  await page.locator('.intel-sync').screenshot({ path: `${output}/产品情报-推荐进度.png` });
   if (errors.length) console.error('page errors', errors);
   console.log('done', output);
 } finally {

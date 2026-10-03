@@ -47,6 +47,7 @@ function fakeAmazon(world) {
         return { attributes: { generic_keyword: [{ value: world.backend ?? 'pet mat', marketplace_id: MARKET }] },
           issues: world.issues ?? [] };
       }
+      if (method === 'GET' && path === '/reports/2021-06-30/reports') return { reports: world.listed ?? [] };
       if (method === 'POST' && path === '/reports/2021-06-30/reports') {
         world.reports.push(body);
         return { reportId: `r${world.reports.length}` };
@@ -57,10 +58,13 @@ function fakeAmazon(world) {
       if (document) return { url: document[1] };
       throw new Error(`unexpected ${method} ${path}`);
     },
-    async stream(document, onText) {
+    async stream(document, onText, onBytes) {
       // 故意切成很碎的块,还在字符串里放括号,检查流式解析
       const text = JSON.stringify(world.searchTerms);
-      for (let index = 0; index < text.length; index += 37) onText(text.slice(index, index + 37));
+      for (let index = 0; index < text.length; index += 37) {
+        onText(text.slice(index, index + 37));
+        onBytes(Math.min(index + 37, text.length), text.length);
+      }
     },
   };
   return { gateway, calls };
@@ -159,8 +163,17 @@ test('competitors are suggested from ABA, tracked daily, and changes are recorde
   assert.equal((await call('/competitors', owner, { styleKey: 'NOPE', asins: 'B0SOLO0001' })).status, 400);
   world.catalog.B0OTHER001 = catalogItem('B0OTHER001', { parent: 'B0RIVALPR1' });
 
-  // 下一周重新推荐:已加入、已忽略的不再出现
-  await suggestCompetitors(1, fakeAmazon(world).gateway, ENV, () => new Date('2026-10-02T18:00:00Z'));
+  // 重新推荐:亚马逊上这周的报告已经有了(比如上次跑到一半服务器重启),直接用,不再申请新的
+  world.listed = [
+    { reportId: 'r9', processingStatus: 'IN_PROGRESS', dataStartTime: '2026-09-20T00:00:00+00:00', dataEndTime: '2026-09-26T23:59:59+00:00' },
+    { reportId: 'r1', processingStatus: 'DONE', dataStartTime: '2026-09-20T00:00:00+00:00', dataEndTime: '2026-09-26T23:59:59+00:00' },
+    { reportId: 'r8', processingStatus: 'DONE', dataStartTime: '2026-09-13T00:00:00+00:00', dataEndTime: '2026-09-19T23:59:59+00:00' },
+  ];
+  const reused = fakeAmazon(world);
+  // 已加入、已忽略的不再出现
+  await suggestCompetitors(1, reused.gateway, ENV, () => new Date('2026-10-02T18:00:00Z'));
+  assert.equal(world.reports.length, 1);
+  assert.ok(reused.calls.some((entry) => entry.path === '/reports/2021-06-30/reports/r1'));
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM pet_competitors WHERE status='suggested'").get().n, 0);
 
   // 第一天同步:没有「定价」角色也能同步目录,只记下原因
@@ -239,6 +252,11 @@ test('stream scanner, scoring and text helpers', async () => {
     dataByDepartmentAndSearchTerm: [{ searchTerm: 'dog {bed} "x"', clickedAsin: 'B000000001' }, { searchTerm: 'cat bed]', clickedAsin: 'B000000002' }] });
   for (let index = 0; index < text.length; index += 5) scan(text.slice(index, index + 5));
   assert.deepEqual(records.map((record) => record.searchTerm), ['dog {bed} "x"', 'cat bed]']);
+  // keep 先看原文,不要的记录不解析
+  const kept = [];
+  const filtered = createArrayRecordScanner((record) => kept.push(record.clickedAsin), { keep: (raw) => raw.includes('cat bed') });
+  filtered(text);
+  assert.deepEqual(kept, ['B000000002']);
 
   assert.ok(termCovered('dog beds', 'Orthopedic Dog Bed for Large Dogs'));
   assert.ok(!termCovered('cat bed', 'Orthopedic Dog Bed'));
