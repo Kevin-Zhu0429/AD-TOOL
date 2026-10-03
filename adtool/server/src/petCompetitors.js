@@ -176,8 +176,11 @@ const setState = (key, value) => db.prepare(`INSERT INTO pet_price_sync_state(ke
   ON CONFLICT(key) DO UPDATE SET value=excluded.value`).run(key, JSON.stringify(value));
 const clearState = (key) => db.prepare('DELETE FROM pet_price_sync_state WHERE key=?').run(key);
 
-let job = null;
-let progress = null;
+// 两个任务各管各的:推荐要等几十分钟的大报告,不能挡住每日同步。值是正在跑的进度
+const jobs = { daily: null, suggest: null };
+const BUSY = { daily: '竞品数据正在同步', suggest: '正在生成竞品推荐' };
+// 搜索词报告整站几 GB,亚马逊生成常要半小时到一两个小时
+const SEARCH_TERMS_MAX_WAIT_MS = 4 * 60 * 60_000;
 
 function accountOrThrow(env) {
   const { account, issues } = petSpConfig(env);
@@ -187,8 +190,8 @@ function accountOrThrow(env) {
 
 async function exclusive(name, prefix, work) {
   if (!isPet) throw new Error('只支持宠物版');
-  if (job) throw Object.assign(new Error(job === 'daily' ? '竞品数据正在同步' : '正在生成竞品推荐'), { status: 409 });
-  job = name;
+  if (jobs[name]) throw Object.assign(new Error(BUSY[name]), { status: 409 });
+  jobs[name] = { total: 1, done: 0, step: '准备中', stage: 'starting', retryAt: null };
   const startedAt = new Date().toISOString();
   setState(`${prefix}_attempt`, { startedAt, day: pacificDay(new Date()) });
   try {
@@ -202,13 +205,14 @@ async function exclusive(name, prefix, work) {
     const message = String(error.message).slice(0, 300);
     setState(`${prefix}_error`, { at: new Date().toISOString(), message });
     throw Object.assign(new Error(message), { status: error.status });
-  } finally { job = null; progress = null; }
+  } finally { jobs[name] = null; }
 }
 
 export function competitorSyncStatus(env = process.env) {
   const { account, issues } = petSpConfig(env);
   const pick = (prefix) => ({ lastSuccess: state(`${prefix}_success`), lastAttempt: state(`${prefix}_attempt`), lastError: state(`${prefix}_error`) });
-  return { configured: !!account, issues, running: job, progress,
+  const running = Object.keys(jobs).filter((name) => jobs[name]);
+  return { configured: !!account, issues, running: running[0] ?? null, jobs: { ...jobs },
     daily: { ...pick('competitors_daily'), pricingError: state('competitors_pricing_error'), listingError: state('competitors_listing_error') },
     suggest: pick('competitors_suggest') };
 }
@@ -303,7 +307,7 @@ export function syncCompetitors(actorId = null, gateway = amazonGateway, env = p
     const ownAsins = [...new Set(styles.flatMap((style) => style.asins))];
     let tracked = db.prepare("SELECT id, style_key, asin FROM pet_competitors WHERE status='active'").all();
     if (!tracked.length && !ownAsins.length) throw Object.assign(new Error('还没有竞品,SKU 库里也没有 ASIN'), { status: 400 });
-    progress = { total: 5, done: 0, step: '读取竞品家族', stage: 'working', retryAt: null };
+    const progress = Object.assign(jobs.daily, { total: 5, done: 0, step: '读取竞品家族', stage: 'working', retryAt: null });
     const step = (name) => Object.assign(progress, { done: progress.done + 1, step: name, stage: 'working' });
 
     // 1. 家族本身。存的是子体的(手动加的子体 ASIN),换成父 ASIN
@@ -417,19 +421,35 @@ export function scoreCandidates(terms, topByTerm, ownAsins) {
 }
 
 /** 下载一周的搜索词报告,只留核心词那几行。报告还没出返回 null */
-async function fetchTopClicked(account, week, termSet, gateway) {
+const SEARCH_TERM_FIELD = /"searchTerm"\s*:\s*"((?:[^"\\]|\\.)*)"/;
+
+async function fetchTopClicked(account, week, termSet, gateway, progress) {
   const rows = [];
+  let records = 0;
+  const label = `${week.week_start.slice(5)}~${week.week_end.slice(5)}`;
   const scan = createArrayRecordScanner((record) => {
     const term = clean(record?.searchTerm).toLowerCase();
     if (!termSet.has(term)) return;
     const row = topRow(record);
     if (row.asin && row.rank) rows.push(row);
-  });
+  }, { keep: (raw) => {
+    records += 1;
+    const match = SEARCH_TERM_FIELD.exec(raw);
+    if (!match) return true;
+    try { return termSet.has(clean(JSON.parse(`"${match[1]}"`)).toLowerCase()); } catch { return true; }
+  } });
+  const mb = (bytes) => `${Math.round(bytes / 1048576)} MB`;
+  const onBytes = (received, total) => Object.assign(progress, { stage: 'downloading',
+    detail: `已下载 ${mb(received)}${total ? ` / ${mb(total)}` : ''}，扫过 ${records.toLocaleString('en-US')} 行，找到核心词 ${rows.length} 行`,
+    percentHint: total ? received / total : null });
   const done = await runReport(account, SEARCH_TERMS_REPORT, {
     start: new Date(`${week.week_start}T00:00:00Z`), end: new Date(`${week.week_end}T00:00:00Z`),
-    options: { reportPeriod: 'WEEK' },
-    onDocument: async (document) => { await gateway.stream(document, scan); return true; },
-    onProgress: ({ stage, retryAt = null }) => progress && Object.assign(progress, { stage, retryAt }),
+    options: { reportPeriod: 'WEEK' }, maxWaitMs: SEARCH_TERMS_MAX_WAIT_MS, reuse: true,
+    onDocument: async (document) => { await gateway.stream(document, scan, onBytes); return true; },
+    onProgress: ({ stage, retryAt = null, waitedMs }) => Object.assign(progress, { stage, retryAt,
+      step: `搜索词报告（${label} 那周）`,
+      detail: stage === 'processing' ? `亚马逊正在生成整站报告，已等 ${Math.round((waitedMs ?? 0) / 60_000)} 分钟（常要 30–90 分钟）`
+        : stage === 'downloading' ? '开始下载' : undefined }),
   }, gateway);
   return done ? rows : null;
 }
@@ -445,12 +465,12 @@ export function suggestCompetitors(actorId = null, gateway = amazonGateway, env 
     const styles = ownStyles(today).map((style) => ({ ...style, terms: coreTerms(style.asins) })).filter((style) => style.terms.length);
     if (!styles.length) throw Object.assign(new Error('ABA 还没有自家 ASIN 的搜索词数据,请先在 ABA 页面同步'), { status: 400 });
     const termSet = new Set(styles.flatMap((style) => style.terms.map((term) => term.term)));
-    progress = { total: 4, done: 0, step: '下载搜索词报告(整个美国站,文件很大)', stage: 'creating', retryAt: null };
+    const progress = Object.assign(jobs.suggest, { total: 4, done: 0, step: '搜索词报告', stage: 'creating', retryAt: null });
 
     // 1. 最近一周的报告还没出就用上一周
     let week = null, rows = null;
     for (const candidate of completeWeeks(today, 2)) {
-      rows = await fetchTopClicked(account, candidate, termSet, gateway);
+      rows = await fetchTopClicked(account, candidate, termSet, gateway, progress);
       if (rows) { week = candidate; break; }
     }
     if (!rows) throw new Error('亚马逊最近两周的搜索词报告都还没有生成,过几天再试');
@@ -467,7 +487,7 @@ export function suggestCompetitors(actorId = null, gateway = amazonGateway, env 
     }
 
     // 2. 打分,再查候选的目录(家族、类目)
-    Object.assign(progress, { done: 1, step: '读取候选竞品的目录', stage: 'working' });
+    Object.assign(progress, { done: 1, step: '读取候选竞品的目录', stage: 'working', detail: undefined });
     const ownAsins = [...new Set(styles.flatMap((style) => style.asins))];
     const scored = styles.map((style) => ({ style, candidates: scoreCandidates(style.terms, topByTerm, ownAsins) }));
     const candidateAsins = [...new Set(scored.flatMap(({ candidates }) => [...candidates.keys()]))];
@@ -807,7 +827,7 @@ competitorRouter.post('/', async (req, res) => {
   // 配好了亚马逊凭证就先查一次家族,马上能看到标题和图片;查不到不影响加入
   let details = new Map();
   const { account } = petSpConfig();
-  if (account && !job) {
+  if (account) {
     try { details = await fetchCatalogDetails(account, asins); saveCatalog(details); } catch { details = new Map(); }
   }
   const upsert = db.prepare(`INSERT INTO pet_competitors (style_key, asin, status, source, added_by) VALUES (?, ?, 'active', 'manual', ?)
@@ -869,8 +889,8 @@ competitorRouter.get('/status', (req, res) => res.json(competitorSyncStatus()));
 competitorRouter.post('/sync', (req, res) => {
   const status = competitorSyncStatus();
   if (!status.configured) return res.status(503).json({ error: status.issues[0] ?? '服务器还没有配置宠物店铺的亚马逊 SP-API 凭证' });
-  if (status.running) return res.status(409).json({ error: status.running === 'daily' ? '竞品数据正在同步' : '正在生成竞品推荐' });
   const kind = req.body?.kind === 'suggest' ? 'suggest' : 'daily';
+  if (status.jobs[kind]) return res.status(409).json({ error: BUSY[kind] });
   const run = kind === 'suggest' ? suggestCompetitors : syncCompetitors;
   void run(req.session.user.id).catch((error) => console.error(`[competitors-${kind}]`, error.message));
   res.status(202).json({ accepted: true, kind });
@@ -878,21 +898,23 @@ competitorRouter.post('/sync', (req, res) => {
 
 /**
  * 每小时检查一次:美西时间每天第一次检查时同步竞品数据;
- * 推荐每周一次(上次尝试满 6 天),需要 ABA 已经有自家 ASIN 的数据。
+ * 推荐每周一次(上次成功满 6 天;失败的 3 小时后重试),需要 ABA 已经有自家 ASIN 的数据。两个任务互不等待。
  */
 export function startCompetitorScheduler() {
   if (!isPet || process.env.NODE_ENV === 'test') return;
-  const run = async () => {
+  const ago = (time) => (time ? Date.now() - Date.parse(time) : Infinity);
+  const run = () => {
     const status = competitorSyncStatus();
-    if (!status.configured || status.running) return;
+    if (!status.configured) return;
     const today = pacificDay(new Date());
     const hasAba = db.prepare("SELECT 1 FROM aba_asin_reports WHERE user_id=? AND marketplace='US' LIMIT 1").get(PET_SHOP_ID);
-    const lastSuggest = status.suggest.lastAttempt?.startedAt;
-    if (hasAba && (!lastSuggest || Date.now() - Date.parse(lastSuggest) >= 6 * 86400000)) {
-      try { await suggestCompetitors(); } catch (error) { console.error('[competitors-suggest]', error.message); }
+    // 推荐:上次成功满 6 天;失败或中途重启的,3 小时后再试(亚马逊那边已申请的报告会接着用)
+    if (hasAba && !status.jobs.suggest && ago(status.suggest.lastSuccess?.completedAt) >= 6 * 86400000
+      && ago(status.suggest.lastAttempt?.startedAt) >= 3 * 60 * 60_000) {
+      void suggestCompetitors().catch((error) => console.error('[competitors-suggest]', error.message));
     }
-    if (status.daily.lastAttempt?.day !== today) {
-      try { await syncCompetitors(); } catch (error) { console.error('[competitors-daily]', error.message); }
+    if (!status.jobs.daily && status.daily.lastAttempt?.day !== today) {
+      void syncCompetitors().catch((error) => console.error('[competitors-daily]', error.message));
     }
   };
   setTimeout(run, 10 * 60_000).unref();
