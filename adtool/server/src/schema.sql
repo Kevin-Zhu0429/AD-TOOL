@@ -584,3 +584,58 @@ CREATE TABLE IF NOT EXISTS pet_search_term_top (
   search_rank INTEGER,
   PRIMARY KEY (week_end, term, rank)
 );
+
+-- ---------- 改动待确认队列 ----------
+-- Claude(通过连接器)提出的 Listing 和广告改动先放这里,超级管理员在「待确认改动」页勾选确认后才执行:
+-- Listing 用 SP-API 提交;广告有广告 API 凭证时直接调用,没有时生成批量表人工上传。每一步都记进 pet_change_log。
+CREATE TABLE IF NOT EXISTS pet_change_batches (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  title TEXT NOT NULL,
+  summary TEXT,
+  source TEXT NOT NULL DEFAULT 'claude',
+  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+
+-- kind:listing_title / listing_bullets / listing_search_terms / listing_price / ad_state / ad_bid / ad_budget / ad_negative
+-- target_key:同一个对象同一个字段只留一条待确认,新提议会替代旧的
+-- status:pending 待确认、queued 排队、running 执行中、submitted 已提交等生效、applied 已生效、not_applied 未生效、
+--        export 待导出批量表、exported 已导出待上传、failed 失败、rejected 已拒绝、superseded 被新提议替代
+CREATE TABLE IF NOT EXISTS pet_change_proposals (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  batch_id INTEGER REFERENCES pet_change_batches(id) ON DELETE SET NULL,
+  kind TEXT NOT NULL,
+  target_key TEXT NOT NULL,
+  target_json TEXT NOT NULL,
+  before_json TEXT,
+  after_json TEXT NOT NULL,
+  reason TEXT NOT NULL DEFAULT '',
+  warnings_json TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  channel TEXT,
+  result_json TEXT,
+  error TEXT,
+  source TEXT NOT NULL DEFAULT 'claude',
+  revert_of INTEGER REFERENCES pet_change_proposals(id) ON DELETE SET NULL,
+  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  decided_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  decided_at TEXT,
+  executed_at TEXT,
+  verified_at TEXT,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_pet_change_status ON pet_change_proposals(status, id);
+CREATE INDEX IF NOT EXISTS idx_pet_change_target ON pet_change_proposals(target_key, status);
+
+CREATE TABLE IF NOT EXISTS pet_change_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  proposal_id INTEGER REFERENCES pet_change_proposals(id) ON DELETE CASCADE,
+  batch_id INTEGER,
+  actor TEXT NOT NULL,
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  action TEXT NOT NULL,
+  detail_json TEXT,
+  at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_pet_change_log_at ON pet_change_log(id DESC);

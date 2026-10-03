@@ -192,8 +192,11 @@ test('Claude connector: OAuth login, read-only tools and token lifecycle', async
     t.after(() => mcp.close());
     const tools = (await mcp.listTools()).tools;
     assert.deepEqual(tools.map((tool) => tool.name).sort(), ['get_catalog_items', 'get_competitor_overview', 'get_listing', 'get_listing_health',
-      'get_product_images', 'get_sales_stats', 'get_sales_trend', 'get_search_terms', 'get_style_intel', 'list_skus', 'store_overview']);
-    assert.ok(tools.every((tool) => tool.annotations.readOnlyHint));
+      'get_product_images', 'get_sales_stats', 'get_sales_trend', 'get_search_terms', 'get_style_intel', 'list_change_proposals', 'list_skus',
+      'propose_ad_changes', 'propose_listing_changes', 'store_overview']);
+    // 只有两个提议工具会写东西(写进网站的待确认队列),其余都只读
+    assert.deepEqual(tools.filter((tool) => !tool.annotations.readOnlyHint).map((tool) => tool.name).sort(), ['propose_ad_changes', 'propose_listing_changes']);
+    assert.ok(tools.every((tool) => tool.annotations.destructiveHint !== true));
     const call = async (name, args = {}) => {
       const result = await mcp.callTool({ name, arguments: args });
       assert.ok(!result.isError, result.content[0]?.text);
@@ -298,6 +301,41 @@ test('Claude connector: OAuth login, read-only tools and token lifecycle', async
     const failed = await mcp.callTool({ name: 'get_listing', arguments: {} });
     assert.equal(failed.isError, true);
     assert.match(failed.content[0].text, /sku 或 asin/);
+  });
+
+  await t.test('proposal tools only fill the confirmation queue on the site', async () => {
+    const mcp = new Client({ name: 'test', version: '1.0.0' });
+    await mcp.connect(new StreamableHTTPClientTransport(new URL(`${url}/mcp`), { requestInit: { headers: { Authorization: `Bearer ${tokens.access_token}` } } }));
+    t.after(() => mcp.close());
+    const call = async (name, args) => {
+      const result = await mcp.callTool({ name, arguments: args });
+      assert.ok(!result.isError, result.content[0]?.text);
+      return JSON.parse(result.content[0].text);
+    };
+    const before = backend.gateway.calls.length;
+    const listing = await call('propose_listing_changes', { title: '圆窝 L 标题', summary: '补 calming', changes: [
+      { sku: 'DOG-L', field: 'title', value: 'PawNest Calming Orthopedic Dog Bed Large', reason: 'calming dog bed 搜索量 300,标题里没有' },
+      { sku: 'DOG-L', field: 'search_terms', value: 'calming '.repeat(40), reason: '太长' },
+      { sku: 'DOG-L', field: 'bullets', value: ['Memory foam', 'Washable cover'], reason: '和现在一样' },
+    ] });
+    assert.deepEqual(listing.created.map((item) => item.field), ['title']);
+    assert.deepEqual(listing.rejected.map((item) => item.index), [1, 2]);
+    assert.equal(listing.confirmUrl, `${url}/#changes`);
+    // 只读了一次 Listing,没有往亚马逊写任何东西
+    assert.deepEqual(backend.gateway.calls.slice(before).map((item) => item.method), ['GET']);
+    const owner = backend.db.prepare("SELECT id FROM users WHERE username='owner'").get().id;
+    const saved = backend.db.prepare('SELECT * FROM pet_change_proposals WHERE id=?').get(listing.created[0].id);
+    assert.deepEqual([saved.status, saved.source, saved.created_by, JSON.parse(saved.before_json)], ['pending', 'claude', owner, 'Orthopedic Dog Bed Large']);
+
+    const ads = await call('propose_ad_changes', { title: '暂停', changes: [
+      { action: 'pause', entity: 'keyword', campaignId: '100', adGroupId: '200', entityId: '300', label: 'dog toy', reason: '花费 $40 零转化' }] });
+    assert.equal(ads.created.length, 1);
+    assert.match(ads.notes[0], /未核实/);
+
+    const progress = await call('list_change_proposals', { status: 'pending' });
+    assert.deepEqual(progress.rows.map((row) => [row.change, row.target, row.statusLabel]),
+      [['投放状态', '100 / dog toy', '待确认'], ['标题', 'DOG-L · 圆窝 L Grey', '待确认']]);
+    assert.equal(progress.writeChannels.ads, '批量表（广告 API 未配置）');
   });
 
   await t.test('refresh tokens rotate; disabling the owner cuts access', async () => {

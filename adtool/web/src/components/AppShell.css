@@ -40,6 +40,10 @@
   color: var(--accent-text);
   font-weight: 600;
 }
+.topnav-badge {
+  min-width: 17px; padding: 0 5px; border-radius: 999px; background: var(--red); color: #fff;
+  font-size: 10.5px; font-weight: 650; line-height: 17px; text-align: center; font-variant-numeric: tabular-nums;
+}
 
 .market-wrap { position: relative; }
 .market-pick { width: auto; padding: 5px 9px; font-size: 12px; font-weight: 500; }
@@ -123,6 +127,7 @@
   .topbar-name { display: none; }
   .topnav { margin-left: 4px; }
   .topnav-item span { display: none; }
+  .topnav-item span.topnav-badge { display: inline-block; }
   .topnav-item { padding: 7px 9px; }
   .uname, .usermenu-btn .caret { display: none; }
 }

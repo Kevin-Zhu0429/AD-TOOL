@@ -31,6 +31,10 @@ services:
       PET_SP_SELLER_ID: ${PET_SP_SELLER_ID:-}
       PET_SP_BRAND: ${PET_SP_BRAND:-}
       MCP_PUBLIC_URL: ${MCP_PUBLIC_URL:-}
+      PET_ADS_REFRESH_TOKEN: ${PET_ADS_REFRESH_TOKEN:-}
+      PET_ADS_PROFILE_ID: ${PET_ADS_PROFILE_ID:-}
+      PET_ADS_CLIENT_ID: ${PET_ADS_CLIENT_ID:-}
+      PET_ADS_CLIENT_SECRET: ${PET_ADS_CLIENT_SECRET:-}
     volumes:
       - ./data-pet-prod:/data:Z
     logging:

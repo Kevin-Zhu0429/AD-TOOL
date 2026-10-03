@@ -1,5 +1,6 @@
 import { isPet, profile } from './profile.js';
 import PetIntelPage from './components/PetIntelPage.jsx';
+import PetChangesPage from './components/PetChangesPage.jsx';
 import PriceStrategyPage from './components/PriceStrategyPage.jsx';
 import SalesStatsPage from './components/SalesStatsPage.jsx';
 import { useEffect, useRef, useState } from 'react';
@@ -27,7 +28,8 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [markets, setMarkets] = useState([]);
   const [checking, setChecking] = useState(true);
-  const [page, setPage] = useState('home');
+  // Claude 提议完改动会给出「网站地址/#changes」,打开就直接到待确认改动页
+  const [page, setPage] = useState(() => (isPet && window.location.hash === '#changes' ? 'changes' : 'home'));
   // 广告优化工作台首次打开后保持挂载，避免切到其他页面时原生工作台被卸载、改动丢失。
   const [optimizerOpened, setOptimizerOpened] = useState(false);
   const [market, setMarket] = useState(profile.defaultMarket);
@@ -56,7 +58,7 @@ export default function App() {
     const labels = {
       home: '首页', builder: '自动广告', manual: '手动广告', optimizer: '广告优化',
       library: '否定词库', skus: 'SKU 库', portfolios: '广告组合库', aba: 'ABA 报告',
-      products: '产品情报', priceStrategy: '价格策略表', salesStats: '销售统计', tools: '小工具', admin: '账号管理', profile: '个人资料',
+      products: '产品情报', priceStrategy: '价格策略表', salesStats: '销售统计', changes: '待确认改动', tools: '小工具', admin: '账号管理', profile: '个人资料',
     };
     document.title = `${labels[page] ?? '首页'} — 广告工作台`;
   }, [page]);
@@ -64,12 +66,13 @@ export default function App() {
   function onLoggedIn(u) {
     setUser(u);
     setMarket(u.markets[0]);
-    setPage('home');
+    setPage(isPet && window.location.hash === '#changes' ? 'changes' : 'home');
     autoShown.current = false;   // 换个人登录,该弹的还要再弹
   }
 
   function navigate(nextPage) {
     if (nextPage === 'optimizer') setOptimizerOpened(true);
+    if (window.location.hash) window.history.replaceState(null, '', window.location.pathname + window.location.search);
     if (nextPage !== page) {
       api.recordActivity(nextPage, 'open', market).catch(() => {});
     }
@@ -128,6 +131,8 @@ export default function App() {
       <PriceStrategyPage />
     ) : page === 'salesStats' && isPet ? (
       <SalesStatsPage />
+    ) : page === 'changes' && isPet && user.role === 'owner' ? (
+      <PetChangesPage />
     ) : page === 'tools' ? (
       <ToolsPage />
     ) : page === 'admin' && user.role === 'owner' ? (
