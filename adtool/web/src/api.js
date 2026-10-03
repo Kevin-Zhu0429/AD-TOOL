@@ -14,6 +14,15 @@ async function request(path, options = {}) {
 
 export const api = {
   priceStrategy: () => request('/price-strategy'),
+  competitorOverview: () => request('/competitors/overview'),
+  competitorStyle: (key) => request(`/competitors/style?key=${encodeURIComponent(key)}`),
+  competitorHealth: () => request('/competitors/health'),
+  competitorStatus: () => request('/competitors/status'),
+  syncCompetitors: (kind) => request('/competitors/sync', { method: 'POST', body: { kind } }),
+  addCompetitors: (styleKey, asins) => request('/competitors', { method: 'POST', body: { styleKey, asins } }),
+  updateCompetitor: (id, body) => request(`/competitors/${id}`, { method: 'PUT', body }),
+  removeCompetitor: (id) => request(`/competitors/${id}`, { method: 'DELETE' }),
+  importCompetitorMetrics: (month, rows, sourceFile) => request('/competitors/metrics', { method: 'POST', body: { month, rows, sourceFile } }),
   salesStats: ({ year, weeks }) => request(`/price-strategy/stats?year=${encodeURIComponent(year)}&weeks=${encodeURIComponent(weeks)}`),
   saveMonthlyTarget: (month, values) => request(`/price-strategy/targets/${month}`, { method: 'PUT', body: values }),
   priceSyncStatus: () => request('/price-strategy/status'),

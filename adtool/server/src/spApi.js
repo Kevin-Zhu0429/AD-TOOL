@@ -203,7 +203,7 @@ function spApiMessage(payload, status) {
   const detail = clean(first?.message || payload?.message);
   if (status === 403) {
     return '亚马逊拒绝访问：请确认开发者应用勾选了所需角色（库存用「亚马逊物流」，订单报告用「库存和订单跟踪」，'
-      + 'Listing 用「商品信息」，ABA 用「品牌分析」），并在卖家后台重新授权后更新 Refresh Token' + (detail ? `（${detail}）` : '');
+      + 'Listing 用「商品信息」，ABA 用「品牌分析」，竞品价格用「定价」），并在卖家后台重新授权后更新 Refresh Token' + (detail ? `（${detail}）` : '');
   }
   if (status === 429) return '亚马逊接口限流，请稍后再试';
   return `亚马逊接口请求失败 (${status})${detail ? `：${detail}` : ''}`;

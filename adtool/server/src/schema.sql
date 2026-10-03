@@ -482,3 +482,105 @@ CREATE TABLE IF NOT EXISTS mcp_oauth_tokens (
   created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
 CREATE INDEX IF NOT EXISTS idx_mcp_tokens_expiry ON mcp_oauth_tokens (expires_at);
+
+-- ---------- 宠物版产品情报:竞品监控 ----------
+-- 竞品按「家族」(父 ASIN,没有变体就是它自己)挂在自家款式下。
+-- style_key = SKU 库的款式;没填款式的 SKU 用 SKU 前面的款号(如 RR22002BKM → RR22002)。
+-- status: active 已加入监控 / suggested 系统推荐待确认 / ignored 已忽略(以后不再推荐)
+CREATE TABLE IF NOT EXISTS pet_competitors (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  style_key TEXT NOT NULL,
+  asin TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('active','suggested','ignored')),
+  source TEXT NOT NULL DEFAULT 'manual',
+  score REAL,
+  evidence_json TEXT,
+  added_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  UNIQUE (style_key, asin)
+);
+CREATE INDEX IF NOT EXISTS idx_pet_competitors_asin ON pet_competitors(asin);
+
+-- 亚马逊目录里每个 ASIN(竞品家族、竞品子体、自家 ASIN)的最新情况,每天同步覆盖
+CREATE TABLE IF NOT EXISTS pet_catalog_items (
+  asin TEXT PRIMARY KEY,
+  parent_asin TEXT,
+  children_json TEXT,
+  title TEXT,
+  brand TEXT,
+  bullets_json TEXT,
+  size TEXT,
+  color TEXT,
+  product_type TEXT,
+  main_image TEXT,
+  image_count INTEGER,
+  bsr INTEGER,
+  bsr_category TEXT,
+  sub_bsr INTEGER,
+  sub_category TEXT,
+  price REAL,
+  list_price REAL,
+  offers INTEGER,
+  backend_terms TEXT,
+  issues_json TEXT,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_pet_catalog_parent ON pet_catalog_items(parent_asin);
+
+-- 每天一份快照,用来画走势和找变化。标题、五点摘要、主图只在家族那一行存
+CREATE TABLE IF NOT EXISTS pet_catalog_snapshots (
+  asin TEXT NOT NULL,
+  day TEXT NOT NULL,
+  price REAL,
+  bsr INTEGER,
+  sub_bsr INTEGER,
+  title TEXT,
+  bullets_hash TEXT,
+  main_image TEXT,
+  children_json TEXT,
+  PRIMARY KEY (asin, day)
+);
+
+-- 竞品变化提醒:降价 / 涨价 / 改标题 / 改五点 / 换主图 / 排名大涨 / 无购物车 / 变体增减
+CREATE TABLE IF NOT EXISTS pet_competitor_changes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  day TEXT NOT NULL,
+  family_asin TEXT NOT NULL,
+  asin TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  before_value TEXT,
+  after_value TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  UNIQUE (day, asin, kind)
+);
+CREATE INDEX IF NOT EXISTS idx_pet_competitor_changes_day ON pet_competitor_changes(day DESC);
+
+-- 卖家精灵等第三方导出的月度数据:评分、评论数、子体销量。亚马逊接口没有这些
+CREATE TABLE IF NOT EXISTS pet_competitor_metrics (
+  asin TEXT NOT NULL,
+  month TEXT NOT NULL,
+  parent_asin TEXT,
+  rating REAL,
+  reviews INTEGER,
+  units INTEGER,
+  revenue REAL,
+  price REAL,
+  source_file TEXT,
+  updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  PRIMARY KEY (asin, month)
+);
+
+-- 品牌分析搜索词报告里,和我们核心词相关的那部分:每个词点击前 3 的 ASIN
+CREATE TABLE IF NOT EXISTS pet_search_term_top (
+  week_end TEXT NOT NULL,
+  term TEXT NOT NULL,
+  rank INTEGER NOT NULL,
+  asin TEXT NOT NULL,
+  item_name TEXT,
+  click_share REAL,
+  conversion_share REAL,
+  search_rank INTEGER,
+  PRIMARY KEY (week_end, term, rank)
+);
