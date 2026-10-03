@@ -5,10 +5,12 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { db } from './db.js';
 import { PET_SHOP_ID } from './profile.js';
 import { amazonGateway, pacificDay, petSpConfig, shiftDay, US_MARKETPLACE } from './petAmazon.js';
-import { buildPriceBoard, monthlySummary, recentDays, weeklySummary } from './petSales.js';
+import { buildPriceBoard, monthlySummary, recentDays, weeklySummary, WEEKDAYS } from './petSales.js';
 import { priceSyncStatus } from './priceStrategySync.js';
 import { abaSyncStatus } from './petAbaSync.js';
 import { withProfit, yearGrossProfit } from './petCosts.js';
+import { latestSync } from './stockEvents.js';
+import { competitorSyncStatus, listingHealth, ownStyles, recentChanges, styleDetail } from './petCompetitors.js';
 
 // 测试可以用 PET_TODAY 固定「今天」;正式环境始终是美国太平洋时间的今天
 const todayOf = () => (process.env.NODE_ENV === 'test' && process.env.PET_TODAY) || pacificDay(new Date());
@@ -49,10 +51,26 @@ function matchRows(rows, { sku, asin, style, size, color, query } = {}) {
 function freshness() {
   const price = priceSyncStatus();
   const aba = abaSyncStatus();
+  const competitors = competitorSyncStatus();
   return { today: todayOf(), timezone: 'America/Los_Angeles', spApiConfigured: price.configured,
     salesCoverage: price.coverage, lastSalesSync: price.lastSuccess?.completedAt ?? null, lastSalesSyncError: price.lastError?.message ?? null,
-    lastAbaSync: aba.lastSuccess?.completedAt ?? null };
+    lastAbaSync: aba.lastSuccess?.completedAt ?? null, lastCompetitorSync: competitors.daily.lastSuccess?.completedAt ?? null,
+    lastCompetitorSuggest: competitors.suggest.lastSuccess?.completedAt ?? null };
 }
+
+/** 销售统计页同款的每月数据:实际销量销售额来自订单;利润没手填时按成本和亚马逊费用自动算 */
+function monthlyTable(year, today, coveredFrom) {
+  const actuals = new Map(db.prepare(`SELECT substr(day,1,7) AS month, SUM(units) AS units, SUM(sales) AS sales,
+    SUM(estimated_sales) AS estimatedSales FROM pet_daily_sales WHERE day>=? AND day<=? GROUP BY month`)
+    .all(`${year}-01-01`, `${year}-12-31`).map((row) => [row.month, row]));
+  const targets = new Map(db.prepare(`SELECT month, target_units AS targetUnits, target_sales AS targetSales,
+    target_profit AS targetProfit, actual_profit AS actualProfit, ad_spend AS adSpend FROM pet_monthly_targets WHERE month LIKE ?`)
+    .all(`${year}-%`).map((row) => [row.month, row]));
+  return monthlySummary({ year, actuals, targets, today, coveredFrom, profits: yearGrossProfit(year) });
+}
+
+const PROFIT_NOTES = ['单件毛利 = 售价 − 落地成本(FOB+头程+关税,人工维护) − FBA 配送费 − 佣金(来自亚马逊 Fee Preview 报告),未扣广告费和仓储费。',
+  '每月实际利润额:手填了用手填(profitSource=manual);没填时 = 自动算的毛利 − 手填的广告花费(profitSource=auto)。缺成本的 SKU 不算进毛利,coverage 是算进去的销售额占比,missingCostSkus 列出缺成本的 SKU。'];
 
 // ---------- 店铺总览 ----------
 
@@ -67,14 +85,9 @@ export function storeOverview({ weeks = 8 } = {}) {
   const coveredFrom = priceSyncStatus().coverage?.from ?? null;
   const unitsByDay = new Map(db.prepare('SELECT day, SUM(units) AS units FROM pet_daily_sales WHERE day>=? AND day<=? GROUP BY day')
     .all(shiftDay(today, -7 * weeks - 7), today).map((row) => [row.day, row.units]));
-  const year = Number(today.slice(0, 4));
-  const actuals = new Map(db.prepare(`SELECT substr(day,1,7) AS month, SUM(units) AS units, SUM(sales) AS sales,
-    SUM(estimated_sales) AS estimatedSales FROM pet_daily_sales WHERE day>=? AND day<=? GROUP BY month`)
-    .all(`${year}-01-01`, `${year}-12-31`).map((row) => [row.month, row]));
-  const targets = new Map(db.prepare(`SELECT month, target_units AS targetUnits, target_sales AS targetSales,
-    target_profit AS targetProfit, actual_profit AS actualProfit, ad_spend AS adSpend FROM pet_monthly_targets WHERE month LIKE ?`)
-    .all(`${year}-%`).map((row) => [row.month, row]));
-  const monthly = monthlySummary({ year, actuals, targets, today, coveredFrom, profits: yearGrossProfit(year) });
+  const monthly = monthlyTable(Number(today.slice(0, 4)), today, coveredFrom);
+  const stockSync = latestSync(PET_SHOP_ID);
+  const changes = recentChanges(today, 7);
   const brief = (row) => ({ sku: row.sku, asin: row.asin, style: row.style, size: row.size, color: row.color,
     stock: row.stock, transit: row.transit, sales7d: row.sales7d, speed7d: row.speed7d, stockDays: row.stockDays });
   const selling = board.rows.filter((row) => row.sales7d > 0);
@@ -97,10 +110,84 @@ export function storeOverview({ weeks = 8 } = {}) {
         .map((row) => ({ ...brief(row), price: row.price, profit: row.profit, breakEven: row.breakEven })),
       missingCost: board.rows.filter((row) => row.landedCost == null && (row.stock > 0 || row.sales7d > 0)).map((row) => row.sku),
     },
+    // 最近一次库存同步和上一次比:在库从有变 0 是新断货,从 0 变有是补货
+    lastStockSync: stockSync ? { syncedAt: stockSync.at,
+      newlyOutOfStock: stockSync.outOfStock.map((event) => ({ sku: event.sku, asin: event.asin, prevStock: event.prevStock, transit: event.transit })),
+      restocked: stockSync.restocked.map((event) => ({ sku: event.sku, asin: event.asin, stock: event.stock })) } : null,
+    competitorChanges7d: { total: changes.length,
+      byKind: changes.reduce((counts, change) => ({ ...counts, [change.label]: (counts[change.label] ?? 0) + 1 }), {}) },
     notes: ['销量来自亚马逊订单报告,按太平洋时间切日;待付款订单金额按 Listing 售价估算。',
-      '广告数据(花费、点击、ACOS)要等亚马逊广告 API 开通,目前没有。月度利润和广告花费是人工填写的。',
-      '单件毛利 = 售价 − 落地成本(FOB+头程+关税,人工维护) − FBA 配送费 − 佣金(来自亚马逊 Fee Preview 报告),未扣广告费和仓储费。'],
+      '广告数据(花费、点击、ACOS)要等亚马逊广告 API 开通,目前没有;广告花费是人工按月填写的。',
+      ...PROFIT_NOTES, 'lastStockSync.syncedAt 是服务器本地时间(北京时间)。竞品变化明细用 get_competitor_overview。'],
   };
+}
+
+// ---------- 销售统计 ----------
+
+export function salesStats({ year, weeks = 8 } = {}) {
+  const today = todayOf();
+  const coveredFrom = priceSyncStatus().coverage?.from ?? null;
+  const unitsByDay = new Map(db.prepare('SELECT day, SUM(units) AS units FROM pet_daily_sales WHERE day>=? AND day<=? GROUP BY day')
+    .all(shiftDay(today, -7 * weeks - 7), today).map((row) => [row.day, row.units]));
+  return { today, coveredFrom, weekdays: WEEKDAYS,
+    weekly: weeklySummary(unitsByDay, today, weeks, coveredFrom),
+    year: year ?? Number(today.slice(0, 4)), monthly: monthlyTable(year ?? Number(today.slice(0, 4)), today, coveredFrom),
+    notes: ['weekly 是全店每周周一到周日的销量(ISO 周),days 按 weekdays 的顺序;今天之后和数据起点之前为 null。',
+      'monthly:目标、广告花费是人工填写;progress 是本月时间进度(%);partial 表示数据只覆盖这个月的一部分。', ...PROFIT_NOTES] };
+}
+
+// ---------- 产品情报:竞品监控 ----------
+
+/** 款式名不分大小写;找不到时列出现有款式 */
+function styleKeyFor(style, today) {
+  const styles = ownStyles(today);
+  const found = styles.find((item) => lower(item.key) === lower(style));
+  if (!found) throw new Error(`找不到款式「${style}」。现有款式:${styles.map((item) => item.key).slice(0, 60).join('、')}`);
+  return found.key;
+}
+
+export function competitorOverview({ days = 14, style } = {}) {
+  const today = todayOf();
+  const key = style ? styleKeyFor(style, today) : null;
+  const counts = new Map();
+  for (const row of db.prepare('SELECT style_key, status, COUNT(*) AS n FROM pet_competitors GROUP BY style_key, status').all()) {
+    if (!counts.has(row.style_key)) counts.set(row.style_key, {});
+    counts.get(row.style_key)[row.status] = row.n;
+  }
+  const changes = recentChanges(today, days).filter((change) => !key || change.styleKey === key);
+  const sync = competitorSyncStatus();
+  return { today, days,
+    styles: ownStyles(today).filter((item) => !key || item.key === key).map((item) => ({ style: item.key, skus: item.skus.length, asins: item.asins,
+      units7: item.units7, units30: item.units30, competitors: counts.get(item.key)?.active ?? 0, suggested: counts.get(item.key)?.suggested ?? 0,
+      changes: changes.filter((change) => change.styleKey === item.key).length })),
+    changes: changes.slice(0, 200).map(({ id: _id, ...change }) => change),
+    sync: { lastDaily: sync.daily.lastSuccess?.completedAt ?? null, lastDailyError: sync.daily.lastError?.message ?? null,
+      pricingError: sync.daily.pricingError?.message ?? null, lastSuggest: sync.suggest.lastSuccess?.completedAt ?? null,
+      lastSuggestWeek: sync.suggest.lastSuccess?.week ?? null },
+    notes: ['款式 = SKU 库的款式,没填款式时用 SKU 开头的款号。竞品按父 ASIN(家族)挂在款式下,每天同步一次价格、排名、标题、五点和主图。',
+      'changes 的 kind:price_down 降价、price_up 涨价、title 改标题、bullets 改五点、main_image 换主图、bsr_up 排名大涨、no_buybox 没购物车、variants_added/removed 变体增减。'] };
+}
+
+export function styleIntel({ style, includeHistory = false } = {}) {
+  const today = todayOf();
+  const detail = styleDetail(styleKeyFor(style, today), today);
+  const strip = (family) => (includeHistory ? family : (({ history: _history, ...rest }) => rest)(family));
+  return { ...detail, own: strip(detail.own), competitors: detail.competitors.map(strip),
+    notes: ['terms 是这个款式最近 4 周 ABA 里有点击的核心词(按市场购买量排序),share 为 0–1 的小数。',
+      'coverage 表示每个核心词写在标题(title)、五点(bullets)、后台搜索词(backend,只有自家有)还是没写(null)。',
+      '竞品的评分、评论数、销量(rating/reviews/units)来自每月导入的卖家精灵数据,metricsMonth 是数据月份;价格和 BSR 来自每天同步。',
+      'priceChange7 是竞品最低价和 7 天前比的变化;priceBand 是已监控竞品最低价的分布。suggestions 是系统推荐、还没确认的候选竞品。'] };
+}
+
+export function listingHealthReport({ style, level = 'all', limit = 100 } = {}) {
+  const today = todayOf();
+  const key = style ? styleKeyFor(style, today) : null;
+  const rows = listingHealth(today).filter((row) => (!key || row.styleKey === key)
+    && (level === 'all' || row.checks.some((check) => check.level === 'red' || (level === 'yellow' && check.level === 'yellow'))));
+  const count = (wanted) => rows.filter((row) => row.checks.some((check) => check.level === wanted)).length;
+  return { today, total: rows.length, withRed: count('red'), withYellow: count('yellow'), rows: rows.slice(0, limit),
+    notes: ['red = 必须改,yellow = 建议改。检查项:标题含品牌、标题 80–200 字符、五点 5 条、图片 7 张以上且不少于竞品中位数、前 3 大核心词和其余核心词是否写进文案、后台搜索词不超过 249 字节、亚马逊报的错误和警告、售价是否比同尺码竞品中位价高 20% 以上。',
+      '文案数据来自每天的目录同步,不是实时;要看实时 Listing 用 get_listing。'] };
 }
 
 // ---------- SKU 列表 ----------
@@ -352,7 +439,8 @@ export async function getProductImages({ asin, limit = 7 }, { gateway = amazonGa
 const INSTRUCTIONS = `这是一家亚马逊美国站宠物用品店(主营宠物狗窝)的运营数据,来自店主自建的 AD-TOOL 网站。
 所有工具只读:查数据库里同步好的销量、库存、价格、ABA 搜索词,以及实时调亚马逊 SP-API 看 Listing、竞品目录和图片。不能修改任何东西。
 日期都是美国太平洋时间。广告数据(花费、ACOS、搜索词报告)要等亚马逊广告 API 开通,目前没有。
-分析某个产品的常用顺序:store_overview 看全店 → list_skus 找到 SKU/ASIN → get_sales_trend 看趋势 → get_search_terms 看流量词和份额 → get_listing 看当前文案 → get_catalog_items / get_product_images 对比竞品。
+分析某个产品的常用顺序:store_overview 看全店(含利润、断货补货、竞品变化提醒) → list_skus 找到 SKU/ASIN、看单件毛利 → get_sales_trend 看趋势 → get_search_terms 看流量词和份额 → get_style_intel 看这个款式的竞品、价格带和核心词覆盖 → get_listing_health 看文案体检 → get_listing 看实时文案 → get_catalog_items / get_product_images 对比竞品。
+看月度目标和利润用 get_sales_stats;看竞品最近的降价、改标题、换主图用 get_competitor_overview。
 用户是中文卖家,回答用中文;给优化建议时说明依据的数据。`;
 
 export function createPetMcpServer(deps = {}) {
@@ -371,10 +459,18 @@ export function createPetMcpServer(deps = {}) {
 
   server.registerTool('store_overview', {
     title: '店铺总览',
-    description: '全店数据新鲜度、SKU/ASIN 数、近 7 天和前 7 天销量销售额、本月目标完成情况、最近几周周销量,以及断货、库存不足、积压、有货不动销的 SKU 提醒。分析前先调用它。',
+    description: '全店数据新鲜度、SKU/ASIN 数、近 7 天和前 7 天销量销售额、本月目标完成和利润、最近几周周销量;断货、库存不足、积压、有货不动销、每件亏钱、缺成本的 SKU 提醒;最近一次库存同步的新断货和补货;近 7 天竞品变化数量。分析前先调用它。',
     inputSchema: { weeks: z.number().int().min(1).max(26).default(8).describe('周销量看最近几周') },
     annotations: local,
   }, wrap((args) => storeOverview(args)));
+
+  server.registerTool('get_sales_stats', {
+    title: '销售统计',
+    description: '销售统计页同款:最近几周全店按周一到周日的销量;某年 1–12 月的目标销量/销售额/利润、实际销量/销售额、实际利润额(手填或按成本自动算)、毛利、利润率、广告花费、费比、完成率。',
+    inputSchema: { year: z.number().int().min(2000).max(2100).optional().describe('年份,默认今年'),
+      weeks: z.number().int().min(1).max(53).default(8).describe('周销量看最近几周') },
+    annotations: local,
+  }, wrap((args) => salesStats(args)));
 
   server.registerTool('list_skus', {
     title: 'SKU 列表与实时指标',
@@ -410,6 +506,29 @@ export function createPetMcpServer(deps = {}) {
     },
     annotations: local,
   }, wrap((args) => searchTerms(args)));
+
+  server.registerTool('get_competitor_overview', {
+    title: '竞品监控总览',
+    description: '产品情报:每个自家款式的 SKU/ASIN、近 7/30 天销量、已监控竞品数、待确认推荐数;以及最近几天竞品的变化明细(降价、涨价、改标题、改五点、换主图、排名大涨、没购物车、变体增减),带竞品品牌和标题。',
+    inputSchema: { days: z.number().int().min(1).max(90).default(14).describe('看最近几天的竞品变化'), style: optionalText('只看这个款式') },
+    annotations: local,
+  }, wrap((args) => competitorOverview(args)));
+
+  server.registerTool('get_style_intel', {
+    title: '款式竞品情报',
+    description: '一个自家款式的完整情报:自家标题/五点/后台搜索词/价格/排名/评分;每个已监控竞品家族的标题、五点、价格区间、BSR、评分评论、月销量、各尺码子体价格、7 天价格变化;竞品价格带;待确认的推荐竞品;核心词列表和每个词在自家及竞品文案里的覆盖情况。做文案对比、定价和埋词时用。',
+    inputSchema: { style: z.string().trim().min(1).max(200).describe('款式(get_competitor_overview 里的 style)'),
+      includeHistory: z.boolean().default(false).describe('是否带上竞品近 30 天每天的价格和排名') },
+    annotations: local,
+  }, wrap((args) => styleIntel(args)));
+
+  server.registerTool('get_listing_health', {
+    title: 'Listing 体检',
+    description: '自家每个在售 ASIN 的文案体检:标题品牌和长度、五点条数、图片数、核心词是否写进文案、后台搜索词字节数、亚马逊报的错误警告、比同尺码竞品贵多少。按问题严重程度排序。',
+    inputSchema: { style: optionalText('只看这个款式'), level: z.enum(['all', 'red', 'yellow']).default('all').describe('red 只看有必须改问题的;yellow 看有任何问题的'),
+      limit: z.number().int().min(1).max(500).default(100) },
+    annotations: local,
+  }, wrap((args) => listingHealthReport(args)));
 
   server.registerTool('get_listing', {
     title: '本店 Listing 内容',

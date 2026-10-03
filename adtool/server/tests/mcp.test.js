@@ -91,6 +91,21 @@ function seed(db) {
   query.run(one, 'dog bed', 1000, 10000, 500, 50, 1000, 50, 5);
   query.run(two, 'dog bed', 1000, 10000, 500, 50, 500, 25, 0);
   query.run(one, 'calming dog bed', 300, 3000, 150, 10, 0, 0, 0);
+  // 最近一次库存同步:CAT-S 新断货
+  const sync = db.prepare('INSERT INTO sku_stock_syncs (user_id, out_count, restock_count) VALUES (-1, 1, 0)').run().lastInsertRowid;
+  db.prepare(`INSERT INTO sku_stock_events (sync_id, user_id, country, sku, sku_key, asin, kind, prev_stock, stock, transit)
+    VALUES (?, -1, 'US', 'CAT-S', 'cat-s', 'B000000003', 'out', 5, 0, 0)`).run(sync);
+  // 产品情报:圆窝挂一个已监控竞品、一个待确认推荐;竞品 9/20 降价
+  db.prepare(`INSERT INTO pet_competitors (style_key, asin, status, source, score, evidence_json) VALUES
+    ('圆窝', 'B0RIVAL001', 'active', 'manual', NULL, NULL), ('圆窝', 'B0SUGGEST1', 'suggested', 'aba', 0.8, '{"title":"Suggested Bed"}')`).run();
+  const item = db.prepare(`INSERT INTO pet_catalog_items (asin, title, brand, bullets_json, size, price, bsr, image_count, backend_terms)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+  item.run('B0RIVAL001', 'Rival Dog Bed for Large Dogs', 'Rival', '["Soft","Washable","Warm","Big","Cheap"]', 'Large', 29.99, 50, 8, null);
+  item.run('B000000001', 'PawNest Orthopedic Dog Bed Large', 'PawNest', '["Memory foam","Washable cover","Non-slip"]', 'Large', 39.99, 120, 5, 'calming dog bed');
+  item.run('B000000002', 'Orthopedic Bed XL', 'PawNest', '["Memory foam"]', 'X-Large', 49.99, 300, 4, '');
+  db.prepare(`INSERT INTO pet_competitor_changes (day, family_asin, asin, kind, before_value, after_value)
+    VALUES ('2026-09-20', 'B0RIVAL001', 'B0RIVAL001', 'price_down', '34.99', '29.99')`).run();
+  db.prepare(`INSERT INTO pet_competitor_metrics (asin, month, rating, reviews, units) VALUES ('B0RIVAL001', '2026-08', 4.5, 1200, 3000)`).run();
 }
 
 const pkce = () => {
@@ -176,8 +191,8 @@ test('Claude connector: OAuth login, read-only tools and token lifecycle', async
     await mcp.connect(new StreamableHTTPClientTransport(new URL(`${url}/mcp`), { requestInit: { headers: { Authorization: `Bearer ${tokens.access_token}` } } }));
     t.after(() => mcp.close());
     const tools = (await mcp.listTools()).tools;
-    assert.deepEqual(tools.map((tool) => tool.name).sort(), ['get_catalog_items', 'get_listing', 'get_product_images', 'get_sales_trend',
-      'get_search_terms', 'list_skus', 'store_overview']);
+    assert.deepEqual(tools.map((tool) => tool.name).sort(), ['get_catalog_items', 'get_competitor_overview', 'get_listing', 'get_listing_health',
+      'get_product_images', 'get_sales_stats', 'get_sales_trend', 'get_search_terms', 'get_style_intel', 'list_skus', 'store_overview']);
     assert.ok(tools.every((tool) => tool.annotations.readOnlyHint));
     const call = async (name, args = {}) => {
       const result = await mcp.callTool({ name, arguments: args });
@@ -240,6 +255,45 @@ test('Claude connector: OAuth login, read-only tools and token lifecycle', async
     const images = await call('get_product_images', { asin: 'B0RIVAL001', limit: 1 });
     assert.equal(images.filter((block) => block.type === 'image').length, 1);
     assert.equal(Buffer.from(images.find((block) => block.type === 'image').data, 'base64').toString(), 'https://img/main-1000.jpg');
+
+    // 库存同步提醒和近 7 天竞品变化也在总览里
+    assert.deepEqual(overview.lastStockSync.newlyOutOfStock.map((row) => [row.sku, row.prevStock]), [['CAT-S', 5]]);
+    assert.deepEqual(overview.competitorChanges7d, { total: 1, byKind: { 降价: 1 } });
+    assert.equal(overview.thisMonth.profitSource, 'auto');
+
+    const stats = await call('get_sales_stats', { weeks: 2 });
+    assert.equal(stats.weekly.length, 2);
+    assert.deepEqual(stats.weekdays, ['周一', '周二', '周三', '周四', '周五', '周六', '周日']);
+    const september = stats.monthly.months[8];
+    assert.equal(september.sales, 369.92);
+    // DOG-L 279.93 − 7×(14+7.25) − 15% 佣金 + DOG-XL 49.99 − (17+8) − 15% 佣金;CAT-S 没成本不算
+    assert.equal(september.grossProfit, 106.68);
+    assert.deepEqual(september.missingCostSkus, ['CAT-S']);
+
+    const intel = await call('get_competitor_overview', { days: 7 });
+    assert.deepEqual(intel.styles.find((row) => row.style === '圆窝'), { style: '圆窝', skus: 2, asins: ['B000000001', 'B000000002'],
+      units7: 7, units30: 8, competitors: 1, suggested: 1, changes: 1 });
+    assert.deepEqual(intel.changes.map((change) => [change.label, change.brand, change.before, change.after]), [['降价', 'Rival', '34.99', '29.99']]);
+
+    const detail = await call('get_style_intel', { style: '圆窝' });
+    assert.deepEqual(detail.terms.map((term) => term.term), ['dog bed']);
+    assert.deepEqual(detail.own.coverage, { 'dog bed': 'title' });
+    assert.deepEqual(detail.competitors.map((family) => [family.asin, family.priceMin, family.rating, family.reviews, family.coverage['dog bed']]),
+      [['B0RIVAL001', 29.99, 4.5, 1200, 'title']]);
+    assert.equal(detail.competitors[0].history, undefined);
+    assert.deepEqual(detail.suggestions.map((family) => family.title), ['Suggested Bed']);
+    assert.ok(Array.isArray((await call('get_style_intel', { style: '圆窝', includeHistory: true })).competitors[0].history));
+    const unknown = await mcp.callTool({ name: 'get_style_intel', arguments: { style: '没有的款' } });
+    assert.equal(unknown.isError, true);
+    assert.match(unknown.content[0].text, /现有款式:.*圆窝/);
+
+    const health = await call('get_listing_health');
+    // XL 的标题里没有品牌,必须改;L 比同尺码竞品贵 33%;CAT-S 还没同步目录
+    assert.deepEqual(health.rows.map((row) => row.asin), ['B000000002', 'B000000001', 'B000000003']);
+    assert.deepEqual([health.withRed, health.withYellow], [1, 2]);
+    assert.ok(health.rows[0].checks.some((check) => check.level === 'red' && check.text.includes('PawNest')));
+    assert.ok(health.rows[1].checks.some((check) => check.text.includes('高 33%')));
+    assert.deepEqual((await call('get_listing_health', { level: 'red' })).rows.map((row) => row.asin), ['B000000002']);
 
     const failed = await mcp.callTool({ name: 'get_listing', arguments: {} });
     assert.equal(failed.isError, true);
