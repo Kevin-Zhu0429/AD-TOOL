@@ -53,7 +53,7 @@ function fakeAmazon(world) {
         return { reportId: `r${world.reports.length}` };
       }
       const report = /\/reports\/(r\d+)$/.exec(path);
-      if (report) return { processingStatus: 'DONE', reportDocumentId: report[1] };
+      if (report) return { processingStatus: 'DONE', reportDocumentId: report[1], createdTime: '2026-10-02T10:00:00Z', processingEndTime: '2026-10-02T10:42:00Z' };
       const document = /\/documents\/(r\d+)$/.exec(path);
       if (document) return { url: document[1] };
       throw new Error(`unexpected ${method} ${path}`);
@@ -137,6 +137,9 @@ test('competitors are suggested from ABA, tracked daily, and changes are recorde
 
   const suggestion = await suggestCompetitors(1, fakeAmazon(world).gateway, ENV, () => new Date('2026-10-02T18:00:00Z'));
   assert.equal(suggestion.week, '2026-09-26');
+  // 记下各段耗时:亚马逊生成 42 分钟,扫过的行数
+  assert.equal(suggestion.timing.amazonMin, 42);
+  assert.equal(suggestion.timing.records, 7);
   assert.equal(world.reports[0].reportType, 'GET_BRAND_ANALYTICS_SEARCH_TERMS_REPORT');
   assert.equal(world.reports[0].dataStartTime.slice(0, 10), '2026-09-20');
   // dog crate 我们没有点击,不算核心词;无关的词不留

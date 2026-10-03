@@ -203,7 +203,9 @@ async function exclusive(name, prefix, work) {
     return result;
   } catch (error) {
     const message = String(error.message).slice(0, 300);
-    setState(`${prefix}_error`, { at: new Date().toISOString(), message });
+    // 失败时停在哪一步、进度写到哪,一起记下,方便看慢在哪
+    const where = jobs[name] ? [jobs[name].step, jobs[name].detail].filter(Boolean).join(' · ') : '';
+    setState(`${prefix}_error`, { at: new Date().toISOString(), message, where: where || null });
     throw Object.assign(new Error(message), { status: error.status });
   } finally { jobs[name] = null; }
 }
@@ -420,7 +422,7 @@ export function scoreCandidates(terms, topByTerm, ownAsins) {
   return result;
 }
 
-/** 下载一周的搜索词报告,只留核心词那几行。报告还没出返回 null */
+/** 下载一周的搜索词报告,只留核心词那几行,连同各段耗时(看慢在亚马逊还是下载)。报告还没出返回 null */
 const SEARCH_TERM_FIELD = /"searchTerm"\s*:\s*"((?:[^"\\]|\\.)*)"/;
 
 async function fetchTopClicked(account, week, termSet, gateway, progress) {
@@ -439,19 +441,39 @@ async function fetchTopClicked(account, week, termSet, gateway, progress) {
     try { return termSet.has(clean(JSON.parse(`"${match[1]}"`)).toLowerCase()); } catch { return true; }
   } });
   const mb = (bytes) => `${Math.round(bytes / 1048576)} MB`;
-  const onBytes = (received, total) => Object.assign(progress, { stage: 'downloading',
-    detail: `已下载 ${mb(received)}${total ? ` / ${mb(total)}` : ''}，扫过 ${records.toLocaleString('en-US')} 行，找到核心词 ${rows.length} 行`,
-    percentHint: total ? received / total : null });
+  const minutes = (ms) => Math.max(0, Math.round(ms / 60_000));
+  const startedAt = Date.now();
+  const timing = { amazonMin: null, waitMin: null, downloadMin: null, mb: null, records: 0 };
+  let downloadStart = null, bytes = 0;
+  const onBytes = (received, total) => {
+    bytes = received;
+    const seconds = (Date.now() - downloadStart) / 1000;
+    const speed = seconds > 5 ? received / seconds : 0;
+    const left = speed && total ? Math.ceil((total - received) / speed / 60) : null;
+    Object.assign(progress, { stage: 'downloading',
+      detail: `已下载 ${mb(received)}${total ? ` / ${mb(total)}` : ''}${speed ? `，${(speed / 1048576).toFixed(1)} MB/秒` : ''}${left != null ? `，大约还要 ${left} 分钟` : ''}；扫过 ${records.toLocaleString('en-US')} 行，找到核心词 ${rows.length} 行` });
+  };
   const done = await runReport(account, SEARCH_TERMS_REPORT, {
     start: new Date(`${week.week_start}T00:00:00Z`), end: new Date(`${week.week_end}T00:00:00Z`),
     options: { reportPeriod: 'WEEK' }, maxWaitMs: SEARCH_TERMS_MAX_WAIT_MS, reuse: true,
-    onDocument: async (document) => { await gateway.stream(document, scan, onBytes); return true; },
-    onProgress: ({ stage, retryAt = null, waitedMs }) => Object.assign(progress, { stage, retryAt,
-      step: `搜索词报告（${label} 那周）`,
-      detail: stage === 'processing' ? `亚马逊正在生成整站报告，已等 ${Math.round((waitedMs ?? 0) / 60_000)} 分钟（常要 30–90 分钟）`
-        : stage === 'downloading' ? '开始下载' : undefined }),
+    onDocument: async (document, refresh) => { await gateway.stream(document, scan, onBytes, refresh); return true; },
+    onProgress: ({ stage, retryAt = null, waitedMs, amazonMs }) => {
+      const begins = stage === 'downloading' && downloadStart == null;
+      if (begins) {
+        downloadStart = Date.now();
+        timing.waitMin = minutes(downloadStart - startedAt);
+        if (amazonMs != null) timing.amazonMin = minutes(amazonMs);
+      }
+      Object.assign(progress, { stage, retryAt, step: `搜索词报告（${label} 那周）`,
+        detail: stage === 'processing' ? `亚马逊正在生成整站报告，已等 ${minutes(waitedMs ?? 0)} 分钟（常要 30–90 分钟）`
+          : stage === 'downloading' ? (begins ? '开始下载' : progress.detail) : undefined });
+    },
   }, gateway);
-  return done ? rows : null;
+  if (!done) return null;
+  Object.assign(timing, { downloadMin: minutes(Date.now() - downloadStart), mb: Math.round(bytes / 1048576), records });
+  console.log(`[competitors-suggest] ${week.week_end} 亚马逊生成 ${timing.amazonMin ?? '?'} 分钟，本次等待 ${timing.waitMin} 分钟，`
+    + `下载 ${timing.downloadMin} 分钟 ${timing.mb} MB，${records} 行，核心词 ${rows.length} 行`);
+  return { rows, timing };
 }
 
 /**
@@ -468,10 +490,10 @@ export function suggestCompetitors(actorId = null, gateway = amazonGateway, env 
     const progress = Object.assign(jobs.suggest, { total: 4, done: 0, step: '搜索词报告', stage: 'creating', retryAt: null });
 
     // 1. 最近一周的报告还没出就用上一周
-    let week = null, rows = null;
+    let week = null, rows = null, timing = null;
     for (const candidate of completeWeeks(today, 2)) {
-      rows = await fetchTopClicked(account, candidate, termSet, gateway, progress);
-      if (rows) { week = candidate; break; }
+      const fetched = await fetchTopClicked(account, candidate, termSet, gateway, progress);
+      if (fetched) { ({ rows, timing } = fetched); week = candidate; break; }
     }
     if (!rows) throw new Error('亚马逊最近两周的搜索词报告都还没有生成,过几天再试');
     db.transaction(() => {
@@ -557,7 +579,7 @@ export function suggestCompetitors(actorId = null, gateway = amazonGateway, env 
         }
       }
     })();
-    const result = { week: week.week_end, terms: termSet.size, matchedRows: rows.length, candidates: candidateAsins.length, suggested };
+    const result = { week: week.week_end, terms: termSet.size, matchedRows: rows.length, candidates: candidateAsins.length, suggested, timing };
     if (actorId) audit(actorId, 'US', 'sync', 'pet_competitor_suggestions', null, result);
     return result;
   });

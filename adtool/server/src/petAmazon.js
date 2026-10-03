@@ -105,25 +105,80 @@ export async function downloadReportDocument(document) {
   }
 }
 
+/** 大报告分段并行下载:每段多大、同时几段、一段最多试几次、一段多久没下完算卡住 */
+export const downloadTiming = { chunkBytes: 8 * 1048576, parallel: 8, attempts: 6, chunkTimeoutMs: 10 * 60_000, retryMs: 3_000 };
+
 /**
  * 边下载边解码报告,每收到一段文字调一次 onText。只用于 UTF-8 的 JSON 报告。
  * 品牌分析搜索词报告整个美国站一周有几个 GB,不能像小报告那样整份读进内存。
+ * 服务器在国内时,单个连接从亚马逊 S3 下载很慢、还会断,所以按 Range 分段、同时下几段,
+ * 按顺序交给解压;某段断了只重下那一段。下载链接 5 分钟过期,过期(403)时用 refresh 换新链接。
+ * 不支持分段的(返回 200)就退回单连接整份下载。
  */
-export async function streamReportDocument(document, onText, onBytes = () => {}) {
-  let response;
+export async function streamReportDocument(document, onText, onBytes = () => {}, refresh = null) {
+  let url = document.url;
+  let renewing = null;
+  // 几段同时发现链接过期时只换一次
+  const renew = (stale) => {
+    if (!refresh) return Promise.resolve(false);
+    if (url !== stale) return Promise.resolve(true);
+    renewing ??= refresh().then((fresh) => { url = clean(fresh?.url) || url; return url !== stale; }).finally(() => { renewing = null; });
+    return renewing;
+  };
+  const failed = (error) => new Error(`下载亚马逊报告失败：${clean(error?.message) || '网络错误'}`);
+  let probe;
   try {
-    // 不设总超时:几 GB 的文件在慢的线路上可能要下一个多小时,只要还在收数据就继续
-    response = await fetch(document.url);
-  } catch (error) {
-    throw new Error(`下载亚马逊报告失败：${clean(error.message) || '网络错误'}`);
-  }
-  if (!response.ok || !response.body) throw new Error(`下载亚马逊报告失败 (${response.status})`);
-  const total = Number(response.headers.get('content-length')) || null;
+    probe = await fetch(url, { headers: { Range: 'bytes=0-0' } });
+    if (probe.status === 403 && await renew(document.url)) probe = await fetch(url, { headers: { Range: 'bytes=0-0' } });
+  } catch (error) { throw failed(error); }
+  if (!probe.ok) throw new Error(`下载亚马逊报告失败 (${probe.status})`);
+  const total = probe.status === 206 ? Number(/\/(\d+)\s*$/.exec(probe.headers.get('content-range') ?? '')?.[1]) || null : null;
   let received = 0;
-  // 统计已下载的(压缩后)字节数,给页面显示进度
-  let stream = response.body.pipeThrough(new TransformStream({
-    transform(chunk, controller) { received += chunk.byteLength; onBytes(received, total); controller.enqueue(chunk); },
-  }));
+  const count = (bytes) => { received += bytes; onBytes(received, total ?? (Number(probe.headers.get('content-length')) || null)); };
+  let stream;
+  if (total) {
+    await probe.body?.cancel();
+    const { chunkBytes, parallel } = downloadTiming;
+    const chunks = Math.ceil(total / chunkBytes);
+    const fetchChunk = async (index) => {
+      const from = index * chunkBytes, to = Math.min(total, from + chunkBytes) - 1;
+      for (let attempt = 1; ; attempt += 1) {
+        const used = url;
+        let got = 0;
+        try {
+          const response = await fetch(used, { headers: { Range: `bytes=${from}-${to}` }, signal: AbortSignal.timeout(downloadTiming.chunkTimeoutMs) });
+          if (response.status === 403 && attempt < downloadTiming.attempts && await renew(used)) continue;
+          if (response.status !== 206) throw new Error(`HTTP ${response.status}`);
+          const parts = [];
+          for await (const part of response.body) { parts.push(part); got += part.byteLength; count(part.byteLength); }
+          const buffer = Buffer.concat(parts);
+          if (buffer.length !== to - from + 1) throw new Error('分段不完整');
+          return buffer;
+        } catch (error) {
+          count(-got);
+          if (attempt >= downloadTiming.attempts) throw failed(error);
+          await sleep(downloadTiming.retryMs * attempt);
+        }
+      }
+    };
+    const pending = new Map();
+    let next = 0, emitted = 0;
+    const fill = () => { while (next < chunks && next < emitted + parallel) { const index = next++; const task = fetchChunk(index); task.catch(() => {}); pending.set(index, task); } };
+    stream = new ReadableStream({
+      async pull(controller) {
+        if (emitted >= chunks) return controller.close();
+        fill();
+        const buffer = await pending.get(emitted);
+        pending.delete(emitted);
+        emitted += 1;
+        fill();
+        controller.enqueue(new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength));
+      },
+    });
+  } else {
+    if (!probe.body) throw new Error(`下载亚马逊报告失败 (${probe.status})`);
+    stream = probe.body.pipeThrough(new TransformStream({ transform(chunk, controller) { count(chunk.byteLength); controller.enqueue(chunk); } }));
+  }
   if (clean(document.compressionAlgorithm).toUpperCase() === 'GZIP') stream = stream.pipeThrough(new DecompressionStream('gzip'));
   for await (const text of stream.pipeThrough(new TextDecoderStream('utf-8'))) onText(text);
 }
@@ -207,11 +262,15 @@ export async function runReport(account, reportType, { start, end, options, pars
     const report = await waitOutThrottle(() => gateway.request(account, REGION, 'GET', `/reports/2021-06-30/reports/${reportId}`), onProgress, 'processing');
     const status = clean(report?.processingStatus);
     if (status === 'DONE') {
-      onProgress({ stage: 'downloading' });
-      const document = await waitOutThrottle(() => gateway.request(account, REGION, 'GET',
+      // 亚马逊自己生成这份报告用了多久(从申请到完成)
+      const generated = Date.parse(report.processingEndTime) - Date.parse(report.createdTime);
+      onProgress({ stage: 'downloading', amazonMs: Number.isFinite(generated) && generated >= 0 ? generated : null });
+      const getDocument = () => waitOutThrottle(() => gateway.request(account, REGION, 'GET',
         `/reports/2021-06-30/documents/${clean(report.reportDocumentId)}`), onProgress, 'downloading');
-      // 太大的报告(品牌分析搜索词报告有几个 GB)由 onDocument 边下载边处理,不整份读进内存
-      return onDocument ? onDocument(document) : parse(await gateway.download(document));
+      const document = await getDocument();
+      // 太大的报告(品牌分析搜索词报告有几个 GB)由 onDocument 边下载边处理,不整份读进内存;
+      // 第二个参数用来在下载链接过期后换新链接
+      return onDocument ? onDocument(document, getDocument) : parse(await gateway.download(document));
     }
     // 亚马逊对没有数据的时间段直接取消报告
     if (status === 'CANCELLED') return parse === parseTsv && !onDocument ? [] : null;
