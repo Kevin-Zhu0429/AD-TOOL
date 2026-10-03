@@ -67,6 +67,7 @@ try {
   assert.doesNotMatch(await page.locator('.shell-main').innerText(), /打印机|墨盒/);
 
   await nav('产品情报');
+  await page.getByRole('tab', { name: '历史月度表' }).click();
   await page.getByLabel('导入产品文件').setInputFiles(workbook([
     ['ASIN', '标题', '款式', '尺码', '颜色', '价格 USD', '对比组', '自家产品'],
     ['B000000001', '黄色宠物雨衣', '雨衣 A 款', 'L', '黄色', 19.99, '同规格雨衣', '是'],

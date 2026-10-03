@@ -1,0 +1,121 @@
+/* 宠物版产品情报:竞品监控 + Listing 体检。页面铺满宽度,和价格策略表一样 */
+.lib.pet-intel { max-width: none; padding: 18px 20px 28px; }
+.pet-intel .lib-head { flex-wrap: wrap; }
+.pet-intel .lib-head > .row { margin-left: auto; }
+.pet-intel .card { padding: 14px 16px; margin-bottom: 14px; }
+.pet-intel h2 { font-size: 17px; margin: 0; }
+.pet-intel h3 { font-size: 14.5px; margin: 0 0 10px; }
+.pet-intel h3 .hint, .pet-intel h2 .hint { font-weight: 400; font-size: 12px; margin-left: 6px; }
+.intel-tabs { margin: 10px 0 14px; }
+.intel-sync { display: grid; gap: 8px; }
+.intel-sync .hint { margin: 0; }
+.intel-toolbar { gap: 12px; margin-bottom: 10px; }
+.intel-toolbar h3 { margin: 0; }
+.intel-toolbar label { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+.intel-toolbar form .inp { width: 320px; }
+.intel-check { color: var(--text-dim); font-size: 13px; }
+.pet-intel .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+
+/* 变化提醒 */
+.intel-changes h2 { font-size: 15px; }
+.intel-change-list { list-style: none; margin: 10px 0 8px; padding: 0; display: grid; gap: 4px; }
+.intel-change-list li { display: grid; grid-template-columns: 44px 82px auto 104px minmax(120px, 220px) minmax(0, 1fr); align-items: center; gap: 8px;
+  padding: 4px 6px; border-radius: 6px; font-size: 13px; }
+.intel-change-list li:hover { background: var(--accent-soft); }
+.intel-change-list .day { color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.intel-change-list .tag { justify-self: start; }
+.intel-change-list .who, .intel-change-list .what { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.intel-change-list .what { color: var(--text-dim); }
+
+/* 左边款式列表 + 右边详情 */
+.intel-layout { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 14px; align-items: start; }
+.intel-styles { position: sticky; top: 12px; max-height: calc(100vh - 40px); overflow: auto; display: grid; gap: 4px; }
+.intel-style-btn { all: unset; cursor: pointer; display: grid; grid-template-columns: 1fr auto; gap: 1px 6px; padding: 7px 9px; border-radius: 8px; border: 1px solid transparent; }
+.intel-style-btn:hover { background: var(--panel-2); }
+.intel-style-btn:focus-visible { outline: 2px solid var(--accent); }
+.intel-style-btn.on { background: var(--accent-soft); border-color: var(--accent-line); }
+.intel-style-btn b { font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.intel-style-btn small { grid-column: 1; color: var(--text-dim); font-size: 11.5px; }
+.intel-style-btn .badges { grid-row: 1 / span 2; grid-column: 2; display: flex; flex-direction: column; gap: 3px; align-items: flex-end; justify-content: center; }
+.intel-main { min-width: 0; }
+
+.intel-style-head { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.intel-style-head .hint { margin: 4px 0 0; }
+.intel-band { display: flex; align-items: baseline; gap: 6px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; font-size: 13px; }
+.intel-band > span { color: var(--text-dim); }
+.intel-band b { font-variant-numeric: tabular-nums; font-size: 15px; }
+.intel-band small { color: var(--text-faint); margin-right: 6px; }
+.intel-band .sep { width: 1px; align-self: stretch; background: var(--border); margin: 0 6px; }
+
+/* 推荐 */
+.intel-suggest-list { display: grid; gap: 8px; }
+.intel-suggest-item { display: grid; grid-template-columns: 56px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 8px; border: 1px solid var(--border-soft); border-radius: 8px; }
+.intel-suggest-item img, .intel-suggest-item .img-ph { width: 56px; height: 56px; object-fit: contain; background: #fff; border-radius: 6px; }
+.intel-suggest-item .img-ph { background: var(--panel-3); }
+.intel-suggest-item .body { min-width: 0; display: grid; gap: 4px; }
+.intel-suggest-item .title { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-dim); font-size: 13px; }
+.intel-suggest-item .terms { display: flex; flex-wrap: wrap; gap: 4px; }
+.intel-suggest-item .term { font-size: 11.5px; padding: 1px 7px; border-radius: 999px; background: var(--panel-2); border: 1px solid var(--border-soft); }
+.intel-suggest-item .term small { color: var(--text-faint); }
+.intel-suggest-item .actions { display: flex; gap: 6px; }
+
+/* 对比表 */
+.intel-table { overflow: auto; max-height: 72vh; border: 1px solid var(--border); border-radius: 8px; }
+.intel-table table { border-collapse: separate; border-spacing: 0; width: 100%; font-size: 13px; }
+.intel-table th, .intel-table td { padding: 5px 8px; border-bottom: 1px solid var(--border-soft); vertical-align: middle; }
+.intel-table thead th { position: sticky; top: 0; z-index: 2; background: var(--panel-2); white-space: nowrap; font-weight: 650; }
+.intel-table td.num, .intel-table th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.intel-table img { width: 44px; height: 44px; object-fit: contain; background: #fff; border-radius: 4px; display: block; }
+.intel-table .title-cell { min-width: 200px; max-width: 300px; }
+.intel-table td.with-trend .trend { display: flex; justify-content: flex-end; align-items: center; gap: 6px; margin-top: 2px; color: var(--accent); min-height: 16px; }
+.intel-table td.with-trend small.down { color: var(--red-text); font-weight: 650; }
+.intel-table td.with-trend small.up { color: var(--green-text); font-weight: 650; }
+.intel-table .title-cell > span:not(.row) { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-dim); font-size: 12px; }
+.intel-table .title-cell .row { gap: 6px; }
+.intel-table tr.own td { background: var(--accent-soft); }
+.intel-table tr.open td { border-bottom-color: transparent; }
+.intel-table tr.children-row > td { background: var(--panel-2); padding: 6px 10px 10px 60px; }
+.intel-children { font-size: 12.5px; }
+.intel-children tr.same td { background: var(--green-soft); }
+.intel-children .tag { margin-left: 6px; }
+.spark { display: block; }
+
+/* 覆盖矩阵 */
+.intel-cover td.cover { text-align: center; font-size: 12px; white-space: nowrap; }
+.intel-cover th.own, .intel-cover td.own { border-left: 1px solid var(--border); border-right: 1px solid var(--border); }
+.intel-cover .cover-title { background: var(--green-soft); color: var(--green-text); font-weight: 650; }
+.intel-cover .cover-bullets { background: var(--accent-soft); color: var(--accent-text); }
+.intel-cover .cover-backend { background: var(--panel-3); color: var(--text-dim); }
+.intel-cover .cover-none { color: var(--text-faint); }
+.intel-cover tr.gap td:first-child { box-shadow: inset 3px 0 0 var(--red); }
+.intel-cover td .tag { margin-left: 6px; }
+.intel-cover thead th:nth-child(n+5) { max-width: 110px; overflow: hidden; text-overflow: ellipsis; }
+
+/* 体检 */
+.intel-health .checks { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; }
+.intel-health .checks li { font-size: 12.5px; padding: 1px 8px; border-radius: 5px; }
+.intel-health .checks li.red { background: var(--red-soft); color: var(--red-text); }
+.intel-health .checks li.yellow { background: var(--amber-soft); color: var(--amber-text); }
+.intel-health .checks li.ok { color: var(--green-text); }
+.intel-health .checks li.info { color: var(--text-dim); }
+.intel-health .title-cell small { display: block; }
+
+/* 对照 */
+.intel-compare { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 10px; }
+.intel-side { min-width: 0; }
+.intel-side img { width: 160px; height: 160px; object-fit: contain; background: #fff; border-radius: 8px; }
+.intel-side h4 { margin: 12px 0 4px; font-size: 13px; color: var(--text-dim); }
+.intel-side p, .intel-side li { font-size: 13px; line-height: 1.5; }
+.intel-side ol { padding-left: 18px; margin: 0; display: grid; gap: 6px; }
+
+.intel-mapping { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 12px 0; }
+.intel-mapping label { display: grid; gap: 4px; font-size: 13px; }
+
+@media (max-width: 900px) {
+  .intel-layout { grid-template-columns: 1fr; }
+  .intel-styles { position: static; max-height: none; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
+  .intel-change-list li { grid-template-columns: 36px auto auto minmax(0, 1fr); }
+  .intel-change-list .who, .intel-change-list .mono { display: none; }
+  .intel-compare, .intel-mapping { grid-template-columns: 1fr; }
+  .intel-toolbar form, .intel-toolbar form .inp { width: 100%; }
+}

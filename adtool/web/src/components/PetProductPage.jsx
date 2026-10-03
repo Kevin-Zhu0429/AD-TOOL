@@ -101,7 +101,7 @@ export default function PetProductPage({ market }) {
   const changeFacet = (key, value) => setFacets((f) => ({ ...f, [key]: value }));
   return <div className="lib pet-products">
     {confirmation}
-    <header className="lib-head"><div><h1>美国站产品情报</h1><p className="hint">按月维护产品数据。价格为 USD；销量、排名等保留来源口径，缺失值显示“—”。</p></div><div className="spacer" />
+    <header className="lib-head"><div><h1>历史月度产品表</h1><p className="hint">旧版手工维护的月度产品数据，保留只作参考；竞品监控已改为自动同步。价格为 USD；销量、排名等保留来源口径，缺失值显示“—”。</p></div><div className="spacer" />
       <button className="btn" onClick={() => exportRows([{ asin: 'B000000001', title: '示例宠物雨衣', product_type: '雨衣', style: '雨衣 A 款', size: 'L', color: '黄色', fabric: '防水涂层 / 纯色', comparison_group: '同规格雨衣', is_own: true }], '宠物产品情报模板', true)}>下载模板</button>
       <label className="btn">导入 Excel / CSV<input aria-label="导入产品文件" type="file" accept=".xlsx,.xls,.csv" disabled={busy} hidden onChange={(e) => { readFile(e.target.files[0]); e.target.value = ''; }} /></label>
       <button className="btn primary" disabled={busy} onClick={() => { setEditError(''); setEditor({ product: {}, month: data?.dataMonth && data.dataMonth !== 'legacy' ? data.dataMonth : monthNow(), existing: false }); }}>添加产品</button>

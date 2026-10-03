@@ -105,7 +105,59 @@ export async function downloadReportDocument(document) {
   }
 }
 
-export const amazonGateway = { request: spApiRequest, download: downloadReportDocument };
+/**
+ * 边下载边解码报告,每收到一段文字调一次 onText。只用于 UTF-8 的 JSON 报告。
+ * 品牌分析搜索词报告整个美国站一周有几个 GB,不能像小报告那样整份读进内存。
+ */
+export async function streamReportDocument(document, onText) {
+  let response;
+  try {
+    response = await fetch(document.url, { signal: AbortSignal.timeout(60 * 60_000) });
+  } catch (error) {
+    throw new Error(`下载亚马逊报告失败：${clean(error.message) || '网络错误'}`);
+  }
+  if (!response.ok || !response.body) throw new Error(`下载亚马逊报告失败 (${response.status})`);
+  let stream = response.body;
+  if (clean(document.compressionAlgorithm).toUpperCase() === 'GZIP') stream = stream.pipeThrough(new DecompressionStream('gzip'));
+  for await (const text of stream.pipeThrough(new TextDecoderStream('utf-8'))) onText(text);
+}
+
+export const amazonGateway = { request: spApiRequest, download: downloadReportDocument, stream: streamReportDocument };
+
+/**
+ * 从流式 JSON 里逐条取出「根对象里某个数组」的元素对象,不把整个文件拼成一个字符串。
+ * 只认根对象下一层数组里的对象(品牌分析报告的 dataByDepartmentAndSearchTerm),字符串里的括号不算。
+ */
+export function createArrayRecordScanner(onRecord) {
+  const stack = [];
+  let inString = false, escaped = false, pieces = null;
+  return (text) => {
+    let start = pieces ? 0 : -1;
+    for (let index = 0; index < text.length; index += 1) {
+      const code = text.charCodeAt(index);
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (code === 92) escaped = true;
+        else if (code === 34) inString = false;
+        continue;
+      }
+      if (code === 34) inString = true;
+      else if (code === 123 || code === 91) {
+        if (code === 123 && stack.length === 2 && stack[0] === 123 && stack[1] === 91) { pieces = []; start = index; }
+        stack.push(code);
+      } else if (code === 125 || code === 93) {
+        stack.pop();
+        if (pieces && code === 125 && stack.length === 2) {
+          pieces.push(text.slice(start, index + 1));
+          const raw = pieces.join('');
+          pieces = null; start = -1;
+          onRecord(JSON.parse(raw));
+        }
+      }
+    }
+    if (pieces) pieces.push(text.slice(start));
+  };
+}
 
 /** 报告接口被限流(429)时等一会再试;等的时候 onProgress 收到 { stage: 'throttled', retryAt },恢复后收到 stage */
 async function waitOutThrottle(call, onProgress, stage) {
@@ -127,7 +179,7 @@ async function waitOutThrottle(call, onProgress, stage) {
  * 平面文件默认按 TSV 解析;品牌分析这类 JSON 报告传 parse: JSON.parse。
  * onProgress 依次收到 stage: creating → throttled(被限流时)→ processing → downloading
  */
-export async function runReport(account, reportType, { start, end, options, parse = parseTsv, onProgress = () => {} } = {}, gateway = amazonGateway) {
+export async function runReport(account, reportType, { start, end, options, parse = parseTsv, onDocument, onProgress = () => {} } = {}, gateway = amazonGateway) {
   const body = { reportType, marketplaceIds: [US_MARKETPLACE] };
   if (options) body.reportOptions = options;
   if (start) body.dataStartTime = start.toISOString();
@@ -144,10 +196,11 @@ export async function runReport(account, reportType, { start, end, options, pars
       onProgress({ stage: 'downloading' });
       const document = await waitOutThrottle(() => gateway.request(account, REGION, 'GET',
         `/reports/2021-06-30/documents/${clean(report.reportDocumentId)}`), onProgress, 'downloading');
-      return parse(await gateway.download(document));
+      // 太大的报告(品牌分析搜索词报告有几个 GB)由 onDocument 边下载边处理,不整份读进内存
+      return onDocument ? onDocument(document) : parse(await gateway.download(document));
     }
     // 亚马逊对没有数据的时间段直接取消报告
-    if (status === 'CANCELLED') return parse === parseTsv ? [] : null;
+    if (status === 'CANCELLED') return parse === parseTsv && !onDocument ? [] : null;
     if (status === 'FATAL') throw new Error(`亚马逊生成报告失败（${reportType}）`);
     await sleep(reportTiming.pollMs);
   }
@@ -276,4 +329,116 @@ export async function fetchFeePreview(account, now = new Date(), gateway = amazo
     });
   }
   return [...fees.values()];
+}
+
+// ---------- 产品情报:竞品目录、价格 ----------
+
+const textValues = (attributes, name) => (attributes?.[name] ?? [])
+  .filter((entry) => !entry?.marketplace_id || entry.marketplace_id === US_MARKETPLACE)
+  .map((entry) => clean(entry?.value)).filter(Boolean);
+
+/** 目录接口一个商品 → 产品情报要用的字段。图片按位置(MAIN、PT01…)去重计数 */
+export function catalogDetail(item) {
+  const forUs = (list) => (list ?? []).find((entry) => entry.marketplaceId === US_MARKETPLACE) ?? list?.[0] ?? {};
+  const summary = forUs(item.summaries);
+  const ranks = forUs(item.salesRanks);
+  const relations = forUs(item.relationships).relationships ?? [];
+  const images = forUs(item.images).images ?? [];
+  const variants = new Map();
+  for (const image of images) {
+    const current = variants.get(image.variant);
+    if (!current || Math.abs((image.width ?? 0) - 1000) < Math.abs((current.width ?? 0) - 1000)) variants.set(image.variant, image);
+  }
+  const display = (ranks.displayGroupRanks ?? [])[0];
+  const classification = (ranks.classificationRanks ?? [])[0];
+  const variation = relations.filter((relation) => relation.type === 'VARIATION');
+  return {
+    asin: validAsin(item.asin),
+    parentAsin: validAsin(variation.flatMap((relation) => relation.parentAsins ?? [])[0]),
+    children: [...new Set(variation.flatMap((relation) => relation.childAsins ?? []).map(validAsin).filter(Boolean))],
+    title: clean(summary.itemName) || textValues(item.attributes, 'item_name')[0] || null,
+    brand: clean(summary.brand ?? summary.brandName) || textValues(item.attributes, 'brand')[0] || null,
+    bullets: textValues(item.attributes, 'bullet_point'),
+    size: clean(summary.size) || null, color: clean(summary.color) || null,
+    productType: clean(forUs(item.productTypes).productType) || null,
+    mainImage: variants.get('MAIN')?.link ?? null, imageCount: variants.size,
+    bsr: display?.rank ?? null, bsrCategory: clean(display?.title) || null,
+    subBsr: classification?.rank ?? null, subCategory: clean(classification?.title) || null,
+  };
+}
+
+/** 目录详情(标题、五点、图片、排名、变体关系)。每次最多 20 个 ASIN;找不到的 ASIN 不在结果里 */
+export async function fetchCatalogDetails(account, asins, gateway = amazonGateway, onBatch = () => {}) {
+  const result = new Map();
+  const list = [...new Set(asins.map(validAsin).filter(Boolean))];
+  for (let index = 0; index < list.length; index += 20) {
+    const payload = await gateway.request(account, REGION, 'GET', '/catalog/2022-04-01/items', { query: {
+      identifiers: list.slice(index, index + 20).join(','), identifiersType: 'ASIN', marketplaceIds: US_MARKETPLACE,
+      includedData: 'summaries,attributes,images,salesRanks,relationships,productTypes', pageSize: 20,
+    } });
+    for (const item of Array.isArray(payload?.items) ? payload.items : []) {
+      const detail = catalogDetail(item);
+      if (detail.asin) result.set(detail.asin, detail);
+    }
+    onBatch(Math.min(list.length, index + 20), list.length);
+  }
+  return result;
+}
+
+/**
+ * 竞品价格接口(getItemOffersBatch)每 10 秒 1 次,一次 20 个 ASIN。测试调成 0。
+ */
+export const pricingTiming = { batchGapMs: 10_500 };
+
+const amountOf = (money) => {
+  const number = Number(money?.Amount);
+  return Number.isFinite(number) && number > 0 ? number : null;
+};
+
+/** 一条 getItemOffers 结果 → 购物车价、最低价、划线价、卖家数 */
+export function offerSummary(payload) {
+  const summary = payload?.Summary ?? {};
+  const isNew = (entry) => /^new$/i.test(clean(entry?.condition));
+  const buyBox = (summary.BuyBoxPrices ?? []).find(isNew);
+  const lowest = (summary.LowestPrices ?? []).filter(isNew)
+    .map((entry) => amountOf(entry.LandedPrice) ?? amountOf(entry.ListingPrice)).filter((value) => value != null);
+  return {
+    price: amountOf(buyBox?.LandedPrice) ?? amountOf(buyBox?.ListingPrice) ?? (lowest.length ? Math.min(...lowest) : null),
+    listPrice: amountOf(summary.ListPrice),
+    offers: Number.isInteger(summary.TotalOfferCount) ? summary.TotalOfferCount : null,
+  };
+}
+
+/** 一批 ASIN 的当前价格。返回 Map(asin → { price, listPrice, offers });亚马逊没给结果的 ASIN 不在里面 */
+export async function fetchItemOffers(account, asins, gateway = amazonGateway, onBatch = () => {}) {
+  const result = new Map();
+  const list = [...new Set(asins.map(validAsin).filter(Boolean))];
+  for (let index = 0; index < list.length; index += 20) {
+    if (index) await sleep(pricingTiming.batchGapMs);
+    const batch = list.slice(index, index + 20);
+    const payload = await gateway.request(account, REGION, 'POST', '/batches/products/pricing/v0/itemOffers', { body: {
+      requests: batch.map((asin) => ({ uri: `/products/pricing/v0/items/${asin}/offers`, method: 'GET',
+        MarketplaceId: US_MARKETPLACE, ItemCondition: 'New', CustomerType: 'Consumer' })),
+    } });
+    for (const [position, response] of (payload?.responses ?? []).entries()) {
+      const body = response?.body?.payload;
+      const asin = validAsin(body?.ASIN ?? response?.request?.Identifier ?? /items\/([A-Z0-9]{10})\//.exec(response?.request?.uri ?? '')?.[1] ?? batch[position]);
+      if (!asin || Number(response?.status?.statusCode) >= 400 || !body) continue;
+      result.set(asin, offerSummary(body));
+    }
+    onBatch(Math.min(list.length, index + 20), list.length);
+  }
+  return result;
+}
+
+/** 自家 Listing 的后台搜索词和亚马逊报的问题(Listings Items API) */
+export async function fetchOwnListing(account, sku, gateway = amazonGateway) {
+  const payload = await gateway.request(account, REGION, 'GET',
+    `/listings/2021-08-01/items/${encodeURIComponent(account.sellerId)}/${encodeURIComponent(sku)}`, { query: {
+      marketplaceIds: US_MARKETPLACE, includedData: 'attributes,issues', issueLocale: 'en_US',
+    } });
+  return {
+    backendTerms: textValues(payload?.attributes, 'generic_keyword').join(' '),
+    issues: (payload?.issues ?? []).map((issue) => ({ severity: clean(issue.severity), message: clean(issue.message).slice(0, 300) })),
+  };
 }

@@ -1,5 +1,5 @@
 import { isPet, profile } from './profile.js';
-import PetProductPage from './components/PetProductPage.jsx';
+import PetIntelPage from './components/PetIntelPage.jsx';
 import PriceStrategyPage from './components/PriceStrategyPage.jsx';
 import SalesStatsPage from './components/SalesStatsPage.jsx';
 import { useEffect, useRef, useState } from 'react';
@@ -123,7 +123,7 @@ export default function App() {
     ) : page === 'library' && !isPet ? (
       <LibraryPage key={market} market={market} />
     ) : page === 'products' && user.productIntel ? (
-      isPet ? <PetProductPage key={market} market={market} /> : <ProductPage key={market} market={market} />
+      isPet ? <PetIntelPage key={market} market={market} /> : <ProductPage key={market} market={market} />
     ) : page === 'priceStrategy' && isPet ? (
       <PriceStrategyPage />
     ) : page === 'salesStats' && isPet ? (

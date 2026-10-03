@@ -18,6 +18,7 @@ import { captainRouter } from './captain.js';
 import { priceStrategyRouter } from './priceStrategy.js';
 import { startPriceSyncScheduler } from './priceStrategySync.js';
 import { startAbaSyncScheduler } from './petAbaSync.js';
+import { competitorRouter, startCompetitorScheduler } from './petCompetitors.js';
 import { mountMcp } from './mcp.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -56,6 +57,7 @@ app.use('/api/products', productRouter);
 app.use('/api/aba', abaRouter);
 app.use('/api/captain', captainRouter);
 app.use('/api/price-strategy', priceStrategyRouter);
+app.use('/api/competitors', competitorRouter);
 
 app.get('/api/health', (req, res) => {
   res.json({ ok: true, time: new Date().toISOString() });
@@ -79,4 +81,5 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`[server] http://localhost:${PORT}`);
   startPriceSyncScheduler();
   startAbaSyncScheduler();
+  startCompetitorScheduler();
 });
