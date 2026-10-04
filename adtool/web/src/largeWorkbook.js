@@ -13,8 +13,28 @@ function checkAbort(signal) {
   if (signal?.aborted) throw abortError();
 }
 
+// 解压流里已有数据时 reader.read() 走微任务、不会把主线程让出去,整张表会变成一次几秒的长任务。
+// 每处理约 40ms 主动让一次,页面(进度条、取消按钮)始终能响应。用 MessageChannel 而不是 setTimeout,后台标签页里也不会被限速到 1 秒一次。
+var YIELD_EVERY_MS = 40;
+var lastYield = 0;
+function now() {
+  return typeof performance !== 'undefined' ? performance.now() : Date.now();
+}
+function maybeYield() {
+  var t = now();
+  if (t - lastYield < YIELD_EVERY_MS) return null;
+  return new Promise(function (resolve) {
+    if (typeof MessageChannel === 'undefined') { setTimeout(resolve, 0); return; }
+    var channel = new MessageChannel();
+    channel.port1.onmessage = function () { channel.port1.close(); resolve(); };
+    channel.port2.postMessage(0);
+  }).then(function () { lastYield = now(); });
+}
+
 function xmlText(value) {
-  return String(value || '').replace(/&(amp|lt|gt|quot|apos|#\d+|#x[\da-f]+);/gi, function (_, entity) {
+  value = String(value || '');
+  if (value.indexOf('&') < 0) return value;
+  return value.replace(/&(amp|lt|gt|quot|apos|#\d+|#x[\da-f]+);/gi, function (_, entity) {
     if (entity === 'amp') return '&';
     if (entity === 'lt') return '<';
     if (entity === 'gt') return '>';
@@ -26,8 +46,11 @@ function xmlText(value) {
   });
 }
 
+// 每个单元格都要取 r / t 属性,正则按属性名缓存,不要每格 new 一个(几十万行时这一项就占好几秒)
+var ATTR_RE = Object.create(null);
 function attr(source, name) {
-  var match = source.match(new RegExp('(?:^|\\s)' + name.replace(':', '\\:') + '="([^"]*)"'));
+  var re = ATTR_RE[name] || (ATTR_RE[name] = new RegExp('(?:^|\\s)' + name.replace(':', '\\:') + '="([^"]*)"'));
+  var match = source.match(re);
   return match ? xmlText(match[1]) : '';
 }
 
@@ -154,8 +177,11 @@ async function scanElements(zip, entry, tagName, signal, onElement, onChunk) {
   var startToken = '<' + tagName;
   var endToken = '</' + tagName + '>';
   try {
+    lastYield = now();
     while (true) {
       checkAbort(signal);
+      var pause = maybeYield();
+      if (pause) await pause;
       var part = await reader.read();
       if (part.done) break;
       loaded += part.value.byteLength;
@@ -207,6 +233,8 @@ async function scanElements(zip, entry, tagName, signal, onElement, onChunk) {
 
 function richText(xml) {
   var out = '';
+  // 注音(rPh)不是单元格文字,和 SheetJS 一样略过
+  if (xml.indexOf('<rPh') >= 0) xml = xml.replace(/<rPh\b[\s\S]*?<\/rPh>/g, '');
   var textRe = /<t(?:\s[^>]*)?>([\s\S]*?)<\/t>/g;
   var match;
   while ((match = textRe.exec(xml))) out += xmlText(match[1]);
@@ -306,14 +334,17 @@ export async function parseBulkWorkbookFile(file, options) {
   var mainSheet = sheets.find(function (sheet) {
     return sheet.name === '商品推广活动' || sheet.name === 'Sponsored Products Campaigns';
   });
-  if (!mainSheet) throw new Error('没找到「商品推广活动」工作表，请确认这是商品推广(SP)批量表。');
-
-  if (mainSheet.entry.uncompressedSize < threshold) {
+  if (!mainSheet) {
+    // 工作表名不标准时走 SheetJS 兜底(按表头认「实体层级」列)
     emitProgress(progress, '正在读取工作簿', 0, file.size || 0, 0);
-    var bytes = new Uint8Array(await file.arrayBuffer());
+    var fallbackBytes = new Uint8Array(await file.arrayBuffer());
     checkAbort(signal);
-    return { model: parse(bytes), raw: bytes, sourceFile: file, streamed: false, largeFile: false };
+    return { model: parse(fallbackBytes), raw: fallbackBytes, sourceFile: file, streamed: false, largeFile: false };
   }
+
+  // 不论大小都逐行流式解析:SheetJS 一次性解析会把页面卡住几十秒,流式解析快 3–4 倍,读一段让一下界面。
+  // 没超过阈值的文件仍把原始字节留着,导出时照旧用整本工作簿(可以选「导出全部行」)。
+  var keepRaw = mainSheet.entry.uncompressedSize < threshold;
 
   var stringsEntry = zip.entries.get('xl/sharedStrings.xml');
   var strings = await sharedStrings(zip, stringsEntry, signal, function (loaded, total) {
@@ -334,6 +365,8 @@ export async function parseBulkWorkbookFile(file, options) {
     }
     if (!row.length || row.every(function (value) { return value === null || value === ''; })) return;
     while (row.length < header.length) row.push(null);
+    // 空单元格补成 null,和 SheetJS(defval:null)一致,改动比对 String(原值) 时不会把 undefined 当成改过
+    for (var k = 0; k < row.length; k++) if (row[k] === undefined) row[k] = null;
     var record = { i: rows.length, kind: entityKindOf(row[columns.entity]), d: row };
     rows.push(record);
     assembler.add(record);
@@ -383,9 +416,14 @@ export async function parseBulkWorkbookFile(file, options) {
   model.dropSheets = model.sheetNames.filter(function (name) {
     return name !== mainSheet.name && name !== '广告组合' && name !== 'Portfolios';
   });
-  model.largeFile = true;
+  model.largeFile = !keepRaw;
+  var raw = null;
+  if (keepRaw) {
+    raw = new Uint8Array(await file.arrayBuffer());
+    checkAbort(signal);
+  }
   emitProgress(progress, '正在完成索引', 1, 1, rows.length);
-  return { model: model, raw: null, sourceFile: file, streamed: true, largeFile: true };
+  return { model: model, raw: raw, sourceFile: file, streamed: true, largeFile: !keepRaw };
 }
 
 export { STREAM_SHEET_THRESHOLD };
