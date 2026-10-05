@@ -335,17 +335,30 @@ export function mountOptimizer(root, host, options) {
 
   /* ---------- 活动列表 ---------- */
   function campLevel(cp){ return C.worstLevel(C.flagsFor('campaign',cp.m,{},S.cfg)) }
-  function campDirty(cp){
-    var ids={}; [cp.row].concat(cp.adGroups.map(g=>g.row),cp.placements.map(p=>p.row),cp.ads.map(a=>a.row),cp.targets.map(t=>t.row),cp.negatives.map(n=>n.row)).forEach(function(r){ if(r)ids[r.i]=1 });
-    var hit=Object.keys(S.changes.edits).some(function(k){return ids[k]});
-    if(hit)return true;
-    return S.changes.creates.some(function(n){return n.campaignId===cp.id});
+  /* 行号 → 活动编号,载入后建一次;「改」标记按改动反查活动,不再每条活动扫一遍全部改动 */
+  function rowCampIndex(){
+    if(!S.model._rowCamp){
+      var idx=new Array(S.model.rows.length);
+      S.model.campaigns.forEach(function(cp){
+        [cp.row].concat(cp.adGroups.map(g=>g.row),cp.placements.map(p=>p.row),cp.ads.map(a=>a.row),cp.targets.map(t=>t.row),cp.negatives.map(n=>n.row)).forEach(function(r){ if(r)idx[r.i]=cp.id });
+      });
+      S.model._rowCamp=idx;
+    }
+    return S.model._rowCamp;
   }
+  function dirtyCampSet(){
+    var idx=rowCampIndex(),set={};
+    for(var k in S.changes.edits){ var id=idx[k]; if(id!==undefined)set[id]=1; }
+    S.changes.creates.forEach(function(n){ set[n.campaignId]=1 });
+    return set;
+  }
+  function campDirty(cp,set){ return !!(set||dirtyCampSet())[cp.id] }
   function buildPortfolios(){
     var set={}; S.model.campaigns.forEach(function(c){ if(c.portfolio)set[c.portfolio]=1 });
     $('#pf').innerHTML='<option value="">全部广告组合</option>'+Object.keys(set).sort().map(function(p){return '<option>'+esc(p)+'</option>'}).join('');
   }
-  function filteredCamps(){
+  function filteredCamps(dirty){
+    if(S.filter==='dirty'&&!dirty)dirty=dirtyCampSet();
     var q=S.q.toLowerCase();
     return S.model.campaigns.filter(function(cp){
       if(S.pf&&cp.portfolio!==S.pf)return false;
@@ -355,7 +368,7 @@ export function mountOptimizer(root, host, options) {
       if(S.filter==='spend'&&cp.m.spend<=0)return false;
       if(S.filter==='noimp'&&cp.m.imp>0)return false;
       if(S.filter==='paused'&&cp.state!=='paused')return false;
-      if(S.filter==='dirty'&&!campDirty(cp))return false;
+      if(S.filter==='dirty'&&!campDirty(cp,dirty))return false;
       if(q){
         var hay=(cp.name+' '+cp.portfolio).toLowerCase();
         if(hay.indexOf(q)<0){
@@ -372,12 +385,15 @@ export function mountOptimizer(root, host, options) {
     });
   }
   function renderRail(){
-    var list=filteredCamps();
+    // 数据分析视图里左栏是隐藏的,先记一笔,切回「按活动优化」时再画
+    if(S.view!=='work'){ S.railStale=true; return; }
+    S.railStale=false;
+    var dirty=dirtyCampSet(),list=filteredCamps(dirty);
     $('#railCount').textContent=list.length+' / '+S.model.campaigns.length+' 条活动 · 合计花费 '+fm(list.reduce(function(a,c){return a+c.m.spend},0));
     $('#raillist').innerHTML=list.map(function(cp){
       var lv=campLevel(cp);
       return '<div class="crow lv-'+lv+(S.sel===cp.id?' sel':'')+(cp.state==='paused'?' paused':'')+'" data-id="'+cp.id+'">'+
-        (campDirty(cp)?'<span class="edited-mark">改</span>':'')+
+        (dirty[cp.id]?'<span class="edited-mark">改</span>':'')+
         '<div class="nm"><span class="dot '+lv+'"></span>'+esc(cp.name)+'</div>'+
         '<div class="sub">'+esc(cp.portfolio||'无组合')+' · '+esc(cp.targetingType||'-')+' · '+esc(cp.strategy||'-')+'</div>'+
         '<div class="figs"><span>曝 <b>'+fi(cp.m.imp)+'</b></span><span>点 <b>'+fi(cp.m.clicks)+'</b></span>'+
@@ -403,10 +419,11 @@ export function mountOptimizer(root, host, options) {
   /* ---------- 详情 ---------- */
   function curVal(row,col){ return C.cur(S.model,S.changes,row,col) }
   function isDirty(row,col){ return S.changes.get(row.i,col)!==undefined }
-  function setVal(row,col,val,field){
+  // quiet:批量改很多行时只记改动,由调用方最后统一刷新一次界面
+  function setVal(row,col,val,field,quiet){
     var orig=row.d[col];
     S.changes.set(row.i,col,orig,val,field);
-    renderFoot(); renderRail();
+    if(!quiet){ renderFoot(); renderRail(); }
   }
   function numInput(row,col,field,step,min){
     var v=curVal(row,col);
@@ -778,17 +795,17 @@ export function mountOptimizer(root, host, options) {
     if(op==='bid-set'){ setBid=parseFloat($('#batchBid').value); if(!(setBid>0)){toast('先填竞价');return;} }
     ids.forEach(function(i){
       var row=S.model.rows[+i];
-      if(op==='pause')setVal(row,c.state,w.paused,'state');
-      else if(op==='enable')setVal(row,c.state,w.enabled,'state');
+      if(op==='pause')setVal(row,c.state,w.paused,'state',true);
+      else if(op==='enable')setVal(row,c.state,w.enabled,'state',true);
       else if(op.indexOf('bid')===0){
         var base=C.num(curVal(row,c.bid)); if(!base&&op!=='bid-set')return;
         var v=op==='bid-set'?setBid:(op==='bid-10'?base*0.9:op==='bid-20'?base*0.8:base*1.1);
         v=Math.max(0.02,Math.round(v*100)/100);
-        setVal(row,c.bid,v,'bid');
+        setVal(row,c.bid,v,'bid',true);
       }
     });
     toast('已批量处理 '+ids.length+' 项');
-    S.checked={}; renderDetail();
+    S.checked={}; renderFoot(); renderRail(); renderDetail();
   }
 
   /* ---------- 批量否定 ---------- */
@@ -1435,6 +1452,18 @@ export function mountOptimizer(root, host, options) {
     });
     return out;
   }
+  // 矩阵每一行只要条数:直接按广告组加长度,不用把几万条搜索词复制两遍
+  function skuTermCounts(o){
+    var idx=skuIndex(),gids={},all=0,ex=0;
+    o.items.forEach(function(x){gids[x.ad.adGroupId]=1});
+    for(var g in gids){
+      var n=(idx.stByGroup[g]||[]).length;
+      if(!n)continue;
+      all+=n;
+      if(groupExclusive(g,o.skuSet))ex+=n;
+    }
+    return {all:all,ex:ex};
+  }
   function aggSkuTerms(rows){
     var map={};
     rows.forEach(function(r){
@@ -1527,7 +1556,7 @@ export function mountOptimizer(root, host, options) {
       o.skuSet={};o.items.forEach(function(x){o.skuSet[x.ad.sku]=1});
       o.inventory=summarizeSkuInventory(S.skuInventoryIndex,Object.keys(o.skuSet));
       o.plan=adStockPlan(o);o.ads={outOn:o.plan.outOn.length,restockOff:o.plan.restockOff.length};
-      o.stAll=skuTerms(o,false).length;o.stEx=skuTerms(o,true).length;
+      var cnt=skuTermCounts(o);o.stAll=cnt.all;o.stEx=cnt.ex;
       return o;
     });
     var base=C.sumMetrics(list.map(function(o){return o.m}));
@@ -2010,6 +2039,7 @@ export function mountOptimizer(root, host, options) {
     $('#main').style.display=v==='work'?'grid':'none';
     $('#analysis').style.display=v==='work'?'none':'flex';
     if(v==='analysis')renderAnalysis();
+    else if(S.railStale&&S.model)renderRail();
   }
   $$('.vbtn').forEach(function(b){b.onclick=function(){ if(!S.model){toast('先载入批量表');return;} setView(b.dataset.view); }});
 
@@ -2042,13 +2072,14 @@ export function mountOptimizer(root, host, options) {
         else if(op==='highacos')hit=m.sales>0&&m.acos>S.cfg.targetAcos;
         if(hit)S.an.adSel[x.ad.row.i]=1;
       });
-      renderAnalysis();return;
+      syncAdSel();return;
     }
     var sa=e.target.closest('[data-stockact]');
     if(sa){
       var c4=S.model.colIdx,w4=stateWords(),pause=sa.dataset.stockact==='pause';
       var rows=(S.an._stockAct&&S.an._stockAct[pause?'pause':'enable'])||[];
-      rows.forEach(function(x){setVal(x.ad.row,c4.state,pause?w4.paused:w4.enabled,'state')});
+      rows.forEach(function(x){setVal(x.ad.row,c4.state,pause?w4.paused:w4.enabled,'state',true)});
+      renderFoot();renderRail();
       toast(rows.length?(pause?'已关闭 ':'已重新开启 ')+rows.length+' 条商品广告，导出后生效':'没有需要处理的广告');
       renderAnalysis();return;
     }
@@ -2062,8 +2093,9 @@ export function mountOptimizer(root, host, options) {
       ids.forEach(function(i){
         var row=S.model.rows[+i];if(!row)return;
         if(C.normState(curVal(row,c3.state))===want){same++;return}
-        setVal(row,c3.state,op2==='pause'?w.paused:w.enabled,'state');hit++;
+        setVal(row,c3.state,op2==='pause'?w.paused:w.enabled,'state',true);hit++;
       });
+      renderFoot();renderRail();
       S.an.adSel={};
       toast(hit?((op2==='pause'?'已关闭 ':'已重新启用 ')+hit+' 条投放'+(same?'（'+same+' 条本来就是）':'')+'，导出后生效')
                :'这些投放本来就是'+(op2==='pause'?'关闭':'启用')+'状态');
@@ -2149,9 +2181,9 @@ export function mountOptimizer(root, host, options) {
     if(el.id==='anSku'){S.an.sku=el.value;if(!el.value)S.an.skuOnlyEx=false;renderAnalysis();return}
     if(el.dataset.adckall!==undefined){
       S.an._skuAds.forEach(function(x){S.an.adSel[x.ad.row.i]=el.checked});
-      renderAnalysis();return;
+      syncAdSel();return;
     }
-    if(el.dataset.adck!==undefined){S.an.adSel[el.dataset.adck]=el.checked;renderAnalysis();return}
+    if(el.dataset.adck!==undefined){S.an.adSel[el.dataset.adck]=el.checked;syncAdSel();return}
     if(el.id==='anSkuEx'){S.an.skuOnlyEx=el.checked;renderAnalysis();return}
     if(el.dataset.anckall!==undefined){
       $$('#anbody [data-anck]').forEach(function(b){b.checked=el.checked;S.an.stSel[b.dataset.anck]=el.checked});
@@ -2177,6 +2209,12 @@ export function mountOptimizer(root, host, options) {
       },260);
     }
   });
+  // 勾选只改勾选框和「已选」计数,不重画整张表(几百行带下拉框的表重画一次要大半秒)
+  function syncAdSel(){
+    $$('#anbody [data-adck]').forEach(function(b){b.checked=!!S.an.adSel[b.dataset.adck]});
+    var n=S.an._skuAds.filter(function(x){return S.an.adSel[x.ad.row.i]}).length;
+    var cnt=$('#anbody .subbatch b');if(cnt)cnt.textContent=n;
+  }
   function anStBulk(){
     var picked=Object.keys(S.an.stSel).filter(function(k){return S.an.stSel[k]});
     if(!picked.length){toast('先勾选搜索词');return}

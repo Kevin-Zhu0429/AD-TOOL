@@ -129,6 +129,8 @@ button,input,select,textarea{font-family:inherit;font-size:inherit;color:inherit
 .railmeta select{flex:1;min-width:0;padding:4px 6px;border:1px solid var(--line);border-radius:4px;background:var(--card);font-size:12px}
 .raillist{overflow-y:auto;flex:1}
 .crow{border-bottom:1px solid var(--line2);padding:10px 12px 10px 14px;cursor:pointer;position:relative;border-left:3px solid transparent}
+/* 上千条活动时只排版看得见的那几十条,其余按估计高度占位 */
+.crow{content-visibility:auto;contain-intrinsic-size:auto 78px}
 .crow:hover{background:var(--hover)}
 .crow.sel{background:var(--cy-b)}
 .crow.lv-bad{border-left-color:var(--mg)} .crow.lv-warn{border-left-color:var(--ye)}
@@ -190,6 +192,8 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px;background:var(--ca
 .cellin:focus{outline:2px solid var(--cy-b);border-color:var(--cy)}
 .cellin.dirty,.cellsel.dirty{border-color:var(--cy);background:var(--cy-b);font-weight:700}
 .cellsel{border:1px solid var(--line);border-radius:4px;padding:4px 6px;background:var(--card);font-size:12px}
+/* 状态下拉定宽:不定宽时浏览器要逐个量选项文字宽度,几百个下拉的表重排会慢一倍 */
+.cellsel{width:84px}
 .flagchip{display:inline-block;font-size:11px;border-radius:3px;padding:1px 6px;margin-right:4px;white-space:nowrap}
 .flagchip.bad{background:var(--mg-b);color:var(--mg)}
 .flagchip.warn{background:var(--ye-b);color:var(--ye)}
