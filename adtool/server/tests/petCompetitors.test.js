@@ -191,6 +191,8 @@ test('competitors are suggested from ABA, tracked daily, and changes are recorde
   world.pricingDenied = true;
   const day1 = await syncCompetitors(1, fakeAmazon(world).gateway, ENV, () => new Date('2026-10-01T18:00:00Z'));
   assert.equal(day1.prices, 0);
+  const searchedDay1 = world.searches?.length ?? 0;
+  assert.ok(searchedDay1 > 0);
   assert.match((await call('/competitors/status', owner)).data.daily.pricingError.message, /拒绝访问/);
   // 手动加的子体换成了父 ASIN,和已有的合并
   assert.deepEqual(db.prepare("SELECT asin FROM pet_competitors WHERE status='active' ORDER BY asin").all().map((row) => row.asin), ['B0RIVALPR1', 'B0SOLO0001']);
@@ -206,6 +208,8 @@ test('competitors are suggested from ABA, tracked daily, and changes are recorde
   world.prices.B0RIVALL01 = 39.99;
   world.prices.B0SOLO0001 = null;
   await syncCompetitors(1, fakeAmazon(world).gateway, ENV, () => new Date('2026-10-02T18:00:00Z'));
+  // 挑过没凑够的款式隔 7 天再试,这两次同步不再重复搜
+  assert.equal(world.searches.length, searchedDay1);
   const kinds = db.prepare("SELECT kind, asin, before_value, after_value FROM pet_competitor_changes WHERE day='2026-10-02' ORDER BY kind, asin").all();
   assert.deepEqual(kinds.map((row) => `${row.kind}:${row.asin}`), [
     'main_image:B0RIVALPR1', 'no_buybox:B0SOLO0001', 'price_down:B0RIVALS01', 'title:B0RIVALPR1', 'variants_added:B0RIVALPR1']);
@@ -281,6 +285,11 @@ test('competitors are suggested from ABA, tracked daily, and changes are recorde
   world.prices.B0AUTO0001 = 31.99;
   world.search = { 'dog bed': ['B0AUTO0001', 'B0PADMAT01', 'B0OWNS0001'] };
   const fresh = fakeAmazon(world);
+  const triedKey = "SELECT value FROM pet_price_sync_state WHERE key='competitors_autopick_tried'";
+  const ageTried = () => db.prepare("UPDATE pet_price_sync_state SET value=? WHERE key='competitors_autopick_tried'")
+    .run(JSON.stringify(Object.fromEntries(Object.keys(JSON.parse(db.prepare(triedKey).get().value)).map((key) => [key, '2026-09-20']))));
+  assert.ok(Object.values(JSON.parse(db.prepare(triedKey).get().value)).every((day) => day === '2026-10-01'));
+  ageTried();
   const day3 = await syncCompetitors(1, fresh.gateway, ENV, () => new Date('2026-10-03T18:00:00Z'));
   assert.equal(day3.autoAdded, 1);
   assert.deepEqual(world.searches.slice(-2), ['dog bed', 'cat bed']);
@@ -292,8 +301,12 @@ test('competitors are suggested from ABA, tracked daily, and changes are recorde
   const autoId = db.prepare("SELECT id FROM pet_competitors WHERE asin='B0AUTO0001'").get().id;
   assert.equal((await call(`/competitors/${autoId}`, owner, undefined, 'DELETE')).status, 200);
   assert.equal(db.prepare('SELECT status FROM pet_competitors WHERE id=?').get(autoId).status, 'ignored');
+  ageTried();
   await syncCompetitors(1, fresh.gateway, ENV, () => new Date('2026-10-04T18:00:00Z'));
   assert.equal(db.prepare("SELECT status FROM pet_competitors WHERE asin='B0AUTO0001'").get().status, 'ignored');
+  // 自动挑对手出错时,状态里要看得到
+  db.prepare("INSERT OR REPLACE INTO pet_price_sync_state(key,value) VALUES('competitors_autopick_error',?)").run(JSON.stringify({ at: '2026-10-04T18:00:00Z', message: '目录接口超时' }));
+  assert.equal((await call('/competitors/status', owner)).data.daily.autopickError.message, '目录接口超时');
 
   // 忽略已加入的竞品、移出监控
   assert.equal((await call(`/competitors/${ids.B0SOLO0001}`, owner, { status: 'ignored' }, 'PUT')).status, 200);

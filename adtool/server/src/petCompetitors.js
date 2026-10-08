@@ -26,6 +26,8 @@ const KEEP_DAYS = 400;
 // 每个在卖款式自动挂几个对手;每次每日同步最多给几个款式挑
 const AUTO_TARGET = 5;
 const AUTO_STYLES = 12;
+// 挑过但没凑够的款式,隔这么多天再试,让后面的款式也轮得到
+const AUTO_RETRY_DAYS = 7;
 // 标题相似度低于这个不算同类商品
 const MIN_RELEVANCE = 0.25;
 
@@ -251,7 +253,8 @@ export function competitorSyncStatus(env = process.env) {
   const pick = (prefix) => ({ lastSuccess: state(`${prefix}_success`), lastAttempt: state(`${prefix}_attempt`), lastError: state(`${prefix}_error`) });
   const running = Object.keys(jobs).filter((name) => jobs[name]);
   return { configured: !!account, issues, running: running[0] ?? null, jobs: { ...jobs },
-    daily: { ...pick('competitors_daily'), pricingError: state('competitors_pricing_error'), listingError: state('competitors_listing_error') },
+    daily: { ...pick('competitors_daily'), pricingError: state('competitors_pricing_error'), listingError: state('competitors_listing_error'),
+      autopickError: state('competitors_autopick_error') },
     suggest: pick('competitors_suggest') };
 }
 
@@ -344,9 +347,15 @@ export async function autoPickCompetitors(account, gateway, today, styles, onSte
   const rows = db.prepare('SELECT style_key, asin, status FROM pet_competitors').all();
   const activeCount = new Map();
   for (const row of rows) if (row.status === 'active') activeCount.set(row.style_key, (activeCount.get(row.style_key) ?? 0) + 1);
-  const targets = styles.filter((style) => style.units30 > 0 && style.asins.length && (activeCount.get(style.key) ?? 0) < AUTO_TARGET)
-    .slice(0, AUTO_STYLES);
+  const tried = state('competitors_autopick_tried') ?? {};
+  const retryAfter = shiftDay(today, -AUTO_RETRY_DAYS);
+  const targets = styles.filter((style) => style.units30 > 0 && style.asins.length && (activeCount.get(style.key) ?? 0) < AUTO_TARGET
+    && !(tried[style.key] > retryAfter)).slice(0, AUTO_STYLES);
   if (!targets.length) return { styles: 0, added: 0 };
+  // 先记下这批试过了:就算中途出错,下次也轮到别的款式
+  for (const style of targets) tried[style.key] = today;
+  for (const [key, day] of Object.entries(tried)) if (day <= retryAfter) delete tried[key];
+  setState('competitors_autopick_tried', tried);
   // 自家商品的标题、类型:目录缓存里没有的现查
   const own = catalogMap([...ownAsins]);
   const missing = [...ownAsins].filter((asin) => !own.get(asin)?.title);

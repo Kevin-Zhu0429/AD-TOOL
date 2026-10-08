@@ -119,7 +119,7 @@ const claudePrompt = (style, ask) => `用 Miguel_Agent 看款式「${style}」�
   + '。规格只写有依据的，拿不准先问我；起草好用 propose_listing_changes 放进待确认，我确认后再改。';
 
 function styleActionList(style, ctx) {
-  const { today, healthRows, prevUnits, transit, changes } = ctx;
+  const { healthRows, prevUnits, transit, changes } = ctx;
   const actions = [];
   const add = (action) => actions.push({ id: `${style.key}:${action.kind}:${actions.length}`, ...action });
   const selling = style.skus.filter((sku) => sku.units30 > 0 || (sku.stock ?? 0) > 0);

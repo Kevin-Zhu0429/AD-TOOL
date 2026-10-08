@@ -163,7 +163,7 @@ export function competitorOverview({ days = 14, style } = {}) {
       changes: changes.filter((change) => change.styleKey === item.key).length })),
     changes: changes.slice(0, 200).map(({ id: _id, ...change }) => change),
     sync: { lastDaily: sync.daily.lastSuccess?.completedAt ?? null, lastDailyError: sync.daily.lastError?.message ?? null,
-      pricingError: sync.daily.pricingError?.message ?? null, lastSuggest: sync.suggest.lastSuccess?.completedAt ?? null,
+      pricingError: sync.daily.pricingError?.message ?? null, autopickError: sync.daily.autopickError?.message ?? null, lastSuggest: sync.suggest.lastSuccess?.completedAt ?? null,
       lastSuggestWeek: sync.suggest.lastSuccess?.week ?? null },
     notes: ['款式 = SKU 库的款式,没填款式时用 SKU 开头的款号。竞品按父 ASIN(家族)挂在款式下,每天同步一次价格、排名、标题、五点和主图。',
       'changes 的 kind:price_down 降价、price_up 涨价、title 改标题、bullets 改五点、main_image 换主图、bsr_up 排名大涨、no_buybox 没购物车、variants_added/removed 变体增减。'] };

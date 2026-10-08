@@ -464,6 +464,7 @@ export default function PetIntelPage({ market, owner = false }) {
         <p className="hint">{hint}完成后自动刷新，关掉页面也会在后台继续。</p></div>)}
     {failed(daily) && <p className="note err" role="status">上次同步失败（{beijing(daily.lastError.at)}）：{daily.lastError.message}</p>}
     {failed(suggest) && <p className="note err" role="status">上次推荐失败（{beijing(suggest.lastError.at)}）：{suggest.lastError.message}{suggest.lastError.where ? `（停在：${suggest.lastError.where}）` : ''}</p>}
+    {daily?.autopickError && <p className="note warn" role="status">自动挑对手没跑成（{beijing(daily.autopickError.at)}）：{daily.autopickError.message}。其它竞品数据照常同步了，下次同步会再试。</p>}
     {daily?.pricingError && <p className="note warn" role="status">竞品价格没读到：{daily.pricingError.message}。需要在开发者应用里勾选「定价」角色并重新授权，其它数据不受影响。</p>}
     {message && <p className="note ok" role="status">{message}</p>}
     {error && <p className="note err" role="alert">{error}</p>}
