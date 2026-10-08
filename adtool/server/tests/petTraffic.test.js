@@ -142,6 +142,9 @@ async function changeImpactCase(db) {
   db.prepare(`INSERT INTO sku_stock_events (sync_id, user_id, country, sku, sku_key, kind, stock, created_at)
     VALUES (?, -1, 'US', 'DOG-L', 'dog-l', 'out', 0, '2026-09-25 20:00:00')`).run(sync);
 
+  const coverage = (from, to) => db.prepare(`INSERT INTO pet_price_sync_state (key, value) VALUES ('sales_coverage', ?)
+    ON CONFLICT(key) DO UPDATE SET value=excluded.value`).run(JSON.stringify({ from, to }));
+  coverage('2026-09-01', '2026-10-08');
   const result = changeImpact({ id: title, days: 14 }, { today: '2026-10-08' });
   const item = result.items[0];
   assert.equal(item.executedDay, '2026-10-01');
@@ -158,6 +161,13 @@ async function changeImpactCase(db) {
   assert.match(item.caution, /只有 6 天/);
   // 按 SKU 看:只有执行过的
   assert.deepEqual(changeImpact({ sku: 'dog-l' }, { today: '2026-10-08' }).items.map((entry) => entry.kind), ['五点描述', '标题']);
+  // 订单只同步到 10/4:之后的天不当成 0 销量
+  coverage('2026-09-20', '2026-10-04');
+  const partial = changeImpact({ id: title, days: 14 }, { today: '2026-10-08' }).items[0].sales;
+  assert.deepEqual([partial.before.from, partial.before.days, partial.after.to, partial.after.days, partial.after.unitsPerDay, partial.unitsPerDayChangePct],
+    ['2026-09-20', 11, '2026-10-04', 3, 3, 50]);
+  db.prepare("DELETE FROM pet_price_sync_state WHERE key='sales_coverage'").run();
+  assert.equal(changeImpact({ id: title }, { today: '2026-10-08' }).items[0].sales.before, null);
   assert.throws(() => changeImpact({ id: title + 2 }), /还没执行/);
   assert.throws(() => changeImpact({ id: 999 }), /没有第 999 条/);
 }

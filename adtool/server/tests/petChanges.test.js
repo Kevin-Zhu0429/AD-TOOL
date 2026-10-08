@@ -283,6 +283,14 @@ test('change queue: Claude proposes, the owner confirms, the site writes to Amaz
     const priceAgain = await changes.proposeListingChanges({ title: '改原价', changes: [{ sku: 'RR-L', field: 'price', value: 44.99, reason: '试' }] },
       { userId: ownerId, gateway, env: SP_ENV });
     assert.match(row(priceAgain.created[0].id).warnings_json, /促销价 \$33\.99.*要改前台价请改促销价/);
+    // 同价延长一天是真改动,完全一样才算不用改
+    const extend = await changes.proposeListingChanges({ title: '延长促销', changes: [
+      { sku: 'RR-L', field: 'sale_price', value: 33.99, saleEnd: '2099-12-31', reason: '一样' },
+      { sku: 'RR-L', field: 'sale_price', value: 33.99, saleEnd: '2100-01-01', reason: '延长一天' },
+    ] }, { userId: ownerId, gateway, env: SP_ENV });
+    assert.match(extend.rejected[0].error, /一样/);
+    assert.deepEqual(JSON.parse(row(extend.created[0].id).after_json), { price: 33.99, start: today, end: '2100-01-01' });
+    assert.equal((await call('/changes/reject', owner, { ids: [extend.created[0].id] })).data.updated, 1);
 
     // 撤回促销价 = 取消促销价
     const reverted = await call(`/changes/${saleId}/revert`, owner, {});

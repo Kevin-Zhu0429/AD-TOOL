@@ -21,7 +21,16 @@ function pacificDayOfLocal(local) {
   return seconds ? pacificDay(new Date(seconds * 1000)) : null;
 }
 
-function salesWindow(sku, from, to) {
+/** 订单报告已经同步到的日期范围 */
+function salesCoverage() {
+  const value = db.prepare("SELECT value FROM pet_price_sync_state WHERE key='sales_coverage'").get()?.value;
+  return value ? JSON.parse(value) : null;
+}
+
+/** 只算订单报告覆盖到的天,没同步的天不当成 0 销量 */
+function salesWindow(sku, wantFrom, wantTo, coverage) {
+  if (!coverage?.from || !coverage?.to) return null;
+  const from = [wantFrom, coverage.from].sort()[1], to = [wantTo, coverage.to].sort()[0];
   const days = daysBetween(from, to);
   if (!days) return null;
   const row = db.prepare('SELECT SUM(units) AS units, SUM(orders) AS orders, SUM(sales) AS sales FROM pet_daily_sales WHERE sku=? AND day>=? AND day<=?')
@@ -70,6 +79,7 @@ export function changeImpact({ id, sku, days = 14, limit = 10 } = {}, { today = 
   const span = Math.max(3, Math.min(90, Number(days) || 14));
   const salesTo = shiftDay(today, -1);
   const traffic = trafficCoverage();
+  const orders = salesCoverage();
   const where = [`status IN (${DONE.map(() => '?').join(',')})`, "kind LIKE 'listing_%'", 'executed_at IS NOT NULL'];
   const params = [...DONE];
   if (id) { where.push('id=?'); params.push(Number(id)); }
@@ -89,7 +99,7 @@ export function changeImpact({ id, sku, days = 14, limit = 10 } = {}, { today = 
     const salesAfterTo = [shiftDay(day, span), salesTo].sort()[0];
     const trafficAfterTo = traffic ? [shiftDay(day, span), traffic.to].sort()[0] : null;
     const asin = target.asin ? String(target.asin).toUpperCase() : null;
-    const sales = { before: salesWindow(target.sku, beforeFrom, beforeTo), after: salesWindow(target.sku, afterFrom, salesAfterTo) };
+    const sales = { before: salesWindow(target.sku, beforeFrom, beforeTo, orders), after: salesWindow(target.sku, afterFrom, salesAfterTo, orders) };
     sales.unitsPerDayChangePct = pct(sales.before?.unitsPerDay, sales.after?.unitsPerDay);
     const visits = { before: trafficWindow(asin, beforeFrom, beforeTo), after: trafficAfterTo ? trafficWindow(asin, afterFrom, trafficAfterTo) : null };
     visits.sessionsPerDayChangePct = pct(visits.before?.sessionsPerDay, visits.after?.sessionsPerDay);
@@ -113,8 +123,8 @@ export function changeImpact({ id, sku, days = 14, limit = 10 } = {}, { today = 
       sales, traffic: visits, searchShare: search, otherChangesNearby: others, stockEvents: stock,
       caution: afterDays < 7 ? `执行后只有 ${afterDays} 天数据，结论不稳，至少等满 7 天` : null };
   });
-  return { today, days: span, trafficCoverage: traffic, total: items.length, items,
-    notes: ['before / after 是执行当天之前、之后各 days 天(执行当天不算,太平洋时间);after 只算到有数据的那天,看 days / daysWithData。',
+  return { today, days: span, salesCoverage: orders, trafficCoverage: traffic, total: items.length, items,
+    notes: ['before / after 是执行当天之前、之后各 days 天(执行当天不算,太平洋时间);只算已同步到的天(salesCoverage、trafficCoverage),实际天数看各窗口的 from / to / days / daysWithData。',
       'sales 来自订单报告;traffic 来自业务报告「销售与流量」(访问量、转化率 = 订购件数 / 访问量);searchShare 是 ABA 搜索查询表现里这个 ASIN 在全部搜索词上的曝光、点击、购买份额(%),按整周比,执行那周不算。',
       '同期的其它改动(otherChangesNearby)、断货补货(stockEvents)、季节和广告变化都会影响对比,下结论前要排除。'] };
 }

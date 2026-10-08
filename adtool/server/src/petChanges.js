@@ -112,15 +112,17 @@ export function currentValue(kind, attributes) {
   return null;
 }
 
-export function sameValue(kind, a, b) {
+/** loose:核对执行结果时促销起止日差一天以内也算一样(亚马逊存时间时可能换了时区);提议和执行前比较要精确 */
+export function sameValue(kind, a, b, { loose = false } = {}) {
   if (kind === 'listing_bullets') {
     return Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((item, index) => normText(item) === normText(b[index]));
   }
   if (kind === 'listing_price') return a != null && b != null && Math.abs(Number(a) - Number(b)) < 0.005;
-  // 促销价:都没有算一样;起止日差一天以内算一样(亚马逊存时间时可能换了时区)
+  // 促销价:都没有算一样
   if (kind === 'listing_sale_price') {
     if (a == null || b == null) return a == null && b == null;
-    return Math.abs(Number(a.price) - Number(b.price)) < 0.005 && nearDay(a.start, b.start) && nearDay(a.end, b.end);
+    const day = loose ? nearDay : (x, y) => x === y;
+    return Math.abs(Number(a.price) - Number(b.price)) < 0.005 && day(a.start, b.start) && day(a.end, b.end);
   }
   if (kind === 'listing_search_terms') return normText(a).toLowerCase() === normText(b).toLowerCase();
   return normText(a) === normText(b);
@@ -577,7 +579,7 @@ export async function verifySubmitted(deps = defaultDeps) {
     const current = currentValue(row.kind, listing.attributes);
     const related = issueList(listing.issues.filter((issue) => (issue.attributeNames ?? []).includes(KINDS[row.kind].attribute)));
     const result = { ...parseJson(row.result_json, {}), listingIssues: related, checkedAt: new Date().toISOString() };
-    if (sameValue(row.kind, current, after)) {
+    if (sameValue(row.kind, current, after, { loose: true })) {
       update(row.id, { status: 'applied', verified_at: nowLocal(), result_json: JSON.stringify(result) });
       log(row.id, row.batch_id, 'system', null, 'verified');
     } else if (row.age_hours >= VERIFY_HOURS) {
