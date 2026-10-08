@@ -4,6 +4,7 @@
 // WORKER_POOL_SIZE=0 时主线程也直接调用这里,行为一致。
 import { buildAbaView, abaPage } from '../services/abaView.js';
 import { buildAsinView, asinPage } from '../services/asinView.js';
+import { savePublicReports } from '../services/publicAsinData.js';
 import { importAbaReports } from '../services/abaImport.js';
 import { importAsinReports } from '../services/asinImport.js';
 import { readBatch, importInventory, finishUpload } from '../services/agedFees.js';
@@ -57,6 +58,11 @@ export function viewKey(kind, { userId, market, query, generation }) {
 }
 
 const tasks = {
+  publicAsinSave(db, payload) { return savePublicReports(db, payload); },
+  publicAsinView(db, payload) {
+    const full = cached(viewKey('publicAsin', payload), () => buildAsinView(db, null, payload.market, payload.query, 'public'), { store: payload.query.export !== '1' });
+    return JSON.stringify(asinPage(full, payload.query));
+  },
   abaView(db, payload) {
     const full = cached(viewKey('aba', payload), () => buildAbaView(db, payload.userId, payload.market, payload.query));
     return JSON.stringify(abaPage(full, payload.query));

@@ -387,3 +387,48 @@ CREATE TABLE IF NOT EXISTS product_settings (
   updated_by   INTEGER REFERENCES users(id),
   updated_at   TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
+
+-- 公共 ABA 独立于账号私有报告，删除账号不影响共享报告。
+CREATE TABLE IF NOT EXISTS aba_public_reports (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, marketplace TEXT NOT NULL, brand TEXT NOT NULL,
+  asin TEXT NOT NULL, week_start TEXT NOT NULL, week_end TEXT NOT NULL,
+  week_number INTEGER NOT NULL CHECK(week_number BETWEEN 1 AND 53),
+  source_file TEXT NOT NULL, content_hash TEXT NOT NULL, row_count INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(marketplace, asin, week_end)
+);
+CREATE TABLE IF NOT EXISTS aba_public_queries (
+  report_id INTEGER NOT NULL REFERENCES aba_public_reports(id) ON DELETE CASCADE,
+  query TEXT NOT NULL, query_volume INTEGER NOT NULL CHECK(query_volume >= 0),
+  market_impressions INTEGER NOT NULL CHECK(market_impressions >= 0),
+  market_clicks INTEGER NOT NULL CHECK(market_clicks >= 0),
+  market_purchases INTEGER NOT NULL CHECK(market_purchases >= 0),
+  asin_impressions INTEGER NOT NULL CHECK(asin_impressions >= 0),
+  asin_clicks INTEGER NOT NULL CHECK(asin_clicks >= 0),
+  asin_purchases INTEGER NOT NULL CHECK(asin_purchases >= 0),
+  PRIMARY KEY(report_id, query)
+);
+CREATE INDEX IF NOT EXISTS idx_aba_public_market ON aba_public_reports(marketplace, week_end);
+CREATE TABLE IF NOT EXISTS aba_public_schedule (
+  id INTEGER PRIMARY KEY CHECK(id=1), next_due INTEGER NOT NULL, first_week TEXT
+);
+CREATE TABLE IF NOT EXISTS aba_public_jobs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, state TEXT NOT NULL DEFAULT 'running',
+  trigger_kind TEXT NOT NULL, schedule_slot INTEGER UNIQUE,
+  actor_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, error TEXT NOT NULL DEFAULT ''
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_aba_public_running ON aba_public_jobs(state) WHERE state='running';
+CREATE TABLE IF NOT EXISTS aba_public_tasks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, job_id INTEGER NOT NULL REFERENCES aba_public_jobs(id),
+  marketplace TEXT NOT NULL, brand TEXT NOT NULL, week_start TEXT NOT NULL, week_end TEXT NOT NULL,
+  asins_json TEXT NOT NULL, stage TEXT NOT NULL DEFAULT 'queued',
+  report_id TEXT, next_at INTEGER NOT NULL DEFAULT 0, locked_until INTEGER NOT NULL DEFAULT 0,
+  polls INTEGER NOT NULL DEFAULT 0, attempts INTEGER NOT NULL DEFAULT 0,
+  rows_saved INTEGER NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_aba_public_tasks_due ON aba_public_tasks(job_id, next_at);
+CREATE TABLE IF NOT EXISTS aba_public_lanes (lane TEXT PRIMARY KEY, next_create INTEGER NOT NULL DEFAULT 0);
+
+-- 公共视图按国家关联全部账号的 SKU，不经过 user_id 前缀索引。
+CREATE INDEX IF NOT EXISTS idx_sku_country_asin ON sku_items(country, asin);

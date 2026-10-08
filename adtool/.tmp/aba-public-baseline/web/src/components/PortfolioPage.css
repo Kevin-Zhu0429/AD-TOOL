@@ -1,0 +1,21 @@
+.portfolio-file { cursor: pointer; }
+.portfolio-file input { display: none; }
+.portfolio-paste { resize: none; }
+.portfolio-replace { margin: 9px 0; }
+.portfolio-toolbar { margin-bottom: 11px; }
+.portfolio-search { width: min(260px, 100%); }
+.portfolio-confirm { margin: 11px 0; align-items: center; flex-wrap: wrap; }
+.portfolio-table-scroll { max-height: 560px; }
+.portfolio-row-actions { justify-content: flex-end; }
+.portfolio-status { margin-top: 6px; font-size: 11.5px; line-height: 1.55; min-height: 18px; }
+.portfolio-status.info { color: var(--text-faint); }
+.portfolio-status.ok { color: var(--green-text); }
+.portfolio-status.warn { color: var(--amber-text); }
+.portfolio-custom { margin-top: 8px; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+
+@media (max-width: 680px) {
+  .portfolio-page .lib-head { flex-wrap: wrap; }
+  .portfolio-page .lib-head .spacer { display: none; }
+  .portfolio-row-actions { justify-content: flex-start; }
+}

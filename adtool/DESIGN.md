@@ -72,6 +72,8 @@ ABA 品牌视图沿用 `index.css` 的 `--panel`、`--border`、`--accent`、`--
 
 `modelDrift.js` 的 `driftPresentation` 定义结果名称和语义色，`optApp.js` 的 `driftBadge` 负责统一渲染。明细与分析页不得各自解释状态。检测行为和验证入口见 `UX-CONTRACT.md`。
 
+公共 ABA 复用 `AbaAsinView`、`AbaAsinTable` 和 `AbaPagination`，通过明确的公共变体关闭上传并使用共享查询。国家切换位于内容顶部，使用带中文国家名与站点码的整行大按钮，选中状态同时体现底色、底部强调线与 aria-pressed。同步采用持久页内状态区、真实批次进度及可分页的任务表；字体、颜色、圆角来自 `index.css` 的既有变量，页面自然滚动，任务与报告表各自承担横向滚动。
+
 ## Do's and Don'ts
 
 - 显示候选机型、对应墨盒以及活动是否已投放，让人工判断有具体依据。

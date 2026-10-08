@@ -4,7 +4,7 @@
   "locale": "zh-CN",
   "canonicalMap": "UX-CONTRACT.md",
   "ownership": { "Select/Listbox": "native", "Date": "native" },
-  "requiredCommands": ["unit", "api", "asinApi", "portfolioApi", "captainApi", "auditApi", "accountsApi", "portfolioBrowser", "captainBrowser", "inventoryBrowser", "accountsBrowser", "build", "lint", "abaBrowser", "asinBrowser"],
+  "requiredCommands": ["unit", "api", "asinApi", "portfolioApi", "captainApi", "auditApi", "accountsApi", "portfolioBrowser", "captainBrowser", "inventoryBrowser", "accountsBrowser", "build", "lint", "abaBrowser", "asinBrowser", "publicAbaApi", "publicAbaBrowser"],
   "commands": {
     "unit": "npm --prefix web test",
     "api": "node --test server/tests/aba.test.js",
@@ -20,7 +20,9 @@
     "captainBrowser": "node web/tests/captain.browser.mjs",
     "inventoryBrowser": "node web/tests/inventoryLink.browser.mjs",
     "accountsBrowser": "node web/tests/accounts.browser.mjs",
-    "asinBrowser": "node web/tests/abaAsin.browser.mjs"
+    "asinBrowser": "node web/tests/abaAsin.browser.mjs",
+    "publicAbaApi": "node --test server/tests/abaPublic.test.js",
+    "publicAbaBrowser": "node web/tests/abaPublic.browser.mjs"
   },
   "evidence": { "crudFullFlow": "web/tests/aba.browser.mjs", "failurePaths": "server/tests/aba.test.js" }
 }

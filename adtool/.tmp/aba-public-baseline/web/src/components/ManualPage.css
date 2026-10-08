@@ -1,0 +1,63 @@
+/* 手动广告页:布局沿用 BuilderPage.css,这里只加投放粘贴框相关的样式 */
+
+.manual-builder .bbar { flex-wrap: wrap; }
+.manual-task-navigation { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1 1 460px; max-width: 100%; }
+.manual-task-navigation .tabstrip { min-width: 0; flex: 1 1 0; padding: 3px 0 7px; scrollbar-width: thin; scrollbar-color: inherit; }
+.manual-task-navigation .tabstrip::-webkit-scrollbar { display: block; height: 8px; }
+.manual-task-actions { display: flex; gap: 6px; flex: 0 0 auto; }
+.manual-task-actions .btn { flex: 0 0 auto; white-space: nowrap; }
+.manual-keyword-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+
+.unitbox {
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  padding: 9px;
+  margin-bottom: 9px;
+  background: var(--panel-2);
+  transition: border-color .14s var(--ease), opacity .14s var(--ease);
+}
+.unitbox:last-of-type { margin-bottom: 0; }
+.unitbox.on { border-color: var(--accent-line); }
+.unitbox:not(.on) { opacity: .62; }
+.unitbox:not(.on) textarea { display: none; }
+
+.unitbox-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 7px;
+}
+.unitbox-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.unitbox-name b { font-weight: 600; }
+.bidmini { width: 78px; padding: 4px 7px; font-size: 12px; }
+
+/* 出价框下面那行「目标 CPC 0.36 ÷ 2 → 出价 0.18」 */
+.unitbox-bid { margin: -2px 0 7px; }
+
+/* ---------- 最终 CPC ---------- */
+.cpcbox {
+  margin-top: 13px;
+  padding: 12px;
+  background: var(--bg-2);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+}
+.cpcbox .coefbox-title { margin-bottom: 9px; }
+.cpctbl { background: var(--panel); border-radius: var(--radius); overflow: hidden; }
+.cpctbl th, .cpctbl td { padding: 5px 9px; }
+.cpctbl tbody tr.drv { background: var(--accent-soft); }
+
+/*
+ * 预览列是吸顶的,有高度上限;里面的提示条不能跟着被压扁,
+ * 否则错误信息只剩半行(能滚动的元素在 flex 里默认是可以被压到 0 的)。
+ */
+.mform .col-preview .probs,
+.mform .col-preview .minigrid { flex: 0 0 auto; }
+.mform .col-preview .sec { overflow: hidden; }

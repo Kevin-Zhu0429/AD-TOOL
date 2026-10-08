@@ -1,0 +1,48 @@
+/* 从 D 类打印机库挑否定词的浮层。外壳(遮罩 / 卡片 / 列表 / 底栏)沿用 SkuPicker.css,
+   这里只加打印机库自己的四列表格样式 */
+
+.pickbox.printbox { width: min(880px, 100%); }
+
+.printhead,
+.printrow {
+  display: grid;
+  grid-template-columns: 18px minmax(90px, 1.1fr) 70px minmax(80px, 1.2fr) minmax(110px, 1.6fr) 42px;
+  gap: 8px;
+  align-items: center;
+}
+
+.printhead {
+  position: sticky;
+  top: -4px;
+  z-index: 1;
+  padding: 4px 8px 5px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border-soft);
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.printrow {
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.printrow:hover { background: var(--panel-2); }
+.printrow.on { background: var(--accent-soft); border-color: var(--accent-line); }
+.printrow > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.printmodel { font-weight: 600; }
+.printdim { color: var(--text-dim); font-size: 11.5px; }
+.printqual { color: var(--accent-text); }
+
+.printmore {
+  padding: 7px 8px 3px;
+  text-align: center;
+}
+.printwarn { color: var(--amber-text); }

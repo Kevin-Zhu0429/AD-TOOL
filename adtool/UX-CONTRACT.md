@@ -208,3 +208,23 @@
 运行 `web` 下的 `npm test`、`npm run lint`、`npm run build`。`src/modelDrift.test.js` 覆盖截图词、前缀与数字边界、品牌冲突、候选映射、部分匹配和资料不足。浏览器验证使用合成批量表和测试词库，不修改用户账户或数据库。
 
 浏览器回归入口为 `web/tests/modelDrift.browser.mjs`，通过本机回环地址的临时 Vite 页面加载真实工作台并导入合成 XLSX，结束后关闭服务器和浏览器。运行环境需要 Playwright，可通过 `PLAYWRIGHT_MODULE` 指定已有模块路径；默认使用已安装的 Edge，其他浏览器可设置 `BROWSER_CHANNEL`。运行 `node tests/modelDrift.browser.mjs`，截图写入项目 `.tmp`，不会打包测试页面。
+
+## ABA报告（公共）（2026-10-08）
+
+业务依据：用户本次确认的共享权限、全部账号 SKU 关联、北京时间周二 12:00 和首次四周；提供的 Excel 是 ASIN 数据来源，不作为操作指令。亚马逊接口契约：https://developer-docs.amazon/sp-api/docs/report-type-values-analytics#search-query-performance-report 。
+
+| Capability | Canonical owner | Source of truth | Allowed variants | Verification |
+|---|---|---|---|---|
+| ASIN 筛选、明细、分类及导出 | AbaAsinView / AbaAsinTable / AbaPagination | shared/abaAsin.js 与 services/asinView.js | 私有、公共；公共关闭上传 | 公共 API 和浏览器测试、既有 ASIN 回归 |
+| 国家切换 | AbaPublicPage | server/src/data/abaPublicTargets.json | 全账号可选全部清单国家，独立于外壳私有站点 | 普通账号跨国家、键盘、窄屏 |
+| 同步进度 | AbaPublicPage / publicAsinSync.js | SQLite 中的 jobs / tasks / schedule | 等待、申请、生成、下载、保存、成功、部分失败 | 队列恢复、重试、分页、轮询失败 |
+| Select/Listbox | 原生 select + .inp | 原 ASIN 页面约定 | 允许操作系统弹出层 | 键盘选择 |
+| Feedback | 现有 ABA 持久页内反馈 | 服务端任务状态 | role=status / alert、无伪造百分比 | 浏览器状态检查 |
+
+- 全部已登录账号可查看、筛选和导出全部国家、全部品牌的公共报告。只有 owner 可调用手动同步接口；前端隐藏按钮不是安全边界。普通账号无法上传、编辑或删除公共报告。原私有 ABA 的账号和国家授权保持原规则。
+- 公共报告存入独立共享表，不挂靠某个账号；删除账号不删除公共报告。型号与 SKU 只在当前国家关联全部账号的 SKU 记录，逻辑重复关联不重复累计 ASIN 指标。品牌来自清单/公共报告，即使未关联 SKU 也能筛选。
+- 全工作表按国家+品牌+ASIN 合并去重，空白和计数行不导入；跨品牌 ASIN 冲突拒绝生成清单。源码保存清单，部署不依赖用户桌面文件。
+- 北京时间每周二 12:00 由服务端请求上一完整周（日到六）。首次同步覆盖之前四个完整周，此后同步最新完整周并补拉首次范围以来遗漏的报告。保存成功的历史周不重复请求，最新周允许重新同步更正。记录时区不依赖服务器本地时区。
+- 任务、报告编号、下次执行时间与账号限速保存在 SQLite，重启后继续已有报告生成流程；租约到期可恢复未完成阶段。并发启动返回同一个运行任务。各 API 批次按国家、品牌与周拆分，ASIN 参数不超过 200 字符；按卖家+区域控制创建报告节奏。
+- API 返回报告完整验证国家、日期、ASIN、计数和重复词后才原子保存。失败不清除旧结果，已完成批次可继续浏览。下载地址和授权信息不返回浏览器；API 只暴露任务的业务状态和有限错误。
+- 筛选与显示偏好按登录账号+公共范围+国家保存于 sessionStorage；不与私有报告混用。分类展开和导出使用同一个公共查询入口。自然页面滚动、表格内滚动；同步进展更新后刷新报告。

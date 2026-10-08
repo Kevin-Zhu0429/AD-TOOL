@@ -1,0 +1,682 @@
+// 库存同步(历史上接的是船长 BI,所以文件、路由和表名还叫 captain)。
+// 数据源现在是亚马逊 SP-API:店铺 = 卖家账号 × 站点,库存来自 FBA 库存接口。
+// 店铺组、国家负责人分配、回写 SKU 库和断货 / 补货记录的逻辑与数据源无关,保持不变。
+import express from 'express';
+import { randomUUID } from 'node:crypto';
+import { db, audit } from './db.js';
+import { requireLogin, requireRole } from './auth.js';
+import { MARKETPLACES, REGIONS } from './libs.js';
+import { bumpDataGeneration, runTask } from './workers/pool.js';
+import {
+  AMAZON_MARKETPLACES, SLOT_LABELS, countryOfMarketplace, findSpApiAccount, readSpApiConfig, spApiAccounts, spApiGet,
+} from './spApi.js';
+
+// FBA 库存接口每页 50 条;一万页足够任何店铺,防止接口一直给 nextToken 死循环
+const MAX_PAGES = 10_000;
+const EU_MARKETS = REGIONS.find((region) => region.id === 'EU')?.markets ?? [];
+const CONTINENTAL_EU_MARKETS = EU_MARKETS.filter((country) => country !== 'UK');
+const runningUsers = new Set();
+
+export const captainRouter = express.Router();
+captainRouter.use(requireLogin);
+
+const clean = (value) => String(value ?? '').trim();
+const keyOf = (value) => clean(value).toLowerCase();
+const countryOf = (value) => {
+  const country = clean(value).toUpperCase();
+  return country === 'GB' ? 'UK' : country;
+};
+const intOf = (value) => {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? Math.round(number) : 0;
+};
+
+function isConfigured() {
+  return spApiAccounts().length > 0;
+}
+
+function requireConfigured() {
+  if (!isConfigured()) {
+    const error = new Error('亚马逊 SP-API 还没有配置，请先在服务器 .env 按品牌填写 BRAND1_NAME、LWA Client ID / Secret、Refresh Token 和卖家编号');
+    error.status = 503;
+    throw error;
+  }
+}
+
+/** 给页面看的品牌配置和配置问题,不带任何密钥 */
+function configSummary() {
+  const { brands, issues } = readSpApiConfig();
+  return { brands, configIssues: issues };
+}
+
+/** 店铺编号:spapi:<卖家编号>:<marketplaceId>,同步时靠它找回账号和站点 */
+const channelIdOf = (sellerId, marketplaceId) => `spapi:${sellerId}:${marketplaceId}`;
+
+function parseChannelId(openChannelId) {
+  const [prefix, sellerId, marketplaceId] = clean(openChannelId).split(':');
+  const country = countryOfMarketplace(marketplaceId);
+  if (prefix !== 'spapi' || !sellerId || !country) return null;
+  return { sellerId, marketplaceId, country, region: AMAZON_MARKETPLACES[country].region };
+}
+
+const accountLabel = (account) => `${account.brand} ${SLOT_LABELS[account.slot]}`;
+
+/** 一个卖家账号开通了的站点里,归这个账号管的那些(已按 BRAND<n>_MARKETS 过滤) */
+async function accountChannels(account) {
+  const payload = await spApiGet(account, account.region, '/sellers/v1/marketplaceParticipations');
+  const channels = [];
+  for (const row of Array.isArray(payload.payload) ? payload.payload : []) {
+    const marketplaceId = clean(row?.marketplace?.id);
+    const country = countryOfMarketplace(marketplaceId);
+    if (!country || !account.markets.includes(country)) continue;
+    if (row?.participation?.isParticipating === false) continue;
+    channels.push({
+      openChannelId: channelIdOf(account.sellerId, marketplaceId),
+      channelName: `${account.brand}_${country}`,
+      siteId: null,
+      country,
+      status: 1,
+    });
+  }
+  // 没填 MARKETS 时账号管的是所有可能的站点,没开通的不算缺
+  const missing = account.allMarkets
+    ? []
+    : account.markets.filter((market) => !channels.some((channel) => channel.country === market));
+  return { channels, missing };
+}
+
+async function discoverChannels() {
+  const groups = new Map();
+  const errors = [];
+  const accounts = spApiAccounts();
+  // 各账号的限速互不影响,一起读;结果按配置顺序处理
+  const results = await Promise.allSettled(accounts.map((account) => accountChannels(account)));
+  for (const [index, account] of accounts.entries()) {
+    const settled = results[index];
+    if (settled.status === 'rejected') {
+      errors.push(`${accountLabel(account)}：${clean(settled.reason?.message) || '读取店铺失败'}`);
+      continue;
+    }
+    const result = settled.value;
+    if (result.missing.length) {
+      errors.push(`${accountLabel(account)}：卖家账号没有开通 ${result.missing.join('、')}`);
+    }
+    for (const channel of result.channels) {
+      if (!MARKETPLACES.includes(channel.country)) continue;
+      // 欧洲大陆四站共用一份 FBA 库存,归成一个店铺组;UK 和其他国家各自一组
+      const scope = CONTINENTAL_EU_MARKETS.includes(channel.country) ? 'EU' : channel.country;
+      const groupName = `${account.brand}_${scope}`;
+      const groupKey = `${keyOf(groupName)}:${scope}`;
+      const group = groups.get(groupKey) ?? { groupKey, groupName, scope, countries: [], channels: [] };
+      if (group.channels.some((row) => row.openChannelId === channel.openChannelId)) continue;
+      group.channels.push(channel);
+      if (!group.countries.includes(channel.country)) group.countries.push(channel.country);
+      groups.set(groupKey, group);
+    }
+  }
+
+  return {
+    errors,
+    groups: [...groups.values()]
+      .map((group) => ({
+        ...group,
+        countries: group.countries.sort((a, b) => MARKETPLACES.indexOf(a) - MARKETPLACES.indexOf(b)),
+        channels: group.channels.sort((a, b) => MARKETPLACES.indexOf(a.country) - MARKETPLACES.indexOf(b.country)),
+      }))
+      .sort((a, b) => a.groupName.localeCompare(b.groupName, 'zh-CN')),
+  };
+}
+
+function skuCoverage() {
+  const rows = db.prepare(
+    `SELECT user_id, country, trim(brand) AS brand
+       FROM sku_items
+      WHERE trim(COALESCE(brand, '')) <> ''
+      GROUP BY user_id, country, lower(trim(brand))
+      ORDER BY user_id, country, brand COLLATE NOCASE`
+  ).all();
+  return rows.map((row) => ({ userId: row.user_id, country: row.country, brand: row.brand }));
+}
+
+function normalizeInventory(item) {
+  const sku = clean(item?.sellerSku);
+  if (!sku) return null;
+  const asin = clean(item?.asin).toUpperCase();
+  const details = item?.inventoryDetails ?? {};
+  return {
+    sku,
+    skuKey: keyOf(sku),
+    asin: /^[A-Z0-9]{10}$/.test(asin) ? asin : null,
+    // 在库 = 可用 + 亚马逊运营中心转运 + 正在接收；在途 = 处理中 + 已发货。
+    stock: intOf(details.fulfillableQuantity)
+      + intOf(details.reservedQuantity?.pendingTransshipmentQuantity)
+      + intOf(details.inboundReceivingQuantity),
+    transit: intOf(details.inboundWorkingQuantity)
+      + intOf(details.inboundShippedQuantity),
+    isDeleted: 0,
+  };
+}
+
+/**
+ * 一家店铺(卖家 × 站点)的全部 FBA 库存。每次都拉全量:
+ * 接口的增量参数 startDateTime 检测不到在途数量的变化。
+ */
+async function fetchBindingInventory(binding) {
+  const channel = parseChannelId(binding.open_channel_id);
+  if (!channel) throw new Error('不是亚马逊店铺绑定，请在账号管理里重新读取亚马逊店铺并保存分配');
+  const account = findSpApiAccount(channel.sellerId, channel.country);
+  if (!account) throw new Error(`服务器 .env 里没有卖家 ${channel.sellerId}（${channel.country}）的授权`);
+
+  const latest = new Map();
+  let nextToken = '';
+  for (let page = 0; page < MAX_PAGES; page += 1) {
+    const payload = await spApiGet(account, channel.region, '/fba/inventory/v1/summaries', {
+      details: 'true',
+      granularityType: 'Marketplace',
+      granularityId: channel.marketplaceId,
+      marketplaceIds: channel.marketplaceId,
+      nextToken,
+    });
+    const rows = payload.payload?.inventorySummaries;
+    for (const raw of Array.isArray(rows) ? rows : []) {
+      const item = normalizeInventory(raw);
+      if (item) latest.set(item.skuKey, item);
+    }
+    nextToken = clean(payload.pagination?.nextToken);
+    if (!nextToken) return [...latest.values()];
+  }
+  throw new Error('亚马逊库存分页超过安全上限，请联系管理员检查接口数据');
+}
+
+function legacyBindingsForUser(userId) {
+  return db.prepare(
+    `SELECT b.id, b.user_id, b.brand, b.country, b.open_channel_id, b.channel_name,
+            b.site_id, b.enabled, b.last_sync_at, b.last_sync_status, b.last_sync_detail
+       FROM captain_channel_bindings b
+      WHERE b.user_id = ? AND NOT EXISTS (
+        SELECT 1 FROM captain_channel_group_members m WHERE m.open_channel_id = b.open_channel_id
+      )
+      ORDER BY b.brand COLLATE NOCASE, b.country, b.channel_name`
+  ).all(userId);
+}
+
+function assignedSourcesForUser(userId) {
+  return db.prepare(
+    `SELECT DISTINCT b.id, b.user_id, b.brand, b.country, b.open_channel_id, b.channel_name,
+            b.site_id, b.enabled, b.last_sync_at, b.last_sync_status, b.last_sync_detail
+       FROM captain_channel_assignments a
+       JOIN captain_channel_groups g ON g.group_key = a.group_key
+       JOIN captain_channel_group_members m ON m.group_key = a.group_key
+       JOIN captain_channel_bindings b ON b.open_channel_id = m.open_channel_id
+      WHERE a.user_id = ? AND a.enabled = 1 AND g.enabled = 1 AND b.enabled = 1`
+  ).all(userId);
+}
+
+function sourcesForUser(userId) {
+  const sources = [...assignedSourcesForUser(userId), ...legacyBindingsForUser(userId).filter((row) => row.enabled)];
+  return [...new Map(sources.map((source) => [source.id, source])).values()];
+}
+
+function allActiveSources() {
+  return db.prepare(
+    `SELECT DISTINCT b.id, b.user_id, b.brand, b.country, b.open_channel_id, b.channel_name,
+            b.site_id, b.enabled, b.last_sync_at, b.last_sync_status, b.last_sync_detail
+       FROM captain_channel_bindings b
+      WHERE b.enabled = 1 AND (
+        EXISTS (
+          SELECT 1 FROM captain_channel_group_members m
+          JOIN captain_channel_groups g ON g.group_key = m.group_key AND g.enabled = 1
+          JOIN captain_channel_assignments a ON a.group_key = g.group_key AND a.enabled = 1
+          WHERE m.open_channel_id = b.open_channel_id
+        ) OR NOT EXISTS (
+          SELECT 1 FROM captain_channel_group_members m WHERE m.open_channel_id = b.open_channel_id
+        )
+      )
+      ORDER BY b.id`
+  ).all();
+}
+
+const markSourceError = db.prepare(
+  `UPDATE captain_channel_bindings SET last_sync_status = 'error', last_sync_detail = ?,
+          updated_at = datetime('now', 'localtime') WHERE id = ?`
+);
+
+/** 同一个卖家账号(卖家 × 接口区域)共用一份限速,排成一队;不同账号的队同时跑 */
+function laneOf(source) {
+  const channel = parseChannelId(source.open_channel_id);
+  return channel ? `${channel.sellerId}:${channel.region}` : `binding:${source.id}`;
+}
+
+async function refreshSources(sources, onProgress = () => {}) {
+  const lanes = new Map();
+  for (const [index, source] of sources.entries()) {
+    const lane = lanes.get(laneOf(source)) ?? [];
+    lane.push({ index, source });
+    lanes.set(laneOf(source), lane);
+  }
+  const errors = [];
+  let fetched = 0;
+  let succeeded = 0;
+  let done = 0;
+  onProgress({ phase: 'fetch', done, total: sources.length, current: '' });
+  await Promise.all([...lanes.values()].map(async (lane) => {
+    for (const { index, source } of lane) {
+      try {
+        const items = await fetchBindingInventory(source);
+        const now = Math.floor(Date.now() / 1000);
+        // 快照写库在 worker 线程里做
+        await runTask('captainSaveSnapshots', { bindingId: source.id, items, now });
+        fetched += items.length;
+        succeeded += 1;
+      } catch (error) {
+        const message = clean(error.message).slice(0, 300) || '同步失败';
+        errors.push({ index, text: `${source.channel_name}：${message}` });
+        markSourceError.run(message, source.id);
+      }
+      done += 1;
+      onProgress({ phase: 'fetch', done, total: sources.length, current: source.channel_name });
+    }
+  }));
+  return {
+    sources: sources.length, succeeded, failed: errors.length, fetched,
+    errors: errors.sort((x, y) => x.index - y.index).map((error) => error.text),
+  };
+}
+
+function httpError(status, message) {
+  const error = new Error(message);
+  error.status = status;
+  return error;
+}
+
+async function runUserSync(userId, sources, onProgress) {
+  const refreshed = await refreshSources(sources, onProgress);
+  onProgress({ phase: 'apply' });
+  const applied = refreshed.succeeded
+    ? await runTask('captainApply', { userId })
+    : { updated: 0, unmatched: 0, inventorySkus: 0, stockSync: null };
+  const { stockSync, ...counts } = applied;
+  audit(userId, null, refreshed.errors.length ? 'sync_partial' : 'sync', 'captain_inventory', null, {
+    targetUserId: userId, ...refreshed, ...counts, errors: refreshed.errors.slice(0, 10),
+    outOfStock: stockSync?.outCount ?? 0, restocked: stockSync?.restockCount ?? 0,
+  });
+  return { bindings: sources.length, ...refreshed, ...applied };
+}
+
+async function runAllSync(userIds, actorId, onProgress) {
+  const refreshed = await refreshSources(allActiveSources(), onProgress);
+  onProgress({ phase: 'apply' });
+  const results = [];
+  for (const userId of userIds) {
+    if (!refreshed.succeeded) {
+      results.push({ userId, updated: 0, unmatched: 0, inventorySkus: 0, outOfStock: 0, restocked: 0 });
+      continue;
+    }
+    // 逐个账号回写;写 SKU 库在 worker 线程里做
+    const { stockSync, ...counts } = await runTask('captainApply', { userId });
+    results.push({
+      userId, ...counts,
+      outOfStock: stockSync?.outCount ?? 0,
+      restocked: stockSync?.restockCount ?? 0,
+    });
+  }
+  const totals = results.reduce((sum, row) => ({
+    updated: sum.updated + row.updated,
+    unmatched: sum.unmatched + row.unmatched,
+    inventorySkus: sum.inventorySkus + row.inventorySkus,
+    outOfStock: sum.outOfStock + row.outOfStock,
+    restocked: sum.restocked + row.restocked,
+  }), { updated: 0, unmatched: 0, inventorySkus: 0, outOfStock: 0, restocked: 0 });
+  audit(actorId, null, refreshed.failed ? 'sync_partial' : 'sync',
+    'captain_inventory_all', null, { users: userIds.length, ...refreshed, ...totals });
+  return { users: userIds.length, results, ...refreshed, ...totals };
+}
+
+// ---------- 后台同步任务 ----------
+// 店铺多时一次同步要好几分钟,超过网关的等待时间就会报 504(其实后台还在跑)。
+// 所以同步接口只负责开始,马上返回任务状态;页面隔一会儿来问一次进度。
+// 任务只放在内存里,服务重启就没了,重新点同步即可。
+const jobs = new Map();
+
+function publicJob(job) {
+  if (!job) return null;
+  const { id, status, progress, result, error, startedAt, finishedAt } = job;
+  return { id, status, progress, result, error, startedAt, finishedAt };
+}
+
+function startJob(key, run) {
+  const job = {
+    id: randomUUID(),
+    status: 'running',
+    progress: { phase: 'fetch', done: 0, total: 0, current: '' },
+    result: null,
+    error: null,
+    startedAt: Date.now(),
+    finishedAt: null,
+  };
+  jobs.set(key, job);
+  Promise.resolve()
+    .then(() => run((progress) => { job.progress = { ...job.progress, ...progress }; }))
+    .then((result) => {
+      job.result = result;
+      job.status = 'done';
+    })
+    .catch((error) => {
+      console.error('[inventory-sync]', error);
+      job.error = clean(error.message) || '同步失败';
+      job.status = 'error';
+    })
+    .finally(() => {
+      job.finishedAt = Date.now();
+      // 写 SKU 库发生在请求返回之后,查询缓存要在写完时再作废一次
+      bumpDataGeneration();
+    });
+  return job;
+}
+
+function assignmentSummaries(userId = null) {
+  const rows = db.prepare(
+    `SELECT a.id, a.group_key, a.country, a.user_id, a.enabled,
+            g.group_name, g.brand, g.scope, u.display_name AS owner_name
+       FROM captain_channel_assignments a
+       JOIN captain_channel_groups g ON g.group_key = a.group_key
+       JOIN users u ON u.id = a.user_id
+      WHERE (? IS NULL OR a.user_id = ?)
+      ORDER BY g.brand COLLATE NOCASE, a.country, u.display_name`
+  ).all(userId, userId);
+  const sourcesByGroup = new Map();
+  for (const source of db.prepare(
+    `SELECT m.group_key, b.last_sync_at, b.last_sync_status, b.last_sync_detail
+       FROM captain_channel_group_members m
+       JOIN captain_channel_bindings b ON b.open_channel_id = m.open_channel_id`
+  ).all()) {
+    const sources = sourcesByGroup.get(source.group_key) ?? [];
+    sources.push(source);
+    sourcesByGroup.set(source.group_key, sources);
+  }
+  return rows.map((row) => {
+    const sources = sourcesByGroup.get(row.group_key) ?? [];
+    const failed = sources.filter((source) => source.last_sync_status === 'error');
+    const succeeded = sources.filter((source) => source.last_sync_status === 'ok');
+    const lastSyncAt = Math.max(0, ...sources.map((source) => Number(source.last_sync_at) || 0)) || null;
+    return {
+      ...row,
+      channel_name: row.group_name,
+      last_sync_at: lastSyncAt,
+      last_sync_status: failed.length ? 'error' : succeeded.length ? 'ok' : null,
+      last_sync_detail: failed.length
+        ? `${failed.length}/${sources.length} 个库存来源失败`
+        : succeeded.length ? `${succeeded.length}/${sources.length} 个库存来源已读取` : null,
+    };
+  });
+}
+
+function legacyAdminBindings(userId = null) {
+  return db.prepare(
+    `SELECT b.id, b.user_id, b.brand, b.country, b.open_channel_id, b.channel_name,
+            b.site_id, b.enabled, b.last_sync_at, b.last_sync_status, b.last_sync_detail,
+            u.display_name AS owner_name, 1 AS legacy
+       FROM captain_channel_bindings b JOIN users u ON u.id = b.user_id
+      WHERE (? IS NULL OR b.user_id = ?) AND NOT EXISTS (
+        SELECT 1 FROM captain_channel_group_members m WHERE m.open_channel_id = b.open_channel_id
+      )
+      ORDER BY b.brand COLLATE NOCASE, b.country, b.channel_name`
+  ).all(userId, userId);
+}
+
+captainRouter.get('/status', (req, res) => {
+  const userId = req.session.user.id;
+  const assignments = assignmentSummaries(userId).map((row) => ({ ...row, id: `assignment-${row.id}` }));
+  const legacy = legacyAdminBindings(userId).map((row) => ({ ...row, id: `legacy-${row.id}` }));
+  res.json({ configured: isConfigured(), bindings: [...assignments, ...legacy] });
+});
+
+captainRouter.get('/admin', requireRole('owner'), (req, res) => {
+  const bindings = db.prepare(
+    `SELECT b.id, b.user_id, b.brand, b.country, b.open_channel_id, b.channel_name,
+            b.site_id, b.enabled, b.last_sync_at, b.last_sync_status, b.last_sync_detail,
+            u.display_name AS owner_name
+       FROM captain_channel_bindings b JOIN users u ON u.id = b.user_id
+      ORDER BY b.brand COLLATE NOCASE, b.country, b.channel_name`
+  ).all();
+  res.json({
+    configured: isConfigured(),
+    ...configSummary(),
+    bindings,
+    assignments: assignmentSummaries(),
+    legacyBindings: legacyAdminBindings(),
+    skuCoverage: skuCoverage(),
+  });
+});
+
+captainRouter.post('/discover', requireRole('owner'), async (req, res) => {
+  try {
+    requireConfigured();
+    const result = await discoverChannels();
+    // 一个店铺都没读到时把各账号的失败原因当错误返回;读到一部分就连同失败原因一起给页面
+    if (!result.groups.length && result.errors.length) {
+      return res.status(502).json({ error: result.errors.join('；') });
+    }
+    res.json(result);
+  } catch (error) {
+    res.status(error.status === 503 ? 503 : 502).json({ error: error.message || '读取亚马逊店铺失败' });
+  }
+});
+
+captainRouter.post('/bindings', requireRole('owner'), (req, res) => {
+  const requestedBrand = clean(req.body?.brand);
+  if (!requestedBrand || requestedBrand.length > 120) {
+    return res.status(400).json({ error: '请选择 SKU 库中的品牌' });
+  }
+
+  const sourceChannels = Array.isArray(req.body?.channels) ? req.body.channels : [req.body];
+  if (!sourceChannels.length || sourceChannels.length > 50) {
+    return res.status(400).json({ error: '店铺组为空或店铺数量超出限制，请重新读取店铺' });
+  }
+  const channels = sourceChannels.map((channel) => ({
+    country: countryOf(channel?.country),
+    openChannelId: clean(channel?.openChannelId),
+    channelName: clean(channel?.channelName),
+    siteId: Number(channel?.siteId) || null,
+  }));
+  if (channels.some((channel) => !MARKETPLACES.includes(channel.country))) {
+    return res.status(400).json({ error: '店铺组包含网站不支持的国家' });
+  }
+  if (channels.some((channel) => !channel.openChannelId || !channel.channelName)) {
+    return res.status(400).json({ error: '店铺信息不完整，请重新读取店铺' });
+  }
+  if (channels.some((channel) => parseChannelId(channel.openChannelId)?.country !== channel.country)) {
+    return res.status(400).json({ error: '店铺编号与国家不一致，请重新读取亚马逊店铺' });
+  }
+  if (new Set(channels.map((channel) => channel.openChannelId)).size !== channels.length) {
+    return res.status(400).json({ error: '店铺组包含重复店铺，请重新读取店铺' });
+  }
+
+  const groupName = clean(req.body?.groupName);
+  const scope = countryOf(req.body?.scope) || clean(req.body?.scope).toUpperCase();
+  const groupKey = clean(req.body?.groupKey);
+  if (!groupName || !groupKey || groupKey !== `${keyOf(groupName)}:${scope}`) {
+    return res.status(400).json({ error: '店铺组信息不完整，请重新读取亚马逊店铺' });
+  }
+  const countries = [...new Set(channels.map((channel) => channel.country))];
+  if (scope === 'EU' && countries.some((country) => !CONTINENTAL_EU_MARKETS.includes(country))) {
+    return res.status(400).json({ error: '欧洲共享店铺组包含了非欧洲大陆站点' });
+  }
+  if (scope !== 'EU' && (countries.length !== 1 || countries[0] !== scope)) {
+    return res.status(400).json({ error: '店铺组范围与真实站点不一致，请重新读取店铺' });
+  }
+
+  const rawAssignments = Array.isArray(req.body?.assignments) ? req.body.assignments : [];
+  const assignments = rawAssignments.map((item) => ({
+    country: countryOf(item?.country), userId: Number(item?.userId),
+  }));
+  if (!assignments.length || assignments.length > countries.length
+      || new Set(assignments.map((item) => item.country)).size !== assignments.length
+      || assignments.some((item) => !countries.includes(item.country))) {
+    return res.status(400).json({ error: '请至少选择一个国家负责人，且同一国家不能重复分配' });
+  }
+  let brand = requestedBrand;
+  for (const assignment of assignments) {
+    if (!db.prepare('SELECT id FROM users WHERE id = ? AND is_active = 1').get(assignment.userId)) {
+      return res.status(400).json({ error: `${assignment.country} 请选择有效的网站账号` });
+    }
+    const row = db.prepare(
+      `SELECT trim(brand) AS brand FROM sku_items
+        WHERE user_id = ? AND country = ?
+          AND lower(trim(COALESCE(brand, ''))) = ? LIMIT 1`
+    ).get(assignment.userId, assignment.country, keyOf(requestedBrand));
+    if (!row) {
+      return res.status(400).json({
+        error: `${assignment.country} 所选账号的 SKU 库中没有品牌 ${requestedBrand}`,
+      });
+    }
+    brand = row.brand;
+  }
+
+  const saveBinding = db.prepare(
+    `INSERT INTO captain_channel_bindings
+       (user_id, brand, brand_key, country, open_channel_id, channel_name, site_id, enabled)
+     VALUES (@userId, @brand, @brandKey, @country, @openChannelId, @channelName, @siteId, 1)
+     ON CONFLICT (open_channel_id) DO UPDATE SET
+       user_id = excluded.user_id, brand = excluded.brand, brand_key = excluded.brand_key,
+       country = excluded.country, channel_name = excluded.channel_name, site_id = excluded.site_id,
+       enabled = 1, updated_at = datetime('now', 'localtime')`
+  );
+  const ids = db.transaction(() => {
+    const previous = db.prepare(
+      'SELECT open_channel_id FROM captain_channel_group_members WHERE group_key = ?'
+    ).all(groupKey).map((row) => row.open_channel_id);
+    db.prepare(
+      `INSERT INTO captain_channel_groups (group_key, group_name, scope, brand, brand_key, enabled)
+       VALUES (?, ?, ?, ?, ?, 1)
+       ON CONFLICT (group_key) DO UPDATE SET
+         group_name = excluded.group_name, scope = excluded.scope,
+         brand = excluded.brand, brand_key = excluded.brand_key, enabled = 1,
+         updated_at = datetime('now', 'localtime')`
+    ).run(groupKey, groupName, scope, brand, keyOf(brand));
+    db.prepare('DELETE FROM captain_channel_assignments WHERE group_key = ?').run(groupKey);
+    db.prepare('DELETE FROM captain_channel_group_members WHERE group_key = ?').run(groupKey);
+
+    const result = channels.map((channel) => {
+      // 真实来源仍保存整组；未分配国家沿用组内任一用户仅满足旧表兼容，实际写入以 assignments 为准。
+      const userId = assignments.find((item) => item.country === channel.country)?.userId
+        ?? assignments[0].userId;
+      saveBinding.run({ userId, brand, brandKey: keyOf(brand), ...channel });
+      db.prepare(
+        `INSERT INTO captain_channel_group_members (group_key, open_channel_id)
+         VALUES (?, ?)
+         ON CONFLICT (open_channel_id) DO UPDATE SET group_key = excluded.group_key`
+      ).run(groupKey, channel.openChannelId);
+      return db.prepare('SELECT id FROM captain_channel_bindings WHERE open_channel_id = ?')
+        .get(channel.openChannelId).id;
+    });
+    const saveAssignment = db.prepare(
+      `INSERT INTO captain_channel_assignments (group_key, country, user_id, enabled)
+       VALUES (?, ?, ?, 1)`
+    );
+    for (const assignment of assignments) {
+      saveAssignment.run(groupKey, assignment.country, assignment.userId);
+    }
+    for (const openChannelId of previous.filter((id) => !channels.some((row) => row.openChannelId === id))) {
+      db.prepare(
+        `UPDATE captain_channel_bindings SET enabled = 0, updated_at = datetime('now', 'localtime')
+          WHERE open_channel_id = ? AND NOT EXISTS (
+            SELECT 1 FROM captain_channel_group_members m WHERE m.open_channel_id = ?
+          )`
+      ).run(openChannelId, openChannelId);
+    }
+    return result;
+  })();
+  audit(req.session.user.id, channels.length === 1 ? channels[0].country : null,
+    'bind', 'captain_channel_group', null,
+    { groupKey, brand, assignments, channels: channels.map((channel) => channel.channelName) });
+  res.json({ ids, count: ids.length, assignments: assignments.length });
+});
+
+captainRouter.patch('/assignments/:id', requireRole('owner'), (req, res) => {
+  const id = Number(req.params.id);
+  const assignment = db.prepare(
+    `SELECT a.*, g.group_name FROM captain_channel_assignments a
+      JOIN captain_channel_groups g ON g.group_key = a.group_key WHERE a.id = ?`
+  ).get(id);
+  if (!assignment) return res.status(404).json({ error: '国家负责人绑定不存在' });
+  const enabled = req.body?.enabled ? 1 : 0;
+  db.prepare(
+    `UPDATE captain_channel_assignments SET enabled = ?, updated_at = datetime('now', 'localtime') WHERE id = ?`
+  ).run(enabled, id);
+  audit(req.session.user.id, assignment.country, enabled ? 'enable' : 'disable',
+    'captain_channel_assignment', id, { groupName: assignment.group_name, userId: assignment.user_id });
+  res.json({ ok: true });
+});
+
+captainRouter.patch('/bindings/:id', requireRole('owner'), (req, res) => {
+  const id = Number(req.params.id);
+  const binding = db.prepare('SELECT * FROM captain_channel_bindings WHERE id = ?').get(id);
+  if (!binding) return res.status(404).json({ error: '店铺绑定不存在' });
+  const enabled = req.body?.enabled ? 1 : 0;
+  db.prepare(
+    `UPDATE captain_channel_bindings SET enabled = ?, updated_at = datetime('now', 'localtime') WHERE id = ?`
+  ).run(enabled, id);
+  audit(req.session.user.id, binding.country, enabled ? 'enable' : 'disable', 'captain_channel', id, {
+    channelName: binding.channel_name,
+  });
+  res.json({ ok: true });
+});
+
+captainRouter.get('/sync', (req, res) => {
+  res.json({ job: publicJob(jobs.get(`user:${req.session.user.id}`)) });
+});
+
+captainRouter.post('/sync', (req, res, next) => {
+  try {
+    requireConfigured();
+    const userId = req.session.user.id;
+    const key = `user:${userId}`;
+    const current = jobs.get(key);
+    if (current?.status === 'running') return res.status(202).json({ job: publicJob(current) });
+    if (runningUsers.has(userId)) throw httpError(409, '超级管理员正在统一同步库存，请稍后再试');
+    const sources = sourcesForUser(userId);
+    if (!sources.length) throw httpError(400, '这个账号还没有分配亚马逊库存国家，请联系超级管理员');
+    runningUsers.add(userId);
+    const job = startJob(key, (onProgress) => (
+      runUserSync(userId, sources, onProgress).finally(() => runningUsers.delete(userId))
+    ));
+    res.status(202).json({ job: publicJob(job) });
+  } catch (error) {
+    if (error.status) return res.status(error.status).json({ error: error.message });
+    next(error);
+  }
+});
+
+captainRouter.get('/sync-all', requireRole('owner'), (req, res) => {
+  res.json({ job: publicJob(jobs.get('all')) });
+});
+
+captainRouter.post('/sync-all', requireRole('owner'), (req, res, next) => {
+  try {
+    requireConfigured();
+    const current = jobs.get('all');
+    if (current?.status === 'running') return res.status(202).json({ job: publicJob(current) });
+    const userIds = db.prepare(
+      `SELECT DISTINCT user_id FROM captain_channel_assignments WHERE enabled = 1
+       UNION
+       SELECT DISTINCT b.user_id FROM captain_channel_bindings b
+        WHERE b.enabled = 1 AND NOT EXISTS (
+          SELECT 1 FROM captain_channel_group_members m WHERE m.open_channel_id = b.open_channel_id
+        )
+       ORDER BY user_id`
+    ).all().map((row) => row.user_id);
+    if (userIds.some((userId) => runningUsers.has(userId))) {
+      throw httpError(409, '有账号正在同步，请稍后再试');
+    }
+    userIds.forEach((userId) => runningUsers.add(userId));
+    const actorId = req.session.user.id;
+    const job = startJob('all', (onProgress) => (
+      runAllSync(userIds, actorId, onProgress).finally(() => userIds.forEach((userId) => runningUsers.delete(userId)))
+    ));
+    res.status(202).json({ job: publicJob(job) });
+  } catch (error) {
+    if (error.status) return res.status(error.status).json({ error: error.message });
+    next(error);
+  }
+});

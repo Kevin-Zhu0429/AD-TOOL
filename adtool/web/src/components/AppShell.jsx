@@ -32,6 +32,7 @@ export default function AppShell({
     { id: 'skus', label: 'SKU 库', icon: 'file' },
     { id: 'portfolios', label: '广告组合库', icon: 'layers' },
     { id: 'aba', label: 'ABA 报告', icon: 'chart' },
+    { id: 'abaPublic', label: 'ABA报告（公共）', icon: 'chart' },
     ...(user.productIntel ? [{ id: 'products', label: '产品情报', icon: 'chart' }] : []),
     { id: 'tools', label: '小工具', icon: 'box' },
     { id: 'agedFees', label: '超龄仓储费', icon: 'box' },
@@ -62,7 +63,7 @@ export default function AppShell({
 
         <div className="spacer" />
 
-        {user.markets.length > 1 ? (
+        {page === 'abaPublic' ? null : user.markets.length > 1 ? (
           <div className="market-wrap">
             <select
               className="inp market-pick"

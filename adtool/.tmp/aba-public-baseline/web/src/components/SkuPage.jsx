@@ -1,0 +1,680 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { api, syncProgressText } from '../api.js';
+import {
+  isNewlyOutOfStock, isOutOfStock, isRestocked, isZeroStock, stockEventDate,
+} from '../skuMatch.js';
+import './LibraryPage.css';
+import './SkuPage.css';
+
+/* 列名兜底:Excel 表头和列标题对不上时,再按这些关键词猜一次 */
+const ALIAS = {
+  country: /国家|站点|market|country/i,
+  brand: /品牌|brand/i,
+  model: /型号|机型|model/i,
+  setGroup: /套组|套装|组合|颜色|set|pack/i,
+  sku: /^sku$|卖家sku|商品sku|seller ?sku/i,
+  stock: /在库|可售|库存|on ?hand|stock/i,
+  transit: /在途|补货|transit|inbound/i,
+  asin: /^asin$|子asin|商品asin/i,
+};
+
+/** 把 Excel 第一行表头映射成列 key,映射不上就按列序来 */
+function mapHeader(cols, head) {
+  const used = new Set();
+  const idx = {};
+  const norm = head.map((h) => String(h ?? '').trim());
+
+  for (const col of cols) {
+    const i = norm.findIndex((h, j) => !used.has(j) && h && h === col.label);
+    if (i >= 0) { idx[col.key] = i; used.add(i); }
+  }
+  for (const col of cols) {
+    if (idx[col.key] !== undefined) continue;
+    const i = norm.findIndex((h, j) => !used.has(j) && h && ALIAS[col.key]?.test(h));
+    if (i >= 0) { idx[col.key] = i; used.add(i); }
+  }
+  return Object.keys(idx).length ? idx : null;
+}
+
+const STOCK_FILTERS = [
+  ['', '全部库存'],
+  ['out', '新断货'],
+  ['restock', '已补货'],
+  ['zero', '在库 0'],
+];
+
+const STOCK_FILTER_TEST = {
+  out: isNewlyOutOfStock,
+  restock: isRestocked,
+  zero: isZeroStock,
+};
+
+const SHOW_EVENTS = 12;
+
+function StockEventList({ title, kind, events }) {
+  const [all, setAll] = useState(false);
+  if (!events.length) return null;
+  const shown = all ? events : events.slice(0, SHOW_EVENTS);
+  return (
+    <div className={`sku-change-col ${kind}`}>
+      <div className="sku-change-col-head">
+        <b>{title} {events.length}</b>
+        <span>{kind === 'out' ? '在库变成 0，建议关闭这些 SKU 的广告' : '在库从 0 恢复，可以重新投放'}</span>
+      </div>
+      <ul>
+        {shown.map((event) => (
+          <li key={event.id}>
+            <span className="mono">{event.country} · {event.sku}</span>
+            <small>
+              {[event.brand, event.model, event.setGroup].filter(Boolean).join(' ')}
+              {' · 在库 '}{event.prevStock ?? '—'} → {event.stock ?? '—'}
+              {event.transit ? ` · 在途 ${event.transit}` : ''}
+            </small>
+          </li>
+        ))}
+      </ul>
+      {events.length > SHOW_EVENTS && (
+        <button className="btn ghost sm" onClick={() => setAll(!all)}>
+          {all ? '收起' : `展开全部 ${events.length} 个`}
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** 最近一次库存同步的新断货 / 补货,以及近 N 天仍成立的变动入口 */
+function StockChangePanel({ sync, days, outCount, restockCount, onFilter }) {
+  if (!sync && !outCount && !restockCount) return null;
+  const changed = sync && (sync.outCount || sync.restockCount);
+  return (
+    <div className="sku-change" role="status">
+      <div className="sku-change-head">
+        <div>
+          <b>库存变动</b>
+          <span>
+            {sync
+              ? `最近一次同步 ${sync.at.slice(5, 16)}：新断货 ${sync.outCount} 个，补货 ${sync.restockCount} 个`
+              : '还没有同步记录'}
+          </span>
+        </div>
+        <div className="spacer" />
+        <button className="btn sm" disabled={!outCount} onClick={() => onFilter('out')}>
+          只看新断货 {outCount}
+        </button>
+        <button className="btn sm" disabled={!restockCount} onClick={() => onFilter('restock')}>
+          只看已补货 {restockCount}
+        </button>
+      </div>
+      {changed ? (
+        <div className="sku-change-body">
+          <StockEventList key={`out-${sync.id}`} title="本次新断货" kind="out" events={sync.outOfStock} />
+          <StockEventList key={`restock-${sync.id}`} title="本次补货" kind="restock" events={sync.restocked} />
+        </div>
+      ) : sync ? (
+        <p className="hint">这次同步没有新断货或补货。</p>
+      ) : null}
+      <p className="hint">
+        表格里标「新断货」「已补货」的是近 {days} 天库存同步出的、现在仍成立的变动。
+        广告优化的 SKU 矩阵会同步提示：新断货的 SKU 可一键关闭在投广告，补货的 SKU 可一键重新开启暂停的广告。
+      </p>
+    </div>
+  );
+}
+
+const val = (it, key) => (it[key] === null || it[key] === undefined || it[key] === '' ? '' : it[key]);
+
+export default function SkuPage({ market }) {
+  const [data, setData] = useState(null);
+  const [error, setError] = useState('');
+  const [msg, setMsg] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [scope, setScope] = useState('mine');
+  const [draft, setDraft] = useState('');
+  const [replace, setReplace] = useState(false);
+  const [filter, setFilter] = useState('');
+  const [facet, setFacet] = useState({ country: '', brand: '', stock: '' });
+  const [checked, setChecked] = useState(() => new Set());
+  const [edit, setEdit] = useState(null);          // 正在编辑的那一行:{id, ...列}
+  const [captain, setCaptain] = useState(null);
+  const [syncBusy, setSyncBusy] = useState(false);
+  const [syncMsg, setSyncMsg] = useState(null);
+  const filterRef = useRef(null);
+  const syncAbort = useRef(null);
+  // 同步可能跑好几分钟,跑完时按当时所在的页签刷新,而不是点同步那一刻的
+  const scopeRef = useRef(scope);
+  scopeRef.current = scope;
+
+  async function load(next = scope) {
+    setError('');
+    try {
+      const d = await api.skus(next === 'all' ? { scope: 'all' } : {});
+      setData(d);
+      setChecked(new Set());
+    } catch (e) {
+      setError(e.message);
+      setData(null);
+    }
+  }
+  async function loadCaptain() {
+    try {
+      setCaptain(await api.captainStatus());
+    } catch (e) {
+      setCaptain({ configured: false, bindings: [], error: e.message });
+    }
+  }
+  useEffect(() => { load('mine'); loadCaptain(); }, []);
+
+  const cols = useMemo(() => data?.cols ?? [], [data]);
+  const items = useMemo(() => data?.items ?? [], [data]);
+  const zeroStockItems = useMemo(() => items.filter(isZeroStock), [items]);
+  const newOutCount = useMemo(() => items.filter(isNewlyOutOfStock).length, [items]);
+  const restockCount = useMemo(() => items.filter(isRestocked).length, [items]);
+
+  const facetValues = useMemo(() => {
+    const countries = new Set();
+    const brands = new Set();
+    for (const it of items) {
+      if (it.country) countries.add(it.country);
+      if (it.brand) brands.add(it.brand);
+    }
+    return { countries: [...countries].sort(), brands: [...brands].sort() };
+  }, [items]);
+
+  const shown = useMemo(() => {
+    const f = filter.trim().toLowerCase();
+    return items.filter((it) => {
+      if (facet.country && it.country !== facet.country) return false;
+      if (facet.brand && it.brand !== facet.brand) return false;
+      if (facet.stock && !STOCK_FILTER_TEST[facet.stock](it)) return false;
+      if (!f) return true;
+      return cols.some((c) => String(it[c.key] ?? '').toLowerCase().includes(f));
+    });
+  }, [items, filter, facet, cols]);
+
+  const mine = scope !== 'all';
+
+  async function act(fn, okMsg) {
+    setBusy(true);
+    setMsg(null);
+    try {
+      const r = await fn();
+      await load();
+      window.dispatchEvent(new CustomEvent('adtool:sku-inventory-updated'));
+      const out = typeof okMsg === 'function' ? okMsg(r) : okMsg;
+      setMsg(typeof out === 'string' ? { kind: 'ok', text: out } : out);
+    } catch (e) {
+      setMsg({ kind: 'err', text: e.message });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function resultText(r) {
+    const parts = [];
+    if (r.removed) parts.push(`清掉旧的 ${r.removed} 行`);
+    if (r.added) parts.push(`新增 ${r.added} 行`);
+    if (r.updated) parts.push(`更新 ${r.updated} 行`);
+    if (!r.added && !r.updated) parts.push('没有写入新行');
+    if (r.errorCount) parts.push(`${r.errorCount} 行没通过:${r.errors[0]}`);
+    return { kind: r.errorCount ? 'warn' : 'ok', text: parts.join(' · ') };
+  }
+
+  function addDraft() {
+    if (!draft.trim()) return;
+    const rep = replace;
+    act(() => api.addSkuText(draft, rep), (r) => {
+      setDraft('');
+      setReplace(false);
+      return resultText(r);
+    });
+  }
+
+  function removeChecked() {
+    const ids = [...checked];
+    if (!ids.length) return;
+    if (!confirm(`确定删除选中的 ${ids.length} 行?删了就没了。`)) return;
+    act(() => api.deleteSkus(ids), (r) => `已删除 ${r.deleted} 行`);
+  }
+
+  function saveEdit() {
+    if (busy) return;
+    const body = {};
+    for (const c of cols) body[c.key] = String(edit[c.key] ?? '');
+    const id = edit.id;
+    act(async () => {
+      const result = await api.updateSku(id, body);
+      setEdit(null);
+      return result;
+    }, '已保存');
+  }
+
+  async function syncCaptain({ resume = false } = {}) {
+    const signal = syncAbort.current?.signal;
+    // 接着看的时候,只有服务器上确实有同步在跑才占用按钮、显示进度
+    let following = !resume;
+    if (following) {
+      setSyncBusy(true);
+      setSyncMsg(null);
+    }
+    const onProgress = (progress) => {
+      following = true;
+      setSyncBusy(true);
+      setSyncMsg({ kind: 'info', text: syncProgressText(progress) });
+    };
+    try {
+      const result = resume
+        ? await api.resumeCaptainSync({ onProgress, signal })
+        : await api.syncCaptainInventory({ onProgress, signal });
+      if (!result) return;
+      await Promise.all([load(scopeRef.current), loadCaptain()]);
+      window.dispatchEvent(new CustomEvent('adtool:sku-inventory-updated'));
+      const stock = result.stockSync;
+      const text = `已更新 ${result.updated} 行，读取 ${result.fetched} 个库存 SKU` +
+        (stock ? `；新断货 ${stock.outCount} 个，补货 ${stock.restockCount} 个` : '') +
+        (result.unmatched ? `，${result.unmatched} 个 SKU 在网站库里未匹配` : '') +
+        (result.failed ? `，${result.failed} 家店铺失败` : '');
+      setSyncMsg({ kind: result.failed ? 'warn' : 'ok', text });
+    } catch (e) {
+      if (signal?.aborted || !following) return;
+      setSyncMsg({ kind: 'err', text: e.message });
+    } finally {
+      if (!signal?.aborted) setSyncBusy(false);
+    }
+  }
+  // 刷新页面前点过同步、服务器还没跑完的,接着显示进度
+  useEffect(() => {
+    const controller = new AbortController();
+    syncAbort.current = controller;
+    syncCaptain({ resume: true });
+    return () => controller.abort();
+  }, []);
+
+  async function downloadTemplate() {
+    const XLSX = await import('xlsx');
+    const rows = [
+      cols.map((c) => c.label),
+      ['ES', 'HP', '301', 'BKC', 'CY-ES-HP301XL-BKCL', 120, 300, ''],
+      ['ES', 'HP', '302', '2BK', 'CY-ES-HP302XL-2BK', 0, 500, ''],
+      ['DE', 'Canon', 'PG-545', 'BK', 'CY-DE-CA545XL-BK', 80, '', ''],
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    ws['!cols'] = cols.map((c) => ({ wch: c.width ?? 14 }));
+    const guide = [['列', '必填', '说明'], ...cols.map((c) => [c.label, c.required ? '必填' : '选填', c.hint ?? ''])];
+    const wg = XLSX.utils.aoa_to_sheet(guide);
+    wg['!cols'] = [{ wch: 12 }, { wch: 8 }, { wch: 52 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'SKU导入');
+    XLSX.utils.book_append_sheet(wb, wg, '填写说明');
+    XLSX.writeFile(wb, 'SKU库导入模板.xlsx');
+  }
+
+  async function exportXlsx() {
+    const XLSX = await import('xlsx');
+    const head = [...cols.map((c) => c.label), '更新时间', ...(mine ? [] : ['上传人'])];
+    const rows = [head];
+    for (const it of shown) {
+      rows.push([
+        ...cols.map((c) => val(it, c.key)),
+        it.updated_at ?? '', ...(mine ? [] : [it.owner_name ?? '']),
+      ]);
+    }
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    ws['!cols'] = head.map((_, i) => ({ wch: cols[i]?.width ?? 16 }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'SKU库');
+    XLSX.writeFile(wb, `SKU库_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  }
+
+  async function importXlsx(file, asReplace) {
+    if (!file) return;
+    try {
+      const XLSX = await import('xlsx');
+      const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+      const sheet = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: '' });
+      if (!sheet.length) return setMsg({ kind: 'err', text: '这份文件是空的' });
+
+      const idx = mapHeader(cols, sheet[0] ?? []);
+      const body = idx ? sheet.slice(1) : sheet;
+      const rows = [];
+      for (const r of body) {
+        const row = {};
+        cols.forEach((c, i) => {
+          const at = idx ? idx[c.key] : i;
+          if (c.key === 'asin' && (at === undefined || at >= r.length)) return;
+          row[c.key] = at === undefined ? '' : r[at] ?? '';
+        });
+        if (cols.some((c) => String(row[c.key] ?? '').trim())) rows.push(row);
+      }
+      if (!rows.length) return setMsg({ kind: 'err', text: '这份文件里没读到数据行' });
+
+      const countries = [...new Set(rows.map((r) => String(r.country ?? '').trim().toUpperCase()))]
+        .filter(Boolean);
+      if (asReplace && !confirm(
+        `整表替换:你自己库里 ${countries.join(' / ')} 的 SKU 会先清空,再写入文件里的 ${rows.length} 行。` +
+        '别的国家和别人的库不受影响。继续?'
+      )) return;
+
+      act(() => api.addSkuRows(rows, asReplace), resultText);
+    } catch (e) {
+      setMsg({ kind: 'err', text: '读取失败:' + e.message });
+    }
+  }
+
+  if (error) return <div className="lib"><div className="note err">{error}</div></div>;
+  if (!data) return <div className="lib"><div className="empty">加载中…</div></div>;
+
+  return (
+    <div className="lib">
+      <div className="lib-head">
+        <div>
+          <h1>我的 SKU 库</h1>
+          <p className="hint">
+            每个账号一份自己的库,别人看不到,大家只传自己负责的品牌。
+            开广告时在「投放 SKU」那里点「从 SKU 库选」,按站点和型号挑好直接填进去。
+            填写 ASIN 后，ABA ASIN 视图会关联该 SKU 的型号、品牌和套组。
+          </p>
+        </div>
+        <div className="spacer" />
+        <button className="btn" onClick={downloadTemplate}>下载模板</button>
+        <button className="btn" onClick={exportXlsx}>导出 Excel</button>
+        {mine && (
+          <>
+            <label className="btn" style={{ cursor: 'pointer' }}>
+              导入 Excel
+              <input
+                type="file" accept=".xlsx,.xls,.csv" style={{ display: 'none' }}
+                onChange={(e) => { importXlsx(e.target.files[0], false); e.target.value = ''; }}
+              />
+            </label>
+            <label className="btn" style={{ cursor: 'pointer' }} title="先清空文件里出现的那几个国家,再导入">
+              整表替换
+              <input
+                type="file" accept=".xlsx,.xls,.csv" style={{ display: 'none' }}
+                onChange={(e) => { importXlsx(e.target.files[0], true); e.target.value = ''; }}
+              />
+            </label>
+          </>
+        )}
+      </div>
+
+      {data.canViewAll && (
+        <div className="lib-tabs">
+          {[['mine', '我上传的'], ['all', '全部账号(只读)']].map(([id, label]) => (
+            <button
+              key={id}
+              className={`lib-tab${scope === id ? ' on' : ''}`}
+              onClick={() => { setScope(id); setEdit(null); load(id); }}
+            >{label}</button>
+          ))}
+        </div>
+      )}
+
+      <div className="lib-body">
+        <div className="stack">
+          {mine && (
+            <div className="card captain-sync-card">
+              <div className="card-title">亚马逊库存</div>
+              <p className="hint">
+                欧洲库存按品牌合并；这里只更新分配给你的国家，其他国家由各自负责人同步。
+              </p>
+              {captain?.bindings?.length ? (
+                <div className="captain-binding-list">
+                  {captain.bindings.map((binding) => (
+                    <div key={binding.id}>
+                      <span>{binding.brand} · {binding.country}</span>
+                      <b className={`tag ${binding.enabled ? 'green' : 'gray'}`}>
+                        {binding.enabled ? '已绑定' : '已停用'}
+                      </b>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="hint captain-sync-empty">
+                  {captain?.configured ? '还没有绑定店铺，请联系超级管理员。' : '服务器尚未配置亚马逊 SP-API。'}
+                </p>
+              )}
+              <button
+                className="btn primary captain-sync-button"
+                disabled={syncBusy || !captain?.configured || !captain?.bindings?.some((binding) => binding.enabled)}
+                onClick={() => syncCaptain()}
+              >
+                {syncBusy ? '正在同步…' : '同步亚马逊库存'}
+              </button>
+              {syncMsg && <div className={`note ${syncMsg.kind}`} role={syncMsg.kind === 'err' ? 'alert' : 'status'}>{syncMsg.text}</div>}
+            </div>
+          )}
+          {mine && (
+          <div className="card">
+            <div className="card-title">批量添加</div>
+            <textarea
+              className="inp resize-none" rows={8} value={draft}
+              placeholder={`从 Excel 直接复制粘贴,一行一个 SKU\n列的顺序:${cols.map((c) => c.label).join(' → ')}\n\nES\tHP\t301\tBKC\tCY-ES-HP301XL-BKCL\t120\t300`}
+              onChange={(e) => setDraft(e.target.value)}
+            />
+            <label className="row" style={{ marginTop: 9 }}>
+              <input type="checkbox" checked={replace} onChange={(e) => setReplace(e.target.checked)} />
+              <span className="hint">先清空这批数据里出现的国家再写(月度整表更新用)</span>
+            </label>
+            <div className="row" style={{ marginTop: 9 }}>
+              <span className="hint">{draft.split('\n').filter((s) => s.trim()).length} 行待添加</span>
+              <div className="spacer" />
+              <button className="btn primary" disabled={busy || !draft.trim()} onClick={addDraft}>
+                写入我的库
+              </button>
+            </div>
+            <p className="hint" style={{ marginTop: 8 }}>
+              列之间用 Tab 分隔;
+              同一个国家里同一个 SKU 再传一次是更新库存,不会重复。
+            </p>
+          </div>
+          )}
+
+          <div className="card">
+            <div className="card-title">模板列</div>
+            <div className="libmeta">
+              {cols.map((c) => (
+                <div key={c.key}>
+                  <span>{c.label}</span>
+                  <b>{c.required ? '必填 · ' : ''}{c.hint}</b>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="card lib-main">
+          <div className="row wrap" style={{ marginBottom: 11 }}>
+            <div className="sku-search">
+              <input
+                ref={filterRef}
+                className="inp" placeholder="搜索(所有列)…"
+                value={filter} onChange={(e) => setFilter(e.target.value)}
+              />
+              {filter && (
+                <button
+                  className="btn ghost icon sku-search-clear"
+                  aria-label="清空 SKU 搜索"
+                  onClick={() => { setFilter(''); filterRef.current?.focus(); }}
+                >×</button>
+              )}
+            </div>
+            {facetValues.countries.length > 1 && (
+              <select
+                className="inp" style={{ width: 110 }} value={facet.country}
+                onChange={(e) => setFacet({ ...facet, country: e.target.value })}
+              >
+                <option value="">全部国家</option>
+                {facetValues.countries.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            )}
+            {facetValues.brands.length > 1 && (
+              <select
+                className="inp" style={{ width: 130 }} value={facet.brand}
+                onChange={(e) => setFacet({ ...facet, brand: e.target.value })}
+              >
+                <option value="">全部品牌</option>
+                {facetValues.brands.map((b) => <option key={b} value={b}>{b}</option>)}
+              </select>
+            )}
+            <select
+              className="inp" style={{ width: 110 }} value={facet.stock} aria-label="按库存状态筛选"
+              onChange={(e) => setFacet({ ...facet, stock: e.target.value })}
+            >
+              {STOCK_FILTERS.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+            </select>
+            <span className="stat"><b>{shown.length}</b> / {items.length} 行</span>
+            <div className="spacer" />
+            {mine && checked.size > 0 && (
+              <button className="btn danger sm" disabled={busy} onClick={removeChecked}>
+                删除选中 {checked.size}
+              </button>
+            )}
+          </div>
+
+            {mine && (
+              <StockChangePanel
+                sync={data.stockSync}
+                days={data.stockEventDays ?? 30}
+                outCount={newOutCount}
+                restockCount={restockCount}
+                onFilter={(stock) => setFacet({ ...facet, stock })}
+              />
+            )}
+            {msg && <div id="sku-feedback" className={`note ${msg.kind}`} role={msg.kind === 'err' ? 'alert' : 'status'} style={{ marginBottom: 11 }}>{msg.text}</div>}
+            {zeroStockItems.length > 0 && (
+              <div className="note err sku-zero-summary" role="status">
+                <b>{zeroStockItems.length} 个 SKU 在库为 0</b>
+                <span>
+                  {mine
+                    ? '这些 SKU 会同步到广告优化的 SKU 矩阵并高亮；有在途库存也会继续提醒。'
+                    : '这是全部账号的只读汇总；各账号会在自己的广告优化 SKU 矩阵中收到提醒。'}
+                </span>
+              </div>
+            )}
+
+          <div className="scroll">
+            <table className="tbl">
+              <thead>
+                <tr>
+                  {mine && (
+                    <th style={{ width: 30 }}>
+                      <input
+                        type="checkbox"
+                        checked={shown.length > 0 && shown.every((t) => checked.has(t.id))}
+                        onChange={(e) =>
+                          setChecked(e.target.checked ? new Set(shown.map((t) => t.id)) : new Set())
+                        }
+                      />
+                    </th>
+                  )}
+                  {cols.map((c) => <th key={c.key}>{c.label}</th>)}
+                  {!mine && <th style={{ width: 90 }}>上传人</th>}
+                  <th style={{ width: 128 }}>更新时间</th>
+                  {mine && <th style={{ width: 92 }} />}
+                </tr>
+              </thead>
+              <tbody>
+                {shown.slice(0, 2000).map((it) => {
+                  const editing = edit?.id === it.id;
+                  const zeroStock = isZeroStock(it);
+                  const outOfStock = isOutOfStock(it);
+                  const newOut = isNewlyOutOfStock(it);
+                  const restocked = isRestocked(it);
+                  const rowClass = zeroStock ? 'sku-zero-row' : restocked ? 'sku-restock-row' : undefined;
+                  return (
+                    <tr key={it.id} className={rowClass}>
+                      {mine && (
+                        <td>
+                          <input
+                            type="checkbox" checked={checked.has(it.id)}
+                            onChange={() => setChecked((prev) => {
+                              const n = new Set(prev);
+                              if (n.has(it.id)) n.delete(it.id);
+                              else n.add(it.id);
+                              return n;
+                            })}
+                          />
+                        </td>
+                      )}
+                      {cols.map((c) => (
+                        <td key={c.key} className="mono">
+                          {editing ? (
+                            <input
+                              className="inp cellinp" type={c.num ? 'number' : 'text'}
+                              aria-label={`${c.label} ${it.sku}`}
+                              aria-invalid={c.key === 'asin' && !!edit.asin && !/^[A-Z0-9]{10}$/i.test(edit.asin.trim())}
+                              aria-describedby={msg?.kind === 'err' ? 'sku-feedback' : undefined}
+                              value={edit[c.key] ?? ''}
+                              onChange={(e) => setEdit({ ...edit, [c.key]: e.target.value })}
+                            />
+                          ) : (
+                            <>
+                              {val(it, c.key) === '' ? '—' : val(it, c.key)}
+                              {c.key === 'stock' && zeroStock && (
+                                <span className="tag red sku-zero-tag">
+                                  {outOfStock ? '已断货' : '在库 0'}
+                                </span>
+                              )}
+                              {c.key === 'stock' && newOut && (
+                                <span className="tag red sku-zero-tag" title={`同步前在库 ${it.stockEvent.prevStock}`}>
+                                  新断货 {stockEventDate(it)}
+                                </span>
+                              )}
+                              {c.key === 'stock' && restocked && (
+                                <span className="tag green sku-zero-tag" title="同步前在库 0">
+                                  已补货 {stockEventDate(it)}
+                                </span>
+                              )}
+                            </>
+                          )}
+                        </td>
+                      ))}
+                      {!mine && (
+                        <td style={{ color: 'var(--text-faint)' }}>{it.owner_name ?? '—'}</td>
+                      )}
+                      <td style={{ color: 'var(--text-faint)' }}>{it.updated_at ?? '—'}</td>
+                      {mine && (
+                        <td>
+                          {editing ? (
+                            <div className="row" style={{ gap: 5 }}>
+                              <button className="btn sm primary" disabled={busy} onClick={saveEdit}>保存</button>
+                              <button className="btn sm" onClick={() => setEdit(null)}>取消</button>
+                            </div>
+                          ) : (
+                            <button
+                              className="btn sm ghost"
+                              onClick={() => setEdit({
+                                id: it.id,
+                                ...Object.fromEntries(cols.map((c) => [c.key, val(it, c.key)])),
+                              })}
+                            >编辑</button>
+                          )}
+                        </td>
+                      )}
+                    </tr>
+                  );
+                })}
+                {!shown.length && (
+                  <tr>
+                    <td colSpan={cols.length + 3} className="empty">
+                      {items.length
+                        ? '没有匹配的行'
+                        : mine
+                          ? `库还是空的 —— 下载模板填好再导入,或者直接从 Excel 复制粘贴到左边(当前站点 ${market})`
+                          : '还没有人传过 SKU'}
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+            {shown.length > 2000 && (
+              <p className="hint" style={{ padding: '8px 2px' }}>
+                只显示前 2000 行,用上面的搜索和筛选缩小范围(导出的是筛选后的全部 {shown.length} 行)。
+              </p>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

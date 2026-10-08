@@ -4,10 +4,15 @@ import { ABA_PAGE_SIZES, abaMatcher } from '../../../shared/aba.js';
 import { ASIN_COLUMNS, asinModelOptions, aggregateAsinView } from '../../../shared/abaAsin.js';
 
 /** 算出和页码无关的完整结果(排好序的全部行 + 筛选项);翻页只是在它上面切片 */
-export function buildAsinView(db, userId, market, query) {
-  const reports = db.prepare(`SELECT r.id, r.asin, r.week_start, r.week_end, r.week_number, r.updated_at, r.row_count
+export function buildAsinView(db, userId, market, query, scope = 'private') {
+  const shared = scope === 'public';
+  const reports = shared
+    ? db.prepare('SELECT id, asin, brand, week_start, week_end, week_number, updated_at, row_count FROM aba_public_reports WHERE marketplace=? ORDER BY week_end DESC, asin').all(market)
+    : db.prepare(`SELECT r.id, r.asin, r.week_start, r.week_end, r.week_number, r.updated_at, r.row_count
     FROM aba_asin_reports r WHERE r.user_id=? AND r.marketplace=? ORDER BY r.week_end DESC, r.asin`).all(userId, market);
-  const skuItems = db.prepare(`SELECT id, asin, sku, brand, model, set_group AS setGroup FROM sku_items
+  const skuItems = shared
+    ? db.prepare('SELECT MIN(id) AS id, asin, sku, brand, model, set_group AS setGroup FROM sku_items WHERE country=? AND asin IS NOT NULL AND asin IN (SELECT asin FROM aba_public_reports WHERE marketplace=?) GROUP BY asin, sku, brand, model, set_group ORDER BY sku').all(market, market)
+    : db.prepare(`SELECT id, asin, sku, brand, model, set_group AS setGroup FROM sku_items
     WHERE user_id=? AND country=? AND asin IS NOT NULL ORDER BY sku`).all(userId, market);
   const years = [...new Set(reports.map((r) => r.week_end.slice(0, 4)))];
   const year = query.year === undefined ? years[0] ?? '' : String(query.year);
@@ -21,10 +26,11 @@ export function buildAsinView(db, userId, market, query) {
   const modelReports = dated.filter((r) => !model || selectedModel?.asins.includes(r.asin));
   const modelSkus = skuItems.filter((s) => modelReports.some((r) => r.asin === s.asin) && (!model || selectedModel?.skuIds.includes(s.id)));
   const brandKey = (s) => String(s.brand ?? '').trim().toLowerCase();
-  const brands = [...new Map(modelSkus.map((s) => [brandKey(s) || '__unassigned__', { key: brandKey(s) || '__unassigned__', label: String(s.brand ?? '').trim() || '未填写品牌' }])).values()].sort((a, b) => a.label.localeCompare(b.label, 'zh-CN'));
+  const brands = [...new Map((shared ? modelReports : modelSkus).map((s) => [brandKey(s) || '__unassigned__', { key: brandKey(s) || '__unassigned__', label: String(s.brand ?? '').trim() || '未填写品牌' }])).values()].sort((a, b) => a.label.localeCompare(b.label, 'zh-CN'));
   const brand = String(query.brand ?? '');
-  const filteredSkus = modelSkus.filter((s) => !brand || (brandKey(s) || '__unassigned__') === brand);
-  const brandAsins = new Set(filteredSkus.map((s) => s.asin));
+  const brandAsins = new Set(shared ? modelReports.filter((r) => !brand || brandKey(r) === brand).map((r) => r.asin)
+    : modelSkus.filter((s) => !brand || (brandKey(s) || '__unassigned__') === brand).map((s) => s.asin));
+  const filteredSkus = modelSkus.filter((s) => !brand || (shared ? brandAsins.has(s.asin) : (brandKey(s) || '__unassigned__') === brand));
   const brandReports = modelReports.filter((r) => !brand || brandAsins.has(r.asin));
   const asin = String(query.asin ?? '').toUpperCase();
   const skuId = String(query.skuId ?? '');
@@ -39,7 +45,9 @@ export function buildAsinView(db, userId, market, query) {
   const match = abaMatcher(String(query.q ?? '').slice(0, 1000), dRows, true, wordType === 'printer' ? 'printer' : 'all');
   const rows = [];
   if (selected.size) {
-    const raw = db.prepare(`SELECT q.* FROM aba_asin_queries q JOIN aba_asin_reports r ON r.id=q.report_id
+    const raw = shared
+      ? db.prepare('SELECT q.* FROM aba_public_queries q JOIN aba_public_reports r ON r.id=q.report_id WHERE r.marketplace=? AND r.week_end>=? AND r.week_end<=?').iterate(market, selectedWeeks.at(-1), selectedWeeks[0])
+      : db.prepare(`SELECT q.* FROM aba_asin_queries q JOIN aba_asin_reports r ON r.id=q.report_id
       WHERE r.user_id=? AND r.marketplace=? AND r.week_end>=? AND r.week_end<=?`)
       .iterate(userId, market, selectedWeeks.at(-1), selectedWeeks[0]);
     for (const row of raw) {
