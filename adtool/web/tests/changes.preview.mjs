@@ -47,6 +47,8 @@ try {
   db.prepare("INSERT INTO pet_sku_costs (sku, fob, first_leg, duty) VALUES ('RR22002BKM', 9.8, 1.6, 0.6)").run();
   db.prepare("INSERT INTO pet_sku_fees (sku, fba_fee, referral_fee, referral_rate) VALUES ('RR22002BKM', 7.1, 4.95, 0.15)").run();
   const owner = db.prepare("SELECT id FROM users WHERE username='pet-owner'").get().id;
+  const { pacificDay, shiftDay } = await import('../../server/src/petAmazon.js');
+  const saleEnd = shiftDay(pacificDay(new Date()), 30);
   const newBullets = ['WATERPROOF OXFORD BOTTOM: keeps the bed dry on any floor, easy to wipe clean after muddy walks',
     'REMOVABLE COVER: zip off and machine wash', 'BOLSTERED SIDES for head and neck support, a cozy cat bed too',
     'NON-SLIP BOTTOM stays in place on hardwood and tile', 'SIZE GUIDE: S fits pets up to 25 lbs, measure from nose to tail before ordering'];
@@ -57,6 +59,7 @@ try {
       { sku: 'RR22002BKS', field: 'search_terms', value: 'cat bed kitty bed small dog bed waterproof pet bed washable kennel crate pad', reason: '后台词补 cat bed、kitty bed、crate pad' },
       { sku: 'RR22002BKM', field: 'title', value: 'Miguel Waterproof Dog Bed for Medium Dogs and Cat Bed, Square Oxford Pet Bed with Removable Washable Cover', reason: '和 S 码保持一致' },
       { sku: 'RR22002BKM', field: 'price', value: 29.99, reason: 'M 码可售 210 天，同尺码竞品中位价 $29.99' },
+      { sku: 'RR22002BKS', field: 'sale_price', value: 22.99, saleEnd: saleEnd, reason: 'S 码转化率 4.1%，同尺码竞品促销价 $21.99–23.99' },
     ] }, { userId: owner, gateway, env: ENV });
   await proposeListingChanges({ title: '后台词去掉违禁词', changes: [
     { sku: 'RR22002BKM', field: 'search_terms', value: 'dog bed medium cat bed waterproof best seller', reason: '测试预检失败' }] }, { userId: owner, gateway, env: ENV });
@@ -82,6 +85,7 @@ try {
   await page.screenshot({ path: `${output}/待确认改动-待确认.png`, fullPage: true });
   await page.locator('.chg-item').filter({ hasText: '五点描述' }).screenshot({ path: `${output}/待确认改动-五点对比.png` });
   await page.locator('.topnav').screenshot({ path: `${output}/待确认改动-导航角标.png` });
+  await page.locator('.chg-item').filter({ hasText: '促销价' }).screenshot({ path: `${output}/待确认改动-促销价.png` });
 
   // 改一下 M 码标题再确认
   await page.locator('.chg-item').filter({ hasText: 'RR22002BKM' }).filter({ hasText: '标题' }).getByRole('button', { name: '修改' }).click();

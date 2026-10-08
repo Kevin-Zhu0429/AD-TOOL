@@ -20,6 +20,7 @@ import { startPriceSyncScheduler } from './priceStrategySync.js';
 import { startAbaSyncScheduler } from './petAbaSync.js';
 import { competitorRouter, startCompetitorScheduler } from './petCompetitors.js';
 import { createChangeRouter, startChangeScheduler } from './petChanges.js';
+import { startTrafficSyncScheduler } from './petTraffic.js';
 import { createIntelRouter } from './petIntelActions.js';
 import { mountMcp } from './mcp.js';
 
@@ -87,4 +88,5 @@ app.listen(PORT, '0.0.0.0', () => {
   startAbaSyncScheduler();
   startCompetitorScheduler();
   startChangeScheduler();
+  startTrafficSyncScheduler();
 });

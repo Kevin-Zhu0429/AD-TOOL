@@ -54,6 +54,8 @@
   background: var(--panel); box-shadow: 0 8px 28px rgba(0, 0, 0, .18); font-size: 13px; }
 .chg-bar label { gap: 6px; cursor: pointer; }
 
+.chg-sale-dates { gap: 12px; margin-bottom: 8px; font-size: 13px; }
+.chg-sale-dates label { gap: 6px; }
 .chg-edit { width: 100%; font-size: 13px; line-height: 1.6; resize: vertical; }
 .chg-log { padding: 0; overflow-x: auto; }
 .chg-log td { vertical-align: top; white-space: normal; }

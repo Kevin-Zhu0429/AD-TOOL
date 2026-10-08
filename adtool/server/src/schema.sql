@@ -408,6 +408,46 @@ CREATE TABLE IF NOT EXISTS pet_daily_sales (
 );
 CREATE INDEX IF NOT EXISTS idx_pet_daily_sales_sku ON pet_daily_sales(sku, day);
 
+-- FBA 库存拆开的数(最近一次同步):在库 = available + transshipment + receiving,在途 = working + shipped
+CREATE TABLE IF NOT EXISTS pet_inventory_detail (
+  sku TEXT PRIMARY KEY COLLATE NOCASE,
+  asin TEXT,
+  available INTEGER NOT NULL DEFAULT 0,
+  transshipment INTEGER NOT NULL DEFAULT 0,
+  receiving INTEGER NOT NULL DEFAULT 0,
+  working INTEGER NOT NULL DEFAULT 0,
+  shipped INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+
+-- 业务报告「销售与流量」:按天、按子 ASIN 的访问量、页面浏览、订购件数、销售额、购物车占有率、转化率
+CREATE TABLE IF NOT EXISTS pet_traffic_daily (
+  day TEXT NOT NULL,
+  asin TEXT NOT NULL,
+  parent_asin TEXT,
+  sessions INTEGER NOT NULL DEFAULT 0,
+  page_views INTEGER NOT NULL DEFAULT 0,
+  units INTEGER NOT NULL DEFAULT 0,
+  order_items INTEGER NOT NULL DEFAULT 0,
+  sales REAL NOT NULL DEFAULT 0,
+  browser_sessions INTEGER NOT NULL DEFAULT 0,
+  mobile_sessions INTEGER NOT NULL DEFAULT 0,
+  buy_box_pct REAL,
+  unit_session_pct REAL,
+  PRIMARY KEY(day, asin)
+);
+CREATE INDEX IF NOT EXISTS idx_pet_traffic_asin ON pet_traffic_daily(asin, day);
+-- 拉过的天和全店合计;报告里没有的 ASIN 当天就是 0 访问
+CREATE TABLE IF NOT EXISTS pet_traffic_days (
+  day TEXT PRIMARY KEY,
+  asins INTEGER NOT NULL DEFAULT 0,
+  sessions INTEGER NOT NULL DEFAULT 0,
+  page_views INTEGER NOT NULL DEFAULT 0,
+  units INTEGER NOT NULL DEFAULT 0,
+  sales REAL NOT NULL DEFAULT 0,
+  fetched_at TEXT NOT NULL
+);
+
 -- 亚马逊 Listing 当前售价和状态,每次同步整表替换
 CREATE TABLE IF NOT EXISTS pet_listing_cache (
   sku TEXT PRIMARY KEY COLLATE NOCASE,

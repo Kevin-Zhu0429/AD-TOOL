@@ -234,6 +234,77 @@ test('change queue: Claude proposes, the owner confirms, the site writes to Amaz
     assert.equal((await call('/changes/reject', owner, { ids: [back.id, ids.priceM] })).data.updated, 2);
   });
 
+  await t.test('sale price: set with dates, kept together with a list price change, cancelled by reverting', async () => {
+    const { pacificDay, pacificMidnight } = await import('../src/petAmazon.js');
+    const today = pacificDay(new Date());
+    db.prepare(`INSERT INTO sku_items (user_id, country, brand, sku, asin, style, size, color, dedupe) VALUES (-1, 'US', 'PawNest', 'RR-L', 'B0RRL00001', '方窝牛津', 'L', 'Grey', 'us|rr-l')`).run();
+    gateway.state['RR-L'] = { asin: 'B0RRL00001', productType: 'PET_BED', issues: [], attributes: {
+      purchasable_offer: [{ marketplace_id: US, currency: 'USD', audience: 'ALL', our_price: price(39.99), maximum_seller_allowed_price: price(60) }] } };
+    const proposed = await changes.proposeListingChanges({ title: 'L 码促销', changes: [
+      { sku: 'RR-L', field: 'sale_price', value: 34.99, reason: '没写结束日' },
+      { sku: 'RR-L', field: 'sale_price', value: 39.99, saleEnd: '2099-12-31', reason: '不比原价低' },
+      { sku: 'RR-M', field: 'sale_price', value: 0, reason: '取消' },
+    ] }, { userId: ownerId, gateway, env: SP_ENV });
+    assert.equal(proposed.created.length, 0);
+    assert.match(proposed.rejected[0].error, /结束日期/);
+    assert.match(proposed.rejected[1].error, /低于原价 \$39\.99/);
+    assert.match(proposed.rejected[2].error, /没有促销价/);
+
+    const ok = await changes.proposeListingChanges({ title: 'L 码促销', changes: [
+      { sku: 'RR-L', field: 'price', value: 42.99, reason: '原价上调' },
+      { sku: 'RR-L', field: 'sale_price', value: 34.99, saleEnd: '2099-12-31', reason: '促销 34.99' },
+    ] }, { userId: ownerId, gateway, env: SP_ENV });
+    const [listId, saleId] = ok.created.map((item) => item.id);
+    assert.equal(row(saleId).before_json, 'null');
+    assert.deepEqual(JSON.parse(row(saleId).after_json), { price: 34.99, start: today, end: '2099-12-31' });
+    assert.equal(JSON.parse(row(saleId).target_json).listPrice, 39.99);
+    // 页面上改促销价:价格和起止日一起改,照样检查不能高于原价
+    assert.equal((await call(`/changes/${saleId}`, owner, { value: { price: 41, start: today, end: '2099-12-31' } }, 'PUT')).status, 400);
+    assert.equal((await call(`/changes/${saleId}`, owner, { value: { price: 33.99, start: today, end: '2099-12-31' } }, 'PUT')).status, 200);
+    assert.equal(JSON.parse(row(saleId).after_json).price, 33.99);
+
+    gateway.calls.length = 0;
+    await call('/changes/approve', owner, { ids: [listId, saleId] });
+    await changes.waitForQueue();
+    assert.deepEqual([status(listId), status(saleId)], ['submitted', 'submitted']);
+    const submits = gateway.calls.filter((item) => item.method === 'PATCH' && !item.query.mode);
+    assert.equal(submits[0].body.patches[0].value[0].discounted_price, undefined);
+    // 促销价这次整段替换报价时带上刚提交、还没生效的原价 42.99,不会把它改回 39.99
+    const offer = submits[1].body.patches[0].value[0];
+    assert.deepEqual(offer.our_price, price(42.99));
+    assert.deepEqual(offer.maximum_seller_allowed_price, price(60));
+    assert.deepEqual(offer.discounted_price, [{ schedule: [{ value_with_tax: 33.99, start_at: pacificMidnight(today).toISOString(),
+      end_at: new Date(pacificMidnight('2100-01-01').getTime() - 1000).toISOString() }] }]);
+
+    // 亚马逊生效后核对:促销价按太平洋时间的起止日比
+    gateway.state['RR-L'].attributes.purchasable_offer = submits[1].body.patches[0].value;
+    await changes.verifySubmitted(deps);
+    assert.deepEqual([status(listId), status(saleId)], ['applied', 'applied']);
+    const priceAgain = await changes.proposeListingChanges({ title: '改原价', changes: [{ sku: 'RR-L', field: 'price', value: 44.99, reason: '试' }] },
+      { userId: ownerId, gateway, env: SP_ENV });
+    assert.match(row(priceAgain.created[0].id).warnings_json, /促销价 \$33\.99.*要改前台价请改促销价/);
+    // 同价延长一天是真改动,完全一样才算不用改
+    const extend = await changes.proposeListingChanges({ title: '延长促销', changes: [
+      { sku: 'RR-L', field: 'sale_price', value: 33.99, saleEnd: '2099-12-31', reason: '一样' },
+      { sku: 'RR-L', field: 'sale_price', value: 33.99, saleEnd: '2100-01-01', reason: '延长一天' },
+    ] }, { userId: ownerId, gateway, env: SP_ENV });
+    assert.match(extend.rejected[0].error, /一样/);
+    assert.deepEqual(JSON.parse(row(extend.created[0].id).after_json), { price: 33.99, start: today, end: '2100-01-01' });
+    assert.equal((await call('/changes/reject', owner, { ids: [extend.created[0].id] })).data.updated, 1);
+
+    // 撤回促销价 = 取消促销价
+    const reverted = await call(`/changes/${saleId}/revert`, owner, {});
+    assert.equal(row(reverted.data.id).after_json, 'null');
+    gateway.calls.length = 0;
+    await call('/changes/approve', owner, { ids: [reverted.data.id] });
+    await changes.waitForQueue();
+    assert.equal(status(reverted.data.id), 'submitted');
+    const removed = gateway.calls.filter((item) => item.method === 'PATCH' && !item.query.mode)[0].body.patches[0].value[0];
+    assert.equal(removed.discounted_price, undefined);
+    assert.deepEqual(removed.our_price, price(42.99));
+    assert.equal((await call('/changes/reject', owner, { ids: [priceAgain.created[0].id] })).data.updated, 1);
+  });
+
   await t.test('without Ads API credentials confirmed ad changes become a bulk sheet to upload', async () => {
     const result = changes.proposeAdChanges({ title: '暂停烂词', changes: [
       { action: 'pause', entity: 'keyword', campaignId: '111', adGroupId: '222', entityId: '333', label: 'cheap dog bed', current: 'enabled', reason: 'ACOS 80%' },

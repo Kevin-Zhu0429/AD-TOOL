@@ -12,6 +12,8 @@ import { withProfit, yearGrossProfit } from './petCosts.js';
 import { latestSync } from './stockEvents.js';
 import { competitorSyncStatus, listingHealth, ownStyles, recentChanges, styleDetail } from './petCompetitors.js';
 import { AD_ACTIONS, AD_ENTITIES, listChanges, proposeAdChanges, proposeListingChanges, STATUS_LABEL, targetLabel } from './petChanges.js';
+import { TRAFFIC_GROUPS, trafficReport, trafficSyncStatus } from './petTraffic.js';
+import { changeImpact } from './petImpact.js';
 
 // 测试可以用 PET_TODAY 固定「今天」;正式环境始终是美国太平洋时间的今天
 const todayOf = () => (process.env.NODE_ENV === 'test' && process.env.PET_TODAY) || pacificDay(new Date());
@@ -29,6 +31,15 @@ function skuLibrary() {
     WHERE user_id=? AND country='US' ORDER BY sku`).all(PET_SHOP_ID);
 }
 
+// 在库、在途的口径(和卖家后台库存面板一致),写进工具返回的 notes
+const STOCK_NOTE = '库存口径:在库 stock = 可用 available + 运营中心转运 transshipment + 正在接收 receiving;在途 transit = 处理中 working + 已发货 shipped。前台现在能买到的只有 available,stockDetail 里有拆开的数(最近一次库存同步)。';
+
+/** 最近一次库存同步拆开的数:可用、转运、接收中、处理中、已发货 */
+function inventoryDetail() {
+  return new Map(db.prepare('SELECT sku, available, transshipment, receiving, working, shipped FROM pet_inventory_detail').all()
+    .map(({ sku, ...detail }) => [lower(sku), detail]));
+}
+
 /** 价格策略表同款:每个 SKU 一行,含库存、近 7 天销量、动销、可售天数、售价 */
 function priceBoard(today = todayOf()) {
   const skus = skuLibrary();
@@ -37,7 +48,9 @@ function priceBoard(today = todayOf()) {
   const listings = db.prepare('SELECT sku,asin,price,status FROM pet_listing_cache').all();
   const board = buildPriceBoard({ skus, sales, listings, today });
   const extra = new Map(skus.map((item) => [lower(item.sku), item]));
-  board.rows = withProfit(board.rows.map((row) => ({ ...row, brand: extra.get(lower(row.sku))?.brand ?? null, fabric: extra.get(lower(row.sku))?.fabric ?? null })));
+  const detail = inventoryDetail();
+  board.rows = withProfit(board.rows.map((row) => ({ ...row, brand: extra.get(lower(row.sku))?.brand ?? null, fabric: extra.get(lower(row.sku))?.fabric ?? null,
+    stockDetail: detail.get(lower(row.sku)) ?? null })));
   return board;
 }
 
@@ -53,7 +66,9 @@ function freshness() {
   const price = priceSyncStatus();
   const aba = abaSyncStatus();
   const competitors = competitorSyncStatus();
+  const traffic = trafficSyncStatus();
   return { today: todayOf(), timezone: 'America/Los_Angeles', spApiConfigured: price.configured,
+    trafficCoverage: traffic.coverage, lastTrafficSync: traffic.lastSuccess?.completedAt ?? null, lastTrafficSyncError: traffic.lastError?.message ?? null,
     salesCoverage: price.coverage, lastSalesSync: price.lastSuccess?.completedAt ?? null, lastSalesSyncError: price.lastError?.message ?? null,
     lastAbaSync: aba.lastSuccess?.completedAt ?? null, lastCompetitorSync: competitors.daily.lastSuccess?.completedAt ?? null,
     lastCompetitorSuggest: competitors.suggest.lastSuccess?.completedAt ?? null };
@@ -90,7 +105,7 @@ export function storeOverview({ weeks = 8 } = {}) {
   const stockSync = latestSync(PET_SHOP_ID);
   const changes = recentChanges(today, 7);
   const brief = (row) => ({ sku: row.sku, asin: row.asin, style: row.style, size: row.size, color: row.color,
-    stock: row.stock, transit: row.transit, sales7d: row.sales7d, speed7d: row.speed7d, stockDays: row.stockDays });
+    stock: row.stock, available: row.stockDetail?.available ?? null, transit: row.transit, sales7d: row.sales7d, speed7d: row.speed7d, stockDays: row.stockDays });
   const selling = board.rows.filter((row) => row.sales7d > 0);
   return {
     data: freshness(),
@@ -107,6 +122,9 @@ export function storeOverview({ weeks = 8 } = {}) {
       under21DaysOfStock: selling.filter((row) => row.stockDays != null && row.stockDays < 21 && !row.soldOut).sort((a, b) => a.stockDays - b.stockDays).map(brief),
       over180DaysOfStock: selling.filter((row) => row.stockDays >= 180).sort((a, b) => b.stockDays - a.stockDays).map(brief),
       stockButNoSales7d: board.rows.filter((row) => row.stock > 0 && row.sales7d === 0).map(brief),
+      // 在库不是 0,但全在转运或接收中,前台暂时买不到
+      inStockButNotBuyableYet: board.rows.filter((row) => row.stock > 0 && row.stockDetail?.available === 0)
+        .map((row) => ({ ...brief(row), stockDetail: row.stockDetail })),
       losingMoneyPerUnit: board.rows.filter((row) => row.profit != null && row.profit < 0)
         .map((row) => ({ ...brief(row), price: row.price, profit: row.profit, breakEven: row.breakEven })),
       missingCost: board.rows.filter((row) => row.landedCost == null && (row.stock > 0 || row.sales7d > 0)).map((row) => row.sku),
@@ -119,7 +137,7 @@ export function storeOverview({ weeks = 8 } = {}) {
       byKind: changes.reduce((counts, change) => ({ ...counts, [change.label]: (counts[change.label] ?? 0) + 1 }), {}) },
     notes: ['销量来自亚马逊订单报告,按太平洋时间切日;待付款订单金额按 Listing 售价估算。',
       '广告数据(花费、点击、ACOS)要等亚马逊广告 API 开通,目前没有;广告花费是人工按月填写的。',
-      ...PROFIT_NOTES, 'lastStockSync.syncedAt 是服务器本地时间(北京时间)。竞品变化明细用 get_competitor_overview。'],
+      STOCK_NOTE, ...PROFIT_NOTES, 'lastStockSync.syncedAt 是服务器本地时间(北京时间)。竞品变化明细用 get_competitor_overview。'],
   };
 }
 
@@ -203,11 +221,12 @@ export function listSkus({ query, style, size, color, sortBy = 'sales7d', limit 
     : (a[key] == null) - (b[key] == null) || (['stockDays', 'profit', 'margin'].includes(key) ? a[key] - b[key] : b[key] - a[key]) || a.sku.localeCompare(b.sku));
   return { today: board.today, last7Days: board.days, total: rows.length, sortBy: key,
     rows: rows.slice(0, limit).map((row) => ({ sku: row.sku, asin: row.asin, style: row.style, size: row.size, color: row.color, fabric: row.fabric,
-      price: row.price, listingStatus: row.listingStatus, stock: row.stock, transit: row.transit, dailyLast7: row.daily, today: row.today,
+      price: row.price, listingStatus: row.listingStatus, stock: row.stock, transit: row.transit, stockDetail: row.stockDetail, dailyLast7: row.daily, today: row.today,
       sales7d: row.sales7d, movement3d: row.movement3d, speed7d: row.speed7d, monthUnits: row.monthUnits,
       stockDays: row.stockDays, stockTransitDays: row.stockTransitDays, selloutDate: row.selloutDate, soldOut: row.soldOut,
       fob: row.fob, firstLeg: row.firstLeg, duty: row.duty, landedCost: row.landedCost, fbaFee: row.fbaFee, referralFee: row.referralFee,
-      profit: row.profit, margin: row.margin, breakEven: row.breakEven, profitMissing: row.missing })) };
+      profit: row.profit, margin: row.margin, breakEven: row.breakEven, profitMissing: row.missing })),
+    notes: [STOCK_NOTE] };
 }
 
 // ---------- 销量趋势 ----------
@@ -479,9 +498,10 @@ const INSTRUCTIONS = `这是一家亚马逊美国站宠物用品店(主营宠物
 查数据的工具都只读:数据库里同步好的销量、库存、价格、利润、ABA 搜索词、竞品,以及实时调亚马逊 SP-API 看 Listing、竞品目录和图片。
 propose_listing_changes、propose_ad_changes 只把改动放进网站的「待确认改动」队列,不会直接改亚马逊;店主在网站上逐条确认后才执行。执行结果用 list_change_proposals 查。
 日期都是美国太平洋时间。广告数据(花费、ACOS、搜索词报告)要等亚马逊广告 API 开通,目前网站里没有。
-分析某个产品的常用顺序:store_overview 看全店(含利润、断货补货、竞品变化提醒) → list_skus 找到 SKU/ASIN、看单件毛利 → get_sales_trend 看趋势 → get_search_terms 看流量词和份额 → get_style_intel 看这个款式的竞品、价格带和核心词覆盖 → get_listing_health 看文案体检 → get_listing 看实时文案 → get_catalog_items / get_product_images 对比竞品。
+分析某个产品的常用顺序:store_overview 看全店(含利润、断货补货、竞品变化提醒) → list_skus 找到 SKU/ASIN、看单件毛利和库存拆分 → get_sales_trend 看趋势 → get_traffic 看访问量和转化率(分清是没流量还是转化差) → get_search_terms 看流量词和份额 → get_style_intel 看这个款式的竞品、价格带和核心词覆盖 → get_listing_health 看文案体检 → get_listing 看实时文案 → get_catalog_items / get_product_images 对比竞品。
+改动执行后用 get_change_impact 看前后对比(销量、访问量、转化率、搜索份额),至少等执行后 7 天再下结论。
 看月度目标和利润用 get_sales_stats;看竞品最近的降价、改标题、换主图用 get_competitor_overview。
-提改动前:先用 get_listing 看现在的文案;尺寸、材质、填充物等产品规格只写有依据的,拿不准就先问用户,不要编;同一款的不同尺码、颜色是不同 SKU,要分别提;改五点要给出全部条目;reason 写清依据的数据(搜索词份额、竞品对比、体检问题、毛利)。改价前看 list_skus 的保本价。广告改动需要广告活动、广告组、关键词等的数字编号,只有用户给了批量表或报告时才能提。提完把 confirmUrl 告诉用户去确认。
+提改动前:先用 get_listing 看现在的文案;尺寸、材质、填充物等产品规格只写有依据的,拿不准就先问用户,不要编;同一款的不同尺码、颜色是不同 SKU,要分别提;改五点要给出全部条目;reason 写清依据的数据(搜索词份额、竞品对比、体检问题、毛利)。改价前看 list_skus 的保本价;正在做促销价的 SKU 改原价前台不变,要改前台价提 sale_price(促销价,带结束日期)。广告改动需要广告活动、广告组、关键词等的数字编号,只有用户给了批量表或报告时才能提。提完把 confirmUrl 告诉用户去确认。
 用户是中文卖家,回答用中文;给优化建议时说明依据的数据。`;
 
 export function createPetMcpServer(deps = {}) {
@@ -515,7 +535,7 @@ export function createPetMcpServer(deps = {}) {
 
   server.registerTool('list_skus', {
     title: 'SKU 列表与实时指标',
-    description: '价格策略表同款:每个 SKU 的 ASIN、款式、尺码、颜色、面料、售价、在库、在途、近 7 天每日销量、近 3 日动销、7 天动销速度、本月销量、可售天数、预估售罄日;以及成本(FOB、头程、关税、落地成本)、FBA 配送费、佣金、单件毛利(美元)、毛利率(%)、保本价。毛利未扣广告费和仓储费,缺数据时 profitMissing 列出缺哪项。可按关键字和属性筛选、排序。',
+    description: '价格策略表同款:每个 SKU 的 ASIN、款式、尺码、颜色、面料、售价、在库、在途(stockDetail 拆成可用、运营中心转运、正在接收、处理中、已发货)、近 7 天每日销量、近 3 日动销、7 天动销速度、本月销量、可售天数、预估售罄日;以及成本(FOB、头程、关税、落地成本)、FBA 配送费、佣金、单件毛利(美元)、毛利率(%)、保本价。毛利未扣广告费和仓储费,缺数据时 profitMissing 列出缺哪项。可按关键字和属性筛选、排序。',
     inputSchema: {
       query: optionalText('模糊匹配 SKU、ASIN、款式、尺码、颜色、面料'),
       style: optionalText('款式(精确匹配)'), size: optionalText('尺码(精确匹配)'), color: optionalText('颜色(精确匹配)'),
@@ -535,6 +555,20 @@ export function createPetMcpServer(deps = {}) {
     },
     annotations: local,
   }, wrap((args) => salesTrend(args)));
+
+  server.registerTool('get_traffic', {
+    title: '访问量与转化率',
+    description: '亚马逊业务报告「销售与流量」:每个子 ASIN 每天的访问量(sessions)、页面浏览量、订购件数、销售额、转化率(订购件数/访问量)、购物车占有率、手机访问占比。可按 ASIN、款式、天、周或合计汇总,按 SKU/ASIN/款式/尺码/颜色筛选。用来分清一个款是没流量还是转化差、看改动前后的变化。一般晚 2 天出数。',
+    inputSchema: {
+      asin: optionalText('只看这个 ASIN'), sku: optionalText('只看这个 SKU 对应的 ASIN'), style: optionalText('只看这个款式'),
+      size: optionalText('只看这个尺码'), color: optionalText('只看这个颜色'),
+      from: z.string().regex(DAY).optional().describe('开始日 YYYY-MM-DD(太平洋时间)'), to: z.string().regex(DAY).optional().describe('结束日,默认有数据的最近一天'),
+      days: z.number().int().min(1).max(365).default(28).describe('不填 from 时看最近几天'),
+      groupBy: z.enum(TRAFFIC_GROUPS).default('asin').describe('asin 每个 ASIN 一行 / style 按款式 / day 按天 / week 按周(周一开始) / total 合计'),
+      limit: z.number().int().min(1).max(500).default(200),
+    },
+    annotations: local,
+  }, wrap((args) => trafficReport(args)));
 
   server.registerTool('get_search_terms', {
     title: 'ABA 搜索词表现',
@@ -599,15 +633,18 @@ export function createPetMcpServer(deps = {}) {
 
   server.registerTool('propose_listing_changes', {
     title: '提议修改 Listing',
-    description: '把标题、五点描述、后台搜索词、售价的修改放进网站「待确认改动」队列,店主确认后网站才用 SP-API 提交到亚马逊。会实时读亚马逊上的当前值记为「改动前」,并检查标题 200 字符、后台搜索词 249 字节、和现在一样、低于保本价等;不合格的放在 rejected 里。同一个 SKU 同一项还没确认的旧提议会被替代。',
+    description: '把标题、五点描述、后台搜索词、原价、促销价的修改放进网站「待确认改动」队列,店主确认后网站才用 SP-API 提交到亚马逊。会实时读亚马逊上的当前值记为「改动前」,并检查标题 200 字符、后台搜索词 249 字节、和现在一样、低于保本价等;不合格的放在 rejected 里。同一个 SKU 同一项还没确认的旧提议会被替代。',
     inputSchema: {
       title: z.string().trim().min(1).max(100).describe('这批改动的标题,如「方窝牛津 S/M 标题和五点」'),
       summary: z.string().trim().max(2000).optional().describe('整批的思路和依据,显示在确认页上'),
       changes: z.array(z.object({
         sku: z.string().trim().min(1).max(100).describe('卖家 SKU(list_skus 里的 sku)'),
-        field: z.enum(['title', 'bullets', 'search_terms', 'price']).describe('title 标题 / bullets 五点 / search_terms 后台搜索词 / price 售价'),
+        field: z.enum(['title', 'bullets', 'search_terms', 'price', 'sale_price'])
+          .describe('title 标题 / bullets 五点 / search_terms 后台搜索词 / price 原价 / sale_price 促销价'),
         value: z.union([z.string(), z.array(z.string()).max(10), z.number()])
-          .describe('新值:title、search_terms 填文字(后台词用空格分隔);bullets 填文字数组,按顺序给全部条目;price 填美元数字'),
+          .describe('新值:title、search_terms 填文字(后台词用空格分隔);bullets 填文字数组,按顺序给全部条目;price、sale_price 填美元数字,sale_price 填 0 表示取消促销价'),
+        saleStart: z.string().regex(DAY).optional().describe('sale_price 才用:促销开始日 YYYY-MM-DD(太平洋时间),不填时沿用现有促销的开始日或今天'),
+        saleEnd: z.string().regex(DAY).optional().describe('sale_price 才用:促销结束日 YYYY-MM-DD,新设促销价必填;已有促销不填就沿用原结束日'),
         reason,
       })).min(1).max(40),
     },
@@ -649,6 +686,18 @@ export function createPetMcpServer(deps = {}) {
     limit: z.number().int().min(1).max(200).default(50) },
     annotations: local,
   }, wrap((args) => changeProposals(args, deps)));
+
+  server.registerTool('get_change_impact', {
+    title: '改动效果对比',
+    description: '执行过的 Listing 改动(标题、五点、后台词、原价、促销价)执行前后各 N 天的对比:SKU 的日均销量和销售额、ASIN 的日均访问量、转化率、购物车占有率,以及 ABA 搜索曝光/点击/购买份额(按整周);同时列出同期同一 SKU 的其它改动和断货补货。可看一条(id)、一个 SKU 的最近改动,或全店最近执行的改动。',
+    inputSchema: {
+      id: z.number().int().min(1).optional().describe('改动编号(list_change_proposals 里的 id)'),
+      sku: optionalText('只看这个 SKU 的改动'),
+      days: z.number().int().min(3).max(90).default(14).describe('前后各看几天'),
+      limit: z.number().int().min(1).max(30).default(10),
+    },
+    annotations: local,
+  }, wrap((args) => changeImpact(args, { today: todayOf() })));
 
   return server;
 }

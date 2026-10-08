@@ -331,11 +331,16 @@ export async function fetchInventory(account, gateway = amazonGateway) {
       const sku = clean(raw?.sellerSku);
       if (!sku) continue;
       const details = raw.inventoryDetails ?? {};
+      // 拆开的数也留着:可用 0、全在接收中的 SKU 在库不是 0,但前台暂时买不到
+      const detail = {
+        available: intOf(details.fulfillableQuantity), transshipment: intOf(details.reservedQuantity?.pendingTransshipmentQuantity),
+        receiving: intOf(details.inboundReceivingQuantity), working: intOf(details.inboundWorkingQuantity), shipped: intOf(details.inboundShippedQuantity),
+      };
       latest.set(sku.toLowerCase(), {
         sku, asin: validAsin(raw.asin),
-        stock: intOf(details.fulfillableQuantity) + intOf(details.reservedQuantity?.pendingTransshipmentQuantity)
-          + intOf(details.inboundReceivingQuantity),
-        transit: intOf(details.inboundWorkingQuantity) + intOf(details.inboundShippedQuantity),
+        stock: detail.available + detail.transshipment + detail.receiving,
+        transit: detail.working + detail.shipped,
+        detail,
       });
     }
     nextToken = clean(payload?.pagination?.nextToken);

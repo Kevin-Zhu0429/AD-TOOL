@@ -5,7 +5,7 @@ import express from 'express';
 import { db, audit } from './db.js';
 import { requireRole } from './auth.js';
 import { isPet, PET_SHOP_ID } from './profile.js';
-import { amazonGateway, petSpConfig, US_MARKETPLACE } from './petAmazon.js';
+import { amazonGateway, pacificDay, pacificMidnight, petSpConfig, shiftDay, US_MARKETPLACE } from './petAmazon.js';
 import { withProfit } from './petCosts.js';
 import { adsGateway, executeAdChange, petAdsConfig } from './petAds.js';
 
@@ -14,12 +14,16 @@ export const KINDS = {
   listing_bullets: { group: 'listing', label: '五点描述', attribute: 'bullet_point' },
   listing_search_terms: { group: 'listing', label: '后台搜索词', attribute: 'generic_keyword' },
   listing_price: { group: 'listing', label: '售价', attribute: 'purchasable_offer' },
+  listing_sale_price: { group: 'listing', label: '促销价', attribute: 'purchasable_offer' },
   ad_state: { group: 'ad', label: '投放状态' },
   ad_bid: { group: 'ad', label: '竞价' },
   ad_budget: { group: 'ad', label: '每日预算' },
   ad_negative: { group: 'ad', label: '新增否定' },
 };
-export const LISTING_FIELDS = { title: 'listing_title', bullets: 'listing_bullets', search_terms: 'listing_search_terms', price: 'listing_price' };
+export const LISTING_FIELDS = { title: 'listing_title', bullets: 'listing_bullets', search_terms: 'listing_search_terms', price: 'listing_price',
+  sale_price: 'listing_sale_price' };
+// 原价和促销价都在 purchasable_offer 这一个属性里
+const OFFER_KINDS = new Set(['listing_price', 'listing_sale_price']);
 export const AD_ENTITIES = ['campaign', 'adGroup', 'keyword', 'productTarget', 'productAd'];
 export const AD_ACTIONS = ['pause', 'enable', 'set_bid', 'set_budget', 'add_negative'];
 export const STATUS_LABEL = {
@@ -63,6 +67,26 @@ const offerPrice = (offer) => {
   const value = offer?.our_price?.[0]?.schedule?.[0]?.value_with_tax;
   return value == null || !Number.isFinite(Number(value)) ? null : Number(value);
 };
+const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+// 亚马逊返回的促销起止时间可能是完整时间也可能只有日期,统一成太平洋时间的日期
+const dayOf = (value) => (!value ? null : DAY_RE.test(String(value)) ? String(value) : pacificDay(value) || null);
+const todayPacific = () => pacificDay(new Date());
+
+/** 报价里还没结束的促销价:{ price, start, end },没有就是 null */
+function saleOf(offer) {
+  for (const entry of offer?.discounted_price?.[0]?.schedule ?? []) {
+    const price = Number(entry?.value_with_tax);
+    const end = dayOf(entry?.end_at);
+    if (!Number.isFinite(price) || (end && end < todayPacific())) continue;
+    return { price: round2(price), start: dayOf(entry?.start_at), end };
+  }
+  return null;
+}
+
+/** 促销价写回亚马逊的时间:开始日太平洋时间 0 点,结束日太平洋时间最后一秒 */
+const saleSchedule = ({ price, start, end }) => ({ value_with_tax: price, start_at: pacificMidnight(start).toISOString(),
+  end_at: new Date(pacificMidnight(shiftDay(end, 1)).getTime() - 1000).toISOString() });
+const nearDay = (a, b) => a === b || (a && b && Math.abs(Date.parse(`${a}T00:00:00Z`) - Date.parse(`${b}T00:00:00Z`)) <= 86400000);
 
 async function readListing(account, sku, gateway) {
   let payload;
@@ -84,30 +108,46 @@ export function currentValue(kind, attributes) {
   if (kind === 'listing_bullets') return textValues(attributes, 'bullet_point');
   if (kind === 'listing_search_terms') return textValues(attributes, 'generic_keyword').join(' ');
   if (kind === 'listing_price') return offerPrice(mainOffer(attributes));
+  if (kind === 'listing_sale_price') return saleOf(mainOffer(attributes));
   return null;
 }
 
-export function sameValue(kind, a, b) {
+/** loose:核对执行结果时促销起止日差一天以内也算一样(亚马逊存时间时可能换了时区);提议和执行前比较要精确 */
+export function sameValue(kind, a, b, { loose = false } = {}) {
   if (kind === 'listing_bullets') {
     return Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((item, index) => normText(item) === normText(b[index]));
   }
   if (kind === 'listing_price') return a != null && b != null && Math.abs(Number(a) - Number(b)) < 0.005;
+  // 促销价:都没有算一样
+  if (kind === 'listing_sale_price') {
+    if (a == null || b == null) return a == null && b == null;
+    const day = loose ? nearDay : (x, y) => x === y;
+    return Math.abs(Number(a.price) - Number(b.price)) < 0.005 && day(a.start, b.start) && day(a.end, b.end);
+  }
   if (kind === 'listing_search_terms') return normText(a).toLowerCase() === normText(b).toLowerCase();
   return normText(a) === normText(b);
 }
 
-/** 亚马逊 Listings Items 的 patch:文字类属性带语言和站点;售价只改 our_price,同一报价里的其它字段原样保留 */
-export function patchFor(kind, after, attributes = {}) {
+/**
+ * 亚马逊 Listings Items 的 patch:文字类属性带语言和站点;售价只改 our_price,促销价只改 discounted_price,
+ * 同一报价里的其它字段原样保留。pending 是同一 SKU 已提交、亚马逊还没生效的原价 / 促销价改动,一起带上,免得互相覆盖。
+ */
+export function patchFor(kind, after, attributes = {}, pending = []) {
   const tag = { language_tag: 'en_US', marketplace_id: US_MARKETPLACE };
   if (kind === 'listing_title') return { op: 'replace', path: '/attributes/item_name', value: [{ value: after, ...tag }] };
   if (kind === 'listing_bullets') return { op: 'replace', path: '/attributes/bullet_point', value: after.map((value) => ({ value, ...tag })) };
   if (kind === 'listing_search_terms') return { op: 'replace', path: '/attributes/generic_keyword', value: [{ value: after, ...tag }] };
-  if (kind === 'listing_price') {
+  if (OFFER_KINDS.has(kind)) {
     const offers = (attributes.purchasable_offer ?? []).filter(forUs);
     const main = mainOffer(attributes);
-    const price = [{ schedule: [{ value_with_tax: after }] }];
-    const updated = main ? { ...structuredClone(main), marketplace_id: US_MARKETPLACE, currency: main.currency ?? 'USD', our_price: price }
-      : { marketplace_id: US_MARKETPLACE, currency: 'USD', our_price: price };
+    if (!main && kind === 'listing_sale_price') throw new Error('这个 SKU 在亚马逊上还没有报价（原价），没法设促销价');
+    const updated = main ? { ...structuredClone(main), marketplace_id: US_MARKETPLACE, currency: main.currency ?? 'USD' }
+      : { marketplace_id: US_MARKETPLACE, currency: 'USD' };
+    for (const change of [...pending, { kind, after }]) {
+      if (change.kind === 'listing_price') updated.our_price = [{ schedule: [{ value_with_tax: change.after }] }];
+      else if (change.after == null) delete updated.discounted_price;
+      else updated.discounted_price = [{ schedule: [saleSchedule(change.after)] }];
+    }
     const value = main ? offers.map((offer) => (offer === main ? updated : offer)) : [...offers, updated];
     return { op: 'replace', path: '/attributes/purchasable_offer', value };
   }
@@ -138,7 +178,7 @@ function priceImpact(sku, before, after) {
  * 检查一条 Listing 提议:返回整理好的新值、拦下来的错误和要提醒的问题。
  * before 是亚马逊上的当前值;attributes 只有提议时才有,用来看有没有促销价。
  */
-export function checkListingValue(kind, raw, before, { sku, attributes } = {}) {
+export function checkListingValue(kind, raw, before, { sku, attributes, listPrice } = {}) {
   const errors = [], warnings = [];
   let value, extra = {};
   if (kind === 'listing_title') {
@@ -179,12 +219,47 @@ export function checkListingValue(kind, raw, before, { sku, attributes } = {}) {
       else if (impact.breakEven != null && value < impact.breakEven) warnings.push(`低于保本价 ${money(impact.breakEven)}`);
       if (impact.missing?.length) warnings.push(`缺${impact.missing.join('、')}，算不出新价的毛利`);
     }
-    const sale = mainOffer(attributes)?.discounted_price?.[0]?.schedule ?? [];
-    if (sale.some((entry) => !entry.end_at || Date.parse(entry.end_at) > Date.now())) warnings.push('这个 SKU 正在用促销价，改原价不影响前台显示的促销价');
+    const sale = saleOf(mainOffer(attributes));
+    if (sale) warnings.push(`这个 SKU 有促销价 ${money(sale.price)}（${sale.start ?? '?'} 到 ${sale.end ?? '不限'}），改原价不影响前台显示的促销价，要改前台价请改促销价`);
+  } else if (kind === 'listing_sale_price') {
+    const list = listPrice ?? offerPrice(mainOffer(attributes));
+    const today = todayPacific();
+    const input = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : { price: raw };
+    const priceText = clean(input.price).replace(/^\$/, '');
+    if (input.price == null || priceText === '' || Number(priceText) === 0) {
+      // 0 或空:取消促销价
+      if (before == null) return { errors: ['现在没有促销价，不用取消'] };
+      value = null;
+      extra = { listPrice: list };
+      if (list != null) warnings.push(`取消后前台恢复原价 ${money(list)}`);
+    } else {
+      const number = Number(priceText);
+      if (!Number.isFinite(number) || number <= 0 || number > 10000) return { errors: ['促销价要填大于 0 的美元金额，填 0 表示取消促销价'] };
+      const start = clean(input.start) || (before?.start && before.start <= today ? before.start : today);
+      const end = clean(input.end) || before?.end || '';
+      if (!DAY_RE.test(start)) errors.push('促销开始日期要写成 YYYY-MM-DD');
+      if (!end) errors.push('新设促销价要写结束日期（saleEnd，YYYY-MM-DD）');
+      else if (!DAY_RE.test(end)) errors.push('促销结束日期要写成 YYYY-MM-DD');
+      else if (end < start) errors.push('促销结束日期早于开始日期');
+      else if (end < today) errors.push('促销结束日期已经过了');
+      value = { price: round2(number), start, end };
+      if (list == null) errors.push('亚马逊上读不到这个 SKU 的原价，没法设促销价');
+      else if (value.price >= list) errors.push(`促销价要低于原价 ${money(list)}`);
+      const shown = before?.price ?? list;
+      if (shown != null && Math.abs(value.price - shown) / shown > 0.3) warnings.push(`前台价从 ${money(shown)} 变成 ${money(value.price)}，幅度 ${((value.price - shown) / shown * 100).toFixed(0)}%，超过 30%`);
+      extra = { listPrice: list };
+      if (sku) {
+        const impact = priceImpact(sku, shown, value.price);
+        extra.priceImpact = impact;
+        if (impact.profitAfter != null && impact.profitAfter < 0) warnings.push(`按促销价每件亏 ${money(-impact.profitAfter)}（保本价 ${money(impact.breakEven)}）`);
+        else if (impact.breakEven != null && value.price < impact.breakEven) warnings.push(`低于保本价 ${money(impact.breakEven)}`);
+        if (impact.missing?.length) warnings.push(`缺${impact.missing.join('、')}，算不出促销价的毛利`);
+      }
+    }
   } else {
     return { errors: [`不认识的改动类型：${kind}`] };
   }
-  if (!errors.length && before != null && sameValue(kind, value, before)) errors.push('和亚马逊上现在的一样，不用改');
+  if (!errors.length && (before != null || kind === 'listing_sale_price') && sameValue(kind, value, before)) errors.push('和亚马逊上现在的一样，不用改');
   return { value, errors, warnings, extra };
 }
 
@@ -265,7 +340,7 @@ export async function proposeListingChanges(input, { userId = null, source = 'cl
   for (const [index, change] of input.changes.entries()) {
     const sku = clean(change?.sku), kind = LISTING_FIELDS[change?.field];
     const reject = (error) => rejected.push({ index, sku, field: change?.field ?? null, error });
-    if (!kind) { reject('field 只能是 title、bullets、search_terms、price'); continue; }
+    if (!kind) { reject('field 只能是 title、bullets、search_terms、price、sale_price'); continue; }
     const known = directory.get(lowerKey(sku));
     if (!known) { reject(`SKU 库里没有 ${sku || '(空)'}`); continue; }
     const reason = checkReason(change.reason);
@@ -284,7 +359,8 @@ export async function proposeListingChanges(input, { userId = null, source = 'cl
     if (listing.error) { reject(`读不到亚马逊上的 Listing：${listing.error}`); continue; }
     if (!listing.productType) { reject('亚马逊没有返回这个 SKU 的商品类型，没法提交修改'); continue; }
     const before = currentValue(kind, listing.attributes);
-    const checked = checkListingValue(kind, change.value, before, { sku: known.sku, attributes: listing.attributes });
+    const raw = kind === 'listing_sale_price' ? { price: change.value, start: change.saleStart, end: change.saleEnd } : change.value;
+    const checked = checkListingValue(kind, raw, before, { sku: known.sku, attributes: listing.attributes });
     if (checked.errors.length) { reject(checked.errors.join('；')); continue; }
     seen.add(targetKey);
     items.push({ kind, targetKey, before, after: checked.value, reason: reason.text, warnings: checked.warnings,
@@ -414,7 +490,12 @@ async function executeListing(row, target, before, after, deps) {
     log(row.id, row.batch_id, 'system', null, 'stale', { expected: before, found: current });
     return;
   }
-  const body = { productType: listing.productType ?? target.productType, patches: [patchFor(row.kind, after, listing.attributes)] };
+  // 同一 SKU 刚提交、亚马逊还没生效的原价 / 促销价改动:这次整段替换报价时一起带上
+  const pending = OFFER_KINDS.has(row.kind) ? db.prepare(`SELECT kind, after_json FROM pet_change_proposals
+    WHERE target_key IN (?, ?) AND status='submitted' AND id<>? ORDER BY executed_at, id`)
+    .all(`listing:${lowerKey(target.sku)}:listing_price`, `listing:${lowerKey(target.sku)}:listing_sale_price`, row.id)
+    .map((item) => ({ kind: item.kind, after: parseJson(item.after_json) })) : [];
+  const body = { productType: listing.productType ?? target.productType, patches: [patchFor(row.kind, after, listing.attributes, pending)] };
   const preview = await deps.gateway.request(account, account.region, 'PATCH', listingPath(account, target.sku),
     { query: { marketplaceIds: US_MARKETPLACE, mode: 'VALIDATION_PREVIEW', issueLocale: 'en_US' }, body });
   const previewErrors = (preview?.issues ?? []).filter((issue) => issue.severity === 'ERROR');
@@ -498,7 +579,7 @@ export async function verifySubmitted(deps = defaultDeps) {
     const current = currentValue(row.kind, listing.attributes);
     const related = issueList(listing.issues.filter((issue) => (issue.attributeNames ?? []).includes(KINDS[row.kind].attribute)));
     const result = { ...parseJson(row.result_json, {}), listingIssues: related, checkedAt: new Date().toISOString() };
-    if (sameValue(row.kind, current, after)) {
+    if (sameValue(row.kind, current, after, { loose: true })) {
       update(row.id, { status: 'applied', verified_at: nowLocal(), result_json: JSON.stringify(result) });
       log(row.id, row.batch_id, 'system', null, 'verified');
     } else if (row.age_hours >= VERIFY_HOURS) {
@@ -618,7 +699,7 @@ export function editChange(id, value, userId) {
   const target = parseJson(row.target_json, {}), before = parseJson(row.before_json), old = parseJson(row.after_json);
   let after, warnings, extra = {};
   if (KINDS[row.kind]?.group === 'listing') {
-    const checked = checkListingValue(row.kind, value, before, { sku: target.sku });
+    const checked = checkListingValue(row.kind, value, before, { sku: target.sku, listPrice: target.listPrice });
     if (checked.errors.length) throw Object.assign(new Error(checked.errors.join('；')), { status: 400 });
     ({ value: after, warnings, extra } = checked);
   } else if (row.kind === 'ad_bid' || row.kind === 'ad_budget') {
@@ -642,7 +723,9 @@ export function revertChange(id, userId) {
   if (!['applied', 'submitted', 'not_applied'].includes(row.status)) throw Object.assign(new Error('只有执行过的改动能撤回'), { status: 409 });
   const before = parseJson(row.before_json), after = parseJson(row.after_json), target = parseJson(row.target_json, {});
   if (row.kind === 'ad_negative') throw Object.assign(new Error('否定词没法用撤回改回去，请到广告后台把它存档'), { status: 400 });
-  if (before == null || (Array.isArray(before) ? !before.length : before === '')) throw Object.assign(new Error('不知道改动前的值，没法撤回'), { status: 400 });
+  // 促销价改动前是 null 表示原来没有促销价,撤回就是取消促销价
+  const knownBefore = row.kind === 'listing_sale_price' ? row.before_json != null : before != null && (Array.isArray(before) ? before.length > 0 : before !== '');
+  if (!knownBefore) throw Object.assign(new Error('不知道改动前的值，没法撤回'), { status: 400 });
   const label = targetLabel(row.kind, target);
   const saved = saveProposals({ title: `撤回：${label} 的${KINDS[row.kind]?.label ?? '改动'}`.slice(0, 100), summary: `撤回第 ${row.id} 条改动，改回原来的值`,
     source: 'revert', userId, items: [{ kind: row.kind, targetKey: row.target_key, target: KINDS[row.kind]?.group === 'ad' ? { ...target, currentReported: false } : target,

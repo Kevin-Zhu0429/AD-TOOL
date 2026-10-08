@@ -91,6 +91,13 @@ function seed(db) {
   query.run(one, 'dog bed', 1000, 10000, 500, 50, 1000, 50, 5);
   query.run(two, 'dog bed', 1000, 10000, 500, 50, 500, 25, 0);
   query.run(one, 'calming dog bed', 300, 3000, 150, 10, 0, 0, 0);
+  // DOG-L 在库 6 件全在接收中,前台暂时买不到
+  db.prepare("INSERT INTO pet_inventory_detail (sku, asin, available, transshipment, receiving, working, shipped) VALUES ('DOG-L', 'B000000001', 0, 0, 6, 5, 15), ('DOG-XL', 'B000000002', 300, 0, 0, 0, 0)").run();
+  // 业务报告流量:DOG-L 两天
+  const visit = db.prepare('INSERT INTO pet_traffic_daily (day, asin, sessions, page_views, units, sales, buy_box_pct) VALUES (?, ?, ?, ?, ?, ?, ?)');
+  visit.run('2026-09-19', 'B000000001', 60, 90, 3, 119.97, 100);
+  visit.run('2026-09-20', 'B000000001', 40, 70, 4, 159.96, 90);
+  db.prepare("INSERT INTO pet_traffic_days (day, sessions, fetched_at) VALUES ('2026-09-19', 60, '2026-09-21T00:00:00Z'), ('2026-09-20', 40, '2026-09-22T00:00:00Z')").run();
   // 最近一次库存同步:CAT-S 新断货
   const sync = db.prepare('INSERT INTO sku_stock_syncs (user_id, out_count, restock_count) VALUES (-1, 1, 0)').run().lastInsertRowid;
   db.prepare(`INSERT INTO sku_stock_events (sync_id, user_id, country, sku, sku_key, asin, kind, prev_stock, stock, transit)
@@ -191,8 +198,8 @@ test('Claude connector: OAuth login, read-only tools and token lifecycle', async
     await mcp.connect(new StreamableHTTPClientTransport(new URL(`${url}/mcp`), { requestInit: { headers: { Authorization: `Bearer ${tokens.access_token}` } } }));
     t.after(() => mcp.close());
     const tools = (await mcp.listTools()).tools;
-    assert.deepEqual(tools.map((tool) => tool.name).sort(), ['get_catalog_items', 'get_competitor_overview', 'get_listing', 'get_listing_health',
-      'get_product_images', 'get_sales_stats', 'get_sales_trend', 'get_search_terms', 'get_style_intel', 'list_change_proposals', 'list_skus',
+    assert.deepEqual(tools.map((tool) => tool.name).sort(), ['get_catalog_items', 'get_change_impact', 'get_competitor_overview', 'get_listing', 'get_listing_health',
+      'get_product_images', 'get_sales_stats', 'get_sales_trend', 'get_search_terms', 'get_style_intel', 'get_traffic', 'list_change_proposals', 'list_skus',
       'propose_ad_changes', 'propose_listing_changes', 'store_overview']);
     // 只有两个提议工具会写东西(写进网站的待确认队列),其余都只读
     assert.deepEqual(tools.filter((tool) => !tool.annotations.readOnlyHint).map((tool) => tool.name).sort(), ['propose_ad_changes', 'propose_listing_changes']);
@@ -213,6 +220,8 @@ test('Claude connector: OAuth login, read-only tools and token lifecycle', async
     // DOG-XL:19.99 − 17 − 8 − 3.00 = −8.01,每卖一件亏钱;CAT-S 近 7 天有销量但没有成本
     assert.deepEqual(overview.alerts.losingMoneyPerUnit.map((row) => [row.sku, row.profit]), [['DOG-XL', -8.01]]);
     assert.deepEqual(overview.alerts.missingCost, ['CAT-S']);
+    assert.deepEqual(overview.alerts.inStockButNotBuyableYet.map((row) => [row.sku, row.stock, row.available]), [['DOG-L', 6, 0]]);
+    assert.deepEqual(overview.data.trafficCoverage, { from: '2026-09-19', to: '2026-09-20', days: 2 });
 
     const list = await call('list_skus', { style: '圆窝' });
     assert.deepEqual(list.rows.map((row) => row.sku), ['DOG-L', 'DOG-XL']);
@@ -221,6 +230,13 @@ test('Claude connector: OAuth login, read-only tools and token lifecycle', async
     assert.equal(list.rows[0].stockDays, 6);
     assert.deepEqual([list.rows[0].landedCost, list.rows[0].fbaFee, list.rows[0].profit, list.rows[0].margin], [14, 7.25, 12.74, 31.86]);
     assert.deepEqual((await call('list_skus', { sortBy: 'profit' })).rows.map((row) => row.sku), ['DOG-XL', 'DOG-L', 'CAT-S']);
+    assert.deepEqual(list.rows[0].stockDetail, { available: 0, transshipment: 0, receiving: 6, working: 5, shipped: 15 });
+    assert.match(list.notes[0], /在库 stock = 可用/);
+
+    const traffic = await call('get_traffic', { sku: 'DOG-L', groupBy: 'total' });
+    assert.deepEqual(traffic.rows, [{ from: '2026-08-24', to: '2026-09-20', sessions: 100, pageViews: 160, units: 7, orderItems: 0, sales: 279.93,
+      conversion: 7, buyBox: 96, mobileShare: 0 }]);
+    assert.deepEqual((await call('get_change_impact')).items, []);
 
     const trend = await call('get_sales_trend', { asin: 'B000000001', from: '2026-09-01', groupBy: 'week' });
     // 9/20 是周日,算 9/14 那周;9/21 是周一,新的一周

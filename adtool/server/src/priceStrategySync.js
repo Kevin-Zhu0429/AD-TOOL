@@ -67,6 +67,16 @@ function saveListings(listings) {
   })();
 }
 
+/** FBA 库存拆开的数,整表换成这次同步的结果 */
+function saveInventoryDetail(inventory) {
+  const insert = db.prepare(`INSERT OR REPLACE INTO pet_inventory_detail (sku, asin, available, transshipment, receiving, working, shipped)
+    VALUES (@sku, @asin, @available, @transshipment, @receiving, @working, @shipped)`);
+  db.transaction(() => {
+    db.prepare('DELETE FROM pet_inventory_detail').run();
+    for (const item of inventory) if (item.detail) insert.run({ sku: item.sku, asin: item.asin ?? null, ...item.detail });
+  })();
+}
+
 /**
  * 把亚马逊的 Listing、库存和目录属性写进共享 SKU 库。
  * 新 SKU 自动加入;已有 SKU 更新 ASIN 和库存,尺码、颜色只补空白,款式、面料等人工字段不动。
@@ -183,6 +193,7 @@ export async function syncAmazonData(actorId = null, gateway = amazonGateway, en
     const before = snapshotStock(PET_SHOP_ID);
     const library = applySkuLibrary({ listings, inventory, attributes, brand: account.brand });
     const stockSync = recordStockChanges(PET_SHOP_ID, before);
+    saveInventoryDetail(inventory);
 
     const priceBySku = new Map(listings.filter((item) => item.price).map((item) => [item.sku.toLowerCase(), item.price]));
     const coverage = savedState('sales_coverage');
