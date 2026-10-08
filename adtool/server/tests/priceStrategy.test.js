@@ -136,6 +136,9 @@ test('Amazon sync fills the SKU library and daily sales; the price board and sta
   assert.equal(dog.speed7d, 0.43);
   assert.equal(dog.monthUnits, 4);
   assert.deepEqual([dog.stock, dog.transit, dog.price, dog.style, dog.size], [25, 5, 39.99, '圆形狗窝', 'L']);
+  // 拆开的数也存下来:可用 20 + 转运 3 + 接收中 2 = 在库 25,处理中 1 + 已发货 4 = 在途 5
+  assert.deepEqual({ ...backend.db.prepare("SELECT available, transshipment, receiving, working, shipped FROM pet_inventory_detail WHERE sku='DOG-L'").get() },
+    { available: 20, transshipment: 3, receiving: 2, working: 1, shipped: 4 });
   assert.equal(dog.stockDays, 58);
   assert.equal(dog.stockTransitDays, 70);
   assert.equal(dog.selloutDate, '2026-11-20');

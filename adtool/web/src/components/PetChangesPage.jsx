@@ -16,7 +16,7 @@ const ENTITY_LABEL = { campaign: '广告活动', adGroup: '广告组', keyword: 
 const MATCH_LABEL = { exact: '否定精准', phrase: '否定词组', asin: '否定商品' };
 const STATE_LABEL = { enabled: '启用', paused: '暂停' };
 const VIEWS = [['pending', '待确认'], ['active', '处理中'], ['history', '历史'], ['log', '日志']];
-const EDITABLE = new Set(['listing_title', 'listing_bullets', 'listing_search_terms', 'listing_price', 'ad_bid', 'ad_budget']);
+const EDITABLE = new Set(['listing_title', 'listing_bullets', 'listing_search_terms', 'listing_price', 'listing_sale_price', 'ad_bid', 'ad_budget']);
 const NUMERIC = new Set(['listing_price', 'ad_bid', 'ad_budget']);
 const SOURCE_LABEL = { claude: 'Claude 提议', revert: '撤回', manual: '手动' };
 
@@ -25,6 +25,8 @@ function targetText(item) {
   if (item.group === 'listing') return [t.sku, [t.style, t.size, t.color].filter(Boolean).join(' ')].filter(Boolean).join(' · ');
   return [t.campaignName ?? `活动 ${t.campaignId}`, t.adGroupName, t.label].filter(Boolean).join(' / ');
 }
+
+const saleText = (sale) => (sale ? `${money(sale.price)}（${sale.start ?? '?'} 到 ${sale.end ?? '不限'}）` : '没有促销价');
 
 function Words({ parts, side }) {
   const keep = side === 'before' ? 'del' : 'add';
@@ -82,6 +84,15 @@ function ChangeBody({ item }) {
         {impact.marginAfter != null && `（${impact.marginAfter}%）`}</span>}
       {impact.breakEven != null && <span className="hint">保本价 {money(impact.breakEven)}</span>}</div>;
   }
+  if (kind === 'listing_sale_price') {
+    const impact = target.priceImpact ?? {};
+    return <div className="chg-numbers">
+      <span className="hint">原价 {money(target.listPrice)}</span>
+      <b>{saleText(before)} → {after ? saleText(after) : '取消促销价'}</b>
+      {impact.profitAfter != null && <span>单件毛利 {money(impact.profitBefore)} → <b className={impact.profitAfter < 0 ? 'loss' : undefined}>{money(impact.profitAfter)}</b>
+        {impact.marginAfter != null && `（${impact.marginAfter}%）`}</span>}
+      {impact.breakEven != null && <span className="hint">保本价 {money(impact.breakEven)}</span>}</div>;
+  }
   return <AdBody item={item} />;
 }
 
@@ -105,7 +116,8 @@ function Result({ item }) {
 function ChangeItem({ item, checked, onCheck, busy, onEdit, onAction, onRevert }) {
   const meta = [`${item.createdBy ?? ''} ${SOURCE_LABEL[item.source] === 'Claude 提议' ? '经 Claude ' : ''}提议于 ${short(item.createdAt)}`,
     item.decidedAt ? `${item.decidedBy ?? ''} ${item.status === 'rejected' ? '拒绝' : '确认'}于 ${short(item.decidedAt)}` : ''].filter(Boolean).join(' · ');
-  const canRevert = ['applied', 'submitted', 'not_applied'].includes(item.status) && item.kind !== 'ad_negative' && item.before != null;
+  const canRevert = ['applied', 'submitted', 'not_applied'].includes(item.status) && item.kind !== 'ad_negative'
+    && (item.before != null || item.kind === 'listing_sale_price');
   return <article className={`chg-item s-${item.status}${onCheck ? ' checkable' : ''}`}>
     {onCheck && <input type="checkbox" checked={checked} disabled={busy} onChange={() => onCheck(item.id)} aria-label={`选择第 ${item.id} 条：${item.kindLabel} ${targetText(item)}`} />}
     <div className="chg-main">
@@ -135,18 +147,26 @@ function ChangeItem({ item, checked, onCheck, busy, onEdit, onAction, onRevert }
 }
 
 function EditDialog({ item, onClose, onSaved }) {
+  const sale = item.kind === 'listing_sale_price';
   const initial = item.kind === 'listing_bullets' ? item.after.join('\n')
-    : String(item.kind === 'ad_bid' ? item.after.bid : item.kind === 'ad_budget' ? item.after.budget : item.after);
+    : sale ? String(item.after?.price ?? 0)
+      : String(item.kind === 'ad_bid' ? item.after.bid : item.kind === 'ad_budget' ? item.after.budget : item.after);
   const [text, setText] = useState(initial), [busy, setBusy] = useState(false), [error, setError] = useState('');
-  const numeric = NUMERIC.has(item.kind);
-  const value = item.kind === 'listing_bullets' ? text.split('\n').map((line) => line.trim()).filter(Boolean) : numeric ? Number(text) : text;
+  const [start, setStart] = useState(item.after?.start ?? ''), [end, setEnd] = useState(item.after?.end ?? '');
+  const numeric = NUMERIC.has(item.kind) || sale;
+  const value = item.kind === 'listing_bullets' ? text.split('\n').map((line) => line.trim()).filter(Boolean)
+    : sale ? { price: Number(text), start, end } : numeric ? Number(text) : text;
   const count = item.kind === 'listing_title' ? `${norm(text).length} / 200 字符` : item.kind === 'listing_search_terms' ? `${byteLength(norm(text))} / 249 字节`
-    : item.kind === 'listing_bullets' ? `${value.length} 条，每行一条` : '美元';
+    : item.kind === 'listing_bullets' ? `${value.length} 条，每行一条` : sale ? `美元，原价 ${money(item.target?.listPrice)}，填 0 表示取消促销价` : '美元';
   async function save() {
     setBusy(true); setError('');
     try { await api.editChange(item.id, value); onSaved(); } catch (e) { setError(e.message); setBusy(false); }
   }
   return <AppDialog title={`修改${item.kindLabel}：${targetText(item)}`} wide busy={busy} onClose={onClose}>
+    {sale && <div className="row wrap chg-sale-dates">
+      <label className="row">开始<input className="inp" type="date" value={start} disabled={busy} onChange={(e) => setStart(e.target.value)} /></label>
+      <label className="row">结束<input className="inp" type="date" value={end} disabled={busy} onChange={(e) => setEnd(e.target.value)} /></label>
+    </div>}
     {numeric ? <input className="inp" type="number" step="0.01" min="0" value={text} disabled={busy} aria-label="新值" onChange={(e) => setText(e.target.value)} />
       : <textarea className="inp chg-edit" rows={item.kind === 'listing_bullets' ? 12 : 4} value={text} disabled={busy} aria-label="新值" onChange={(e) => setText(e.target.value)} />}
     <p className="hint">{count}。保存后会重新检查，仍需勾选确认才会执行。</p>
