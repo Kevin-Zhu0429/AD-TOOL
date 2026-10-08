@@ -26,6 +26,8 @@ export const api = {
   competitorOverview: () => request('/competitors/overview'),
   competitorStyle: (key) => request(`/competitors/style?key=${encodeURIComponent(key)}`),
   competitorHealth: () => request('/competitors/health'),
+  intelActions: () => request('/intel/actions'),
+  intelFix: (code, skus) => request('/intel/fix', { method: 'POST', body: { code, skus } }),
   competitorStatus: () => request('/competitors/status'),
   syncCompetitors: (kind) => request('/competitors/sync', { method: 'POST', body: { kind } }),
   addCompetitors: (styleKey, asins) => request('/competitors', { method: 'POST', body: { styleKey, asins } }),

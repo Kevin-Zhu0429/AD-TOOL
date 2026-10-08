@@ -126,7 +126,7 @@ export default function App() {
     ) : page === 'library' && !isPet ? (
       <LibraryPage key={market} market={market} />
     ) : page === 'products' && user.productIntel ? (
-      isPet ? <PetIntelPage key={market} market={market} /> : <ProductPage key={market} market={market} />
+      isPet ? <PetIntelPage key={market} market={market} owner={user.role === 'owner'} /> : <ProductPage key={market} market={market} />
     ) : page === 'priceStrategy' && isPet ? (
       <PriceStrategyPage />
     ) : page === 'salesStats' && isPet ? (

@@ -483,6 +483,18 @@ export async function fetchCatalogDetails(account, asins, gateway = amazonGatewa
 }
 
 /**
+ * 目录关键词搜索(和前台搜索结果不完全一样,但同类商品排在前面),用来给款式自动找对手。
+ * 一次最多 20 个,不含广告位;找不到返回空数组。
+ */
+export async function searchCatalogItems(account, keywords, gateway = amazonGateway, pageSize = 20) {
+  const payload = await gateway.request(account, REGION, 'GET', '/catalog/2022-04-01/items', { query: {
+    keywords: clean(keywords), marketplaceIds: US_MARKETPLACE,
+    includedData: 'summaries,attributes,images,salesRanks,relationships,productTypes', pageSize,
+  } });
+  return (Array.isArray(payload?.items) ? payload.items : []).map(catalogDetail).filter((detail) => detail.asin);
+}
+
+/**
  * 竞品价格接口(getItemOffersBatch)每 10 秒 1 次,一次 20 个 ASIN。测试调成 0。
  */
 export const pricingTiming = { batchGapMs: 10_500 };

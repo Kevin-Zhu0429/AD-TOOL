@@ -6,7 +6,7 @@
 .pet-intel h2 { font-size: 17px; margin: 0; }
 .pet-intel h3 { font-size: 14.5px; margin: 0 0 10px; }
 .pet-intel h3 .hint, .pet-intel h2 .hint { font-weight: 400; font-size: 12px; margin-left: 6px; }
-.intel-tabs { margin: 10px 0 14px; }
+.intel-tabs { margin: 10px 0 14px; flex-wrap: wrap; }
 .intel-sync { display: grid; gap: 8px; }
 .intel-sync .hint { margin: 0; }
 .intel-toolbar { gap: 12px; margin-bottom: 10px; }
@@ -118,4 +118,31 @@
   .intel-change-list .who, .intel-change-list .mono { display: none; }
   .intel-compare, .intel-mapping { grid-template-columns: 1fr; }
   .intel-toolbar form, .intel-toolbar form .inp { width: 100%; }
+}
+
+/* 本周要做:每个在卖款式一张卡,卡里按轻重列事项 */
+.intel-weekly-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 520px), 1fr)); gap: 14px; align-items: start; }
+.pet-intel .intel-weekly-card { margin: 0; display: grid; gap: 10px; }
+.intel-weekly-card > header { display: flex; gap: 10px; align-items: center; min-width: 0; }
+.intel-weekly-card > header img, .intel-thumb { width: 56px; height: 56px; flex: none; object-fit: contain; border-radius: 8px; background: var(--panel-2); }
+.intel-weekly-card > header div { display: grid; gap: 2px; min-width: 0; }
+.intel-style-name { all: unset; cursor: pointer; font-weight: 650; font-size: 15px; justify-self: start; }
+.intel-style-name:hover { color: var(--accent-text); text-decoration: underline; }
+.intel-style-name:focus-visible { outline: 2px solid var(--accent); border-radius: 4px; }
+.intel-actions { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.intel-action { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 4px 10px; align-items: start; padding: 8px 10px;
+  border-radius: 8px; background: var(--panel-2); border-left: 3px solid transparent; }
+.intel-action.high { border-left-color: var(--red-text); }
+.intel-action.medium { border-left-color: var(--amber-text); }
+.intel-action .tag { margin-top: 1px; }
+.intel-action-body { min-width: 0; display: grid; gap: 2px; }
+.intel-action-body b { font-weight: 620; font-size: 13.5px; }
+.intel-action-body p { margin: 0; font-size: 12.5px; line-height: 1.5; overflow-wrap: anywhere; }
+.intel-action-body .hint { font-size: 12px; }
+.intel-action-do { display: flex; flex-direction: column; gap: 4px; align-items: stretch; }
+.intel-none { margin: 0; }
+.intel-weekly > .hint { margin-top: 12px; }
+@media (max-width: 640px) {
+  .intel-action { grid-template-columns: auto minmax(0, 1fr); }
+  .intel-action-do { grid-column: 1 / -1; flex-direction: row; flex-wrap: wrap; }
 }
