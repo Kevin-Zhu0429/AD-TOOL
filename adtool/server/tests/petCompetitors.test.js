@@ -30,6 +30,10 @@ function fakeAmazon(world) {
   const gateway = {
     async request(account, region, method, path, { query, body } = {}) {
       calls.push({ method, path, query, body });
+      if (path === '/catalog/2022-04-01/items' && query.keywords) {
+        world.searches = [...(world.searches ?? []), query.keywords];
+        return { items: (world.search?.[query.keywords] ?? []).map((asin) => world.catalog[asin]).filter(Boolean) };
+      }
       if (path === '/catalog/2022-04-01/items') {
         return { items: query.identifiers.split(',').map((asin) => world.catalog[asin]).filter(Boolean) };
       }
@@ -44,8 +48,8 @@ function fakeAmazon(world) {
         }) };
       }
       if (path.startsWith('/listings/2021-08-01/items/')) {
-        return { attributes: { generic_keyword: [{ value: world.backend ?? 'pet mat', marketplace_id: MARKET }] },
-          issues: world.issues ?? [] };
+        return { summaries: [{ marketplaceId: MARKET, asin: 'B0OWNS0001', productType: 'PET_BED' }],
+          attributes: { generic_keyword: [{ value: world.backend ?? 'pet mat', marketplace_id: MARKET }] }, issues: world.issues ?? [] };
       }
       if (method === 'GET' && path === '/reports/2021-06-30/reports') return { reports: world.listed ?? [] };
       if (method === 'POST' && path === '/reports/2021-06-30/reports') {
@@ -71,7 +75,9 @@ function fakeAmazon(world) {
 }
 
 test('competitors are suggested from ABA, tracked daily, and changes are recorded', async (t) => {
-  const backend = await startPetTestServer();
+  // 「本周要做」按规则生成改动时读 Listing 用的假亚马逊,等 world 建好再换上
+  const changeDeps = { env: ENV };
+  const backend = await startPetTestServer({ changeDeps });
   t.after(() => backend.close());
   const { db } = backend;
   const call = async (path, cookie, body, method) => {
@@ -110,15 +116,16 @@ test('competitors are suggested from ABA, tracked daily, and changes are recorde
   const world = {
     reports: [], backend: 'pet mat', prices: { B0RIVALS01: 27.99, B0RIVALM01: 33.99, B0SOLO0001: 31.99, B0CRATE001: 25.99, B0LUXURY01: 129 },
     catalog: {
-      B0OWNS0001: catalogItem('B0OWNS0001', { parent: 'B0OWNPRNT1', brand: 'Miguel', title: 'Miguel Dog Bed Square Oxford', size: 'Small', images: 5 }),
-      B0OWNM0001: catalogItem('B0OWNM0001', { parent: 'B0OWNPRNT1', brand: 'Miguel', title: 'Miguel Dog Bed Square Oxford', size: 'Medium' }),
+      B0OWNS0001: catalogItem('B0OWNS0001', { parent: 'B0OWNPRNT1', brand: 'Miguel', title: 'Miguel Waterproof Oxford Dog Bed Rectangle Bolster', size: 'Small', images: 5 }),
+      B0OWNM0001: catalogItem('B0OWNM0001', { parent: 'B0OWNPRNT1', brand: 'Miguel', title: 'Miguel Waterproof Oxford Dog Bed Rectangle Bolster', size: 'Medium' }),
       B0OWNPAD01: catalogItem('B0OWNPAD01', { brand: 'Miguel', title: 'Crate Pad', type: 'PET_SUPPLIES' }),
-      B0RIVALS01: catalogItem('B0RIVALS01', { parent: 'B0RIVALPR1', size: 'Small', bsr: 900 }),
-      B0RIVALM01: catalogItem('B0RIVALM01', { parent: 'B0RIVALPR1', size: 'Medium', bsr: 1200 }),
-      B0RIVALPR1: catalogItem('B0RIVALPR1', { children: ['B0RIVALS01', 'B0RIVALM01'], title: 'Rival Waterproof Dog Bed Cat Bed', bsr: null, sub: null }),
-      B0SOLO0001: catalogItem('B0SOLO0001', { title: 'Solo Calming Dog Bed', brand: 'Solo', bsr: 4000 }),
+      B0RIVALS01: catalogItem('B0RIVALS01', { parent: 'B0RIVALPR1', title: 'Rival Waterproof Oxford Rectangle Dog Bed, Small', size: 'Small', bsr: 900 }),
+      B0RIVALM01: catalogItem('B0RIVALM01', { parent: 'B0RIVALPR1', title: 'Rival Waterproof Oxford Rectangle Dog Bed, Medium', size: 'Medium', bsr: 1200 }),
+      B0RIVALPR1: catalogItem('B0RIVALPR1', { children: ['B0RIVALS01', 'B0RIVALM01'], title: 'Rival Waterproof Oxford Rectangle Dog Bed Cat Bed', bsr: null, sub: null }),
+      B0SOLO0001: catalogItem('B0SOLO0001', { title: 'Solo Waterproof Rectangle Bolster Dog Bed', brand: 'Solo', bsr: 4000 }),
       B0CRATE001: catalogItem('B0CRATE001', { title: 'Crate Kennel', type: 'PET_SUPPLIES' }),
-      B0LUXURY01: catalogItem('B0LUXURY01', { title: 'Luxury Dog Bed', brand: 'Lux' }),
+      B0LUXURY01: catalogItem('B0LUXURY01', { title: 'Luxury Oxford Bolster Dog Bed', brand: 'Lux' }),
+      B0PADMAT01: catalogItem('B0PADMAT01', { title: 'Fluffy Plush Crate Pad Mat for Kennel', brand: 'Padco' }),
     },
     searchTerms: { reportSpecification: { reportType: 'GET_BRAND_ANALYTICS_SEARCH_TERMS_REPORT', reportOptions: { reportPeriod: 'WEEK' } },
       dataByDepartmentAndSearchTerm: [
@@ -127,6 +134,7 @@ test('competitors are suggested from ABA, tracked daily, and changes are recorde
         { departmentName: 'Amazon.com', searchTerm: 'dog bed', searchFrequencyRank: 50, clickedAsin: 'B0LUXURY01', clickedItemName: 'Lux', clickShareRank: 3, clickShare: 0.08, conversionShare: 0.05 },
         { departmentName: 'Amazon.com', searchTerm: 'cat bed', searchFrequencyRank: 300, clickedAsin: 'B0RIVALM01', clickedItemName: 'Rival M', clickShareRank: 1, clickShare: 0.15, conversionShare: 0.2 },
         { departmentName: 'Amazon.com', searchTerm: 'cat bed', searchFrequencyRank: 300, clickedAsin: 'B0SOLO0001', clickedItemName: 'Solo', clickShareRank: 2, clickShare: 0.1, conversionShare: 0.1 },
+        { departmentName: 'Amazon.com', searchTerm: 'cat bed', searchFrequencyRank: 300, clickedAsin: 'B0PADMAT01', clickedItemName: 'Pad', clickShareRank: 3, clickShare: 0.09, conversionShare: 0.1 },
         { departmentName: 'Amazon.com', searchTerm: 'dog crate', searchFrequencyRank: 90, clickedAsin: 'B0CRATE001', clickedItemName: 'Crate', clickShareRank: 1, clickShare: 0.3, conversionShare: 0.3 },
         { departmentName: 'Amazon.com', searchTerm: 'unrelated term', searchFrequencyRank: 1, clickedAsin: 'B0NOISE001', clickedItemName: 'x', clickShareRank: 1, clickShare: 0.9, conversionShare: 0.9 },
       ] },
@@ -139,11 +147,11 @@ test('competitors are suggested from ABA, tracked daily, and changes are recorde
   assert.equal(suggestion.week, '2026-09-26');
   // 记下各段耗时:亚马逊生成 42 分钟,扫过的行数
   assert.equal(suggestion.timing.amazonMin, 42);
-  assert.equal(suggestion.timing.records, 7);
+  assert.equal(suggestion.timing.records, 8);
   assert.equal(world.reports[0].reportType, 'GET_BRAND_ANALYTICS_SEARCH_TERMS_REPORT');
   assert.equal(world.reports[0].dataStartTime.slice(0, 10), '2026-09-20');
   // dog crate 我们没有点击,不算核心词;无关的词不留
-  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM pet_search_term_top').get().n, 5);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM pet_search_term_top').get().n, 6);
   const suggested = db.prepare("SELECT style_key, asin, score, evidence_json FROM pet_competitors WHERE status='suggested' ORDER BY score DESC").all();
   // 两个子体合成一个家族;自家 ASIN 不算;
   // 贵一倍以上的降权但仍然推荐
@@ -232,12 +240,60 @@ test('competitors are suggested from ABA, tracked daily, and changes are recorde
   const changes = (await call('/competitors/overview', owner)).data.changes;
   assert.ok(changes.some((change) => change.kind === 'price_down' && change.styleKey === 'RR22002' && change.label === '降价'));
 
-  // Listing 体检:标题含品牌,但 cat bed 没写、图片少
+  // Listing 体检:标题含品牌,但有量的 cat bed 没写(建议改)、图片少
   const health = (await call('/competitors/health', owner)).data.rows;
   const small = health.find((row) => row.asin === 'B0OWNS0001');
-  assert.ok(small.checks.some((check) => check.level === 'red' && /cat bed/.test(check.text)));
+  assert.ok(small.checks.some((check) => check.level === 'yellow' && check.code === 'terms' && /cat bed/.test(check.text)));
+  assert.ok(!small.checks.some((check) => check.level === 'red'));
   assert.ok(small.checks.some((check) => /图片 5 张/.test(check.text)));
   assert.ok(!small.checks.some((check) => /品牌/.test(check.text)));
+
+  // 本周要做:断货、后台搜索词超字节(可一键生成改动)、有量的词没写、对手降价和没购物车
+  db.prepare("UPDATE sku_items SET stock=0 WHERE sku='RR22002BKS'").run();
+  db.prepare("UPDATE sku_items SET stock=40 WHERE sku='RR22002BKM'").run();
+  const longBackend = Array.from({ length: 40 }, (_, index) => `word${index}`).join(' ') + ' waterproof oxford word1';
+  db.prepare('UPDATE pet_catalog_items SET backend_terms=? WHERE asin=?').run(longBackend, 'B0OWNS0001');
+  const weekly = (await call('/intel/actions', owner)).data;
+  assert.deepEqual(weekly.styles.map((style) => style.key), ['RR22002']);
+  const todo = Object.fromEntries(weekly.styles[0].actions.map((action) => [action.kind, action]));
+  assert.match(todo.stockout.detail, /S Black（30 天卖 20 件，没有在途）/);
+  assert.equal(todo.stockout.level, 'high');
+  assert.deepEqual(todo.backend_bytes.fix, { type: 'rule', code: 'backend_trim', label: '生成瘦身改动', skus: ['RR22002BKS'] });
+  assert.match(todo.term_missing.detail, /cat bed/);
+  assert.match(todo.term_missing.fix.prompt, /RR22002/);
+  assert.match(todo.competitor_price_down.detail, /\$27\.99 → \$24\.99/);
+  assert.match(todo.competitor_out.title, /1 个对手没有购物车/);
+  assert.equal(weekly.inactive, 1);
+  // 一键生成:标题里已有的词、重复词去掉,截到 249 字节以内,放进待确认
+  changeDeps.gateway = fakeAmazon(world).gateway;
+  assert.equal((await call('/intel/fix', (await call('/auth/login', null, { username: 'pet-user', password: 'pet-test-password' })).cookie, { code: 'backend_trim', skus: ['RR22002BKS'] })).status, 403);
+  const fixed = (await call('/intel/fix', owner, { code: 'backend_trim', skus: ['RR22002BKS'] })).data;
+  assert.equal(fixed.created.length, 1);
+  const proposal = db.prepare('SELECT after_json, source FROM pet_change_proposals WHERE id=?').get(fixed.created[0].id);
+  assert.equal(proposal.source, 'intel');
+  const trimmed = JSON.parse(proposal.after_json);
+  assert.ok(Buffer.byteLength(trimmed) <= 249);
+  assert.ok(!/waterproof|oxford/.test(trimmed));
+  assert.equal(trimmed.split(' ').filter((word) => word === 'word1').length, 1);
+
+  // 自动挑对手:目录搜出来的同类商品挂上;笼垫、自家的不要
+  world.catalog.B0AUTO0001 = catalogItem('B0AUTO0001', { title: 'Autoz Waterproof Oxford Rectangle Bolster Dog Bed', brand: 'Autoz', bsr: 2000 });
+  world.prices.B0AUTO0001 = 31.99;
+  world.search = { 'dog bed': ['B0AUTO0001', 'B0PADMAT01', 'B0OWNS0001'] };
+  const fresh = fakeAmazon(world);
+  const day3 = await syncCompetitors(1, fresh.gateway, ENV, () => new Date('2026-10-03T18:00:00Z'));
+  assert.equal(day3.autoAdded, 1);
+  assert.deepEqual(world.searches.slice(-2), ['dog bed', 'cat bed']);
+  const autoRow = db.prepare("SELECT status, source, evidence_json FROM pet_competitors WHERE asin='B0AUTO0001'").get();
+  assert.deepEqual([autoRow.status, autoRow.source], ['active', 'auto']);
+  assert.ok(JSON.parse(autoRow.evidence_json).relevance >= 0.25);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM pet_competitors WHERE asin IN ('B0PADMAT01','B0OWNS0001')").get().n, 0);
+  // 自动挂上的移出后记成忽略,不会再挂回来
+  const autoId = db.prepare("SELECT id FROM pet_competitors WHERE asin='B0AUTO0001'").get().id;
+  assert.equal((await call(`/competitors/${autoId}`, owner, undefined, 'DELETE')).status, 200);
+  assert.equal(db.prepare('SELECT status FROM pet_competitors WHERE id=?').get(autoId).status, 'ignored');
+  await syncCompetitors(1, fresh.gateway, ENV, () => new Date('2026-10-04T18:00:00Z'));
+  assert.equal(db.prepare("SELECT status FROM pet_competitors WHERE asin='B0AUTO0001'").get().status, 'ignored');
 
   // 忽略已加入的竞品、移出监控
   assert.equal((await call(`/competitors/${ids.B0SOLO0001}`, owner, { status: 'ignored' }, 'PUT')).status, 200);
@@ -260,6 +316,19 @@ test('stream scanner, scoring and text helpers', async () => {
   const filtered = createArrayRecordScanner((record) => kept.push(record.clickedAsin), { keep: (raw) => raw.includes('cat bed') });
   filtered(text);
   assert.deepEqual(kept, ['B000000002']);
+
+  // 同类商品:牛津布防水窝和笼垫、毛绒圆窝分得开
+  const { relevance } = await import('../src/petCompetitors.js');
+  const own = 'Miguel Outdoor Waterproof Cat Bed with Side, Oxford Durable Dog Bed for Small Dog Easy Clean, All Weather Rectangle Medium Pet Bed Bolster';
+  assert.ok(relevance(own, 'Waterproof Outdoor Dog Bed with Bolster, Durable Oxford Fabric Rectangle Pet Bed with Removable Cover', 'miguel') >= 0.25);
+  assert.ok(relevance(own, 'Waterproof Dog Crate Bed Pad, Washable Reversible Outdoor Wipeable Dog Bed', 'miguel') < 0.25);
+  assert.equal(relevance(own, 'Calming Donut Cat Bed Round Fluffy Plush Faux Fur', 'miguel'), 0);
+  const { trimBackend, brandTitle } = await import('../src/petIntelActions.js');
+  assert.equal(trimBackend('Dog dog crate mat crate oxford', 'Oxford Dog Bed'), 'crate mat');
+  assert.ok(Buffer.byteLength(trimBackend(Array.from({ length: 80 }, (_, index) => `kw${index}`).join(' '))) <= 249);
+  assert.equal(brandTitle('Dog Bed', 'Miguel'), 'Miguel Dog Bed');
+  assert.equal(brandTitle('Miguel Dog Bed', 'Miguel'), null);
+  assert.equal(brandTitle('x'.repeat(195), 'Miguel'), null);
 
   assert.ok(termCovered('dog beds', 'Orthopedic Dog Bed for Large Dogs'));
   assert.ok(!termCovered('cat bed', 'Orthopedic Dog Bed'));

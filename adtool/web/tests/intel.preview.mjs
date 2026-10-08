@@ -101,8 +101,11 @@ try {
     q.run(r0, term, mp * 20, mp * 300, mp * 8, mp, ac * 30, ac, ap); q.run(r1, term, mp * 20, mp * 300, mp * 8, mp, ac * 10, Math.round(ac / 3), Math.round(ap / 3));
   }
   await suggestCompetitors(1, gateway, ENV, () => new Date('2026-10-02T18:00:00Z'));
-  // 前三个推荐已加入,留 BFPETHOME / Lesure 作推荐
-  db.prepare(`UPDATE pet_competitors SET status='active' WHERE asin IN ('B0BEDSURE0','B0FURHAVEN','B0WESTHOME')`).run();
+  // 三个对手已在监控
+  for (const asin of ['B0BEDSURE0', 'B0FURHAVEN', 'B0WESTHOME']) {
+    db.prepare(`INSERT INTO pet_competitors (style_key, asin, status, source) VALUES ('RR22002', ?, 'active', 'manual')
+      ON CONFLICT(style_key, asin) DO UPDATE SET status='active'`).run(asin);
+  }
   for (let d = 12; d >= 0; d -= 1) {
     const day = new Date(Date.UTC(2026, 9, 2, 18) - d * 86400000);
     for (const asin of Object.keys(prices)) if (asin.startsWith('B0BEDSUR')) prices[asin] = Number((prices[asin] + (d === 1 ? -3 : 0)).toFixed(2));
@@ -112,7 +115,12 @@ try {
   }
   const metrics = [];
   for (const rival of rivals) SIZES.forEach((_, i) => metrics.push({ asin: `${rival.parent.slice(0, 8)}C${i}`, parentAsin: rival.parent, rating: rival.brand === 'Bedsure' ? 4.5 : 4.4, reviews: rival.brand === 'Bedsure' ? 48211 : 15320, units: Math.round(9000 / rival.bsr * 120 / (i + 1)) }));
+  SIZES.forEach((_, i) => metrics.push({ asin: `B0OWNRR0${i}${i}`, parentAsin: 'B0OWNRRPAR', rating: 3.9, reviews: 212, units: 120 }));
   saveMetrics(metrics, '2026-09', 'sellersprite.xlsx', 1);
+  // 「本周要做」用的库存和后台搜索词
+  const stock = db.prepare('UPDATE sku_items SET stock=?, transit=? WHERE sku=?');
+  stock.run(0, 0, 'RR22002BKS'); stock.run(30, 120, 'RR22002BKM'); stock.run(180, 0, 'RR22002BKL'); stock.run(95, 0, 'RR22002BKXL'); stock.run(40, 0, 'RR26001BRM');
+  db.prepare('UPDATE pet_catalog_items SET backend_terms=? WHERE asin=?').run(Array.from({ length: 30 }, (_, i) => `dog kennel bed outdoor patio mat${i}`).join(' '), 'B0OWNRR000');
 
   vite = await createServer({ root, logLevel: 'error', server: { host: '127.0.0.1', port: 0, proxy: { '/api': { target: backend.url, changeOrigin: true } } } });
   await vite.listen();
@@ -123,6 +131,9 @@ try {
   await page.getByLabel('用户名').fill('pet-owner'); await page.getByLabel('密码').fill('pet-test-password');
   await page.getByRole('button', { name: '登录' }).click();
   await page.locator('.topnav').getByRole('button', { name: '产品情报', exact: true }).click();
+  await page.locator('.intel-weekly-card').first().waitFor();
+  await page.screenshot({ path: `${output}/产品情报-本周要做.png`, fullPage: true });
+  await page.getByRole('tab', { name: '竞品监控' }).click();
   await page.getByText('竞品对比').waitFor();
   await page.screenshot({ path: `${output}/产品情报-竞品监控.png`, fullPage: true });
   await page.locator('.intel-table tbody tr').filter({ hasText: 'Bedsure' }).first().getByRole('button', { name: /^4/ }).click();
@@ -140,6 +151,9 @@ try {
   await page.getByRole('tab', { name: '竞品监控' }).click();
   await page.getByText('竞品对比').waitFor();
   await page.screenshot({ path: `${output}/产品情报-手机.png` });
+  await page.getByRole('tab', { name: '本周要做' }).click();
+  await page.locator('.intel-weekly-card').first().waitFor();
+  await page.screenshot({ path: `${output}/产品情报-本周要做-手机.png`, fullPage: true });
   // 推荐任务在等亚马逊生成整站报告时的进度卡片
   await page.setViewportSize({ width: 1600, height: 1100 });
   const running = { total: 4, done: 0, step: '搜索词报告（09-20~09-26 那周）', stage: 'processing', retryAt: null, detail: '亚马逊正在生成整站报告，已等 27 分钟（常要 30–90 分钟）' };

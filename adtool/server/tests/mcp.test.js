@@ -102,7 +102,7 @@ function seed(db) {
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
   item.run('B0RIVAL001', 'Rival Dog Bed for Large Dogs', 'Rival', '["Soft","Washable","Warm","Big","Cheap"]', 'Large', 29.99, 50, 8, null);
   item.run('B000000001', 'PawNest Orthopedic Dog Bed Large', 'PawNest', '["Memory foam","Washable cover","Non-slip"]', 'Large', 39.99, 120, 5, 'calming dog bed');
-  item.run('B000000002', 'Orthopedic Bed XL', 'PawNest', '["Memory foam"]', 'X-Large', 49.99, 300, 4, '');
+  item.run('B000000002', 'Orthopedic Bed XL', 'PawNest', '["Memory foam"]', 'X-Large', 49.99, 300, 4, 'filler '.repeat(40).trim());
   db.prepare(`INSERT INTO pet_competitor_changes (day, family_asin, asin, kind, before_value, after_value)
     VALUES ('2026-09-20', 'B0RIVAL001', 'B0RIVAL001', 'price_down', '34.99', '29.99')`).run();
   db.prepare(`INSERT INTO pet_competitor_metrics (asin, month, rating, reviews, units) VALUES ('B0RIVAL001', '2026-08', 4.5, 1200, 3000)`).run();
@@ -291,10 +291,11 @@ test('Claude connector: OAuth login, read-only tools and token lifecycle', async
     assert.match(unknown.content[0].text, /现有款式:.*圆窝/);
 
     const health = await call('get_listing_health');
-    // XL 的标题里没有品牌,必须改;L 比同尺码竞品贵 33%;CAT-S 还没同步目录
+    // XL 后台搜索词超 249 字节,必须改;标题里没有品牌是建议改;L 比同尺码竞品贵 33%;CAT-S 还没同步目录
     assert.deepEqual(health.rows.map((row) => row.asin), ['B000000002', 'B000000001', 'B000000003']);
     assert.deepEqual([health.withRed, health.withYellow], [1, 2]);
-    assert.ok(health.rows[0].checks.some((check) => check.level === 'red' && check.text.includes('PawNest')));
+    assert.ok(health.rows[0].checks.some((check) => check.level === 'red' && check.text.includes('249')));
+    assert.ok(health.rows[0].checks.some((check) => check.level === 'yellow' && check.text.includes('PawNest')));
     assert.ok(health.rows[1].checks.some((check) => check.text.includes('高 33%')));
     assert.deepEqual((await call('get_listing_health', { level: 'red' })).rows.map((row) => row.asin), ['B000000002']);
 

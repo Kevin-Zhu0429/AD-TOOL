@@ -187,7 +187,8 @@ export function listingHealthReport({ style, level = 'all', limit = 100 } = {}) 
     && (level === 'all' || row.checks.some((check) => check.level === 'red' || (level === 'yellow' && check.level === 'yellow'))));
   const count = (wanted) => rows.filter((row) => row.checks.some((check) => check.level === wanted)).length;
   return { today, total: rows.length, withRed: count('red'), withYellow: count('yellow'), rows: rows.slice(0, limit),
-    notes: ['red = 必须改,yellow = 建议改。检查项:标题含品牌、标题 80–200 字符、五点 5 条、图片 7 张以上且不少于竞品中位数、前 3 大核心词和其余核心词是否写进文案、后台搜索词不超过 249 字节、亚马逊报的错误和警告、售价是否比同尺码竞品中位价高 20% 以上。',
+    notes: ['red = 影响展示或收录,必须改:亚马逊报错(主图被屏蔽、五点违规等)、后台搜索词超过 249 字节(整段不生效)、标题超过 200 字符、没有五点或图片。'
+      + 'yellow = 建议改:标题没品牌、标题短于 80 字符、五点不足 5 条、图片少于 7 张或少于竞品中位数、有量的核心词(近 4 周全市场成交 20 单以上)没写进文案、亚马逊警告、售价比同尺码竞品中位价高 20% 以上。每条检查带 code。',
       '文案数据来自每天的目录同步,不是实时;要看实时 Listing 用 get_listing。'] };
 }
 

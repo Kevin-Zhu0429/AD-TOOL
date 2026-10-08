@@ -10,7 +10,7 @@ import { isPet, PET_SHOP_ID } from './profile.js';
 import { completeWeeks } from './petAbaSync.js';
 import {
   amazonGateway, createArrayRecordScanner, fetchCatalogDetails, fetchItemOffers, fetchOwnListing,
-  pacificDay, petSpConfig, runReport, shiftDay,
+  pacificDay, petSpConfig, runReport, searchCatalogItems, shiftDay,
 } from './petAmazon.js';
 
 const SEARCH_TERMS_REPORT = 'GET_BRAND_ANALYTICS_SEARCH_TERMS_REPORT';
@@ -23,6 +23,11 @@ const SUGGEST_PER_STYLE = 10;
 const MAX_CHILDREN = 60;
 // 快照保留天数
 const KEEP_DAYS = 400;
+// 每个在卖款式自动挂几个对手;每次每日同步最多给几个款式挑
+const AUTO_TARGET = 5;
+const AUTO_STYLES = 12;
+// 标题相似度低于这个不算同类商品
+const MIN_RELEVANCE = 0.25;
 
 const clean = (value) => String(value ?? '').trim();
 const asinOf = (value) => {
@@ -57,9 +62,12 @@ export function ownStyles(today = pacificDay(new Date())) {
   const units = new Map(db.prepare(`SELECT lower(sku) AS sku, SUM(CASE WHEN day>=? THEN units ELSE 0 END) AS u7, SUM(units) AS u30
     FROM pet_daily_sales WHERE day>=? AND day<? GROUP BY lower(sku)`).all(shiftDay(today, -7), shiftDay(today, -30), today)
     .map((row) => [row.sku, row]));
+  // 亚马逊自动生成的 SKU(AMAZON.FOUND.<ASIN>)跟同一个 ASIN 的正常 SKU 算一个款式
+  const keyByAsin = new Map();
+  for (const row of rows) if (row.asin && !/^amazon\.found\./i.test(row.sku) && !keyByAsin.has(row.asin)) keyByAsin.set(row.asin, styleKeyOf(row));
   const styles = new Map();
   for (const row of rows) {
-    const key = styleKeyOf(row);
+    const key = (/^amazon\.found\./i.test(row.sku) && !clean(row.style) && keyByAsin.get(row.asin)) || styleKeyOf(row);
     if (!styles.has(key)) styles.set(key, { key, skus: [], asins: [], sizes: new Set(), units7: 0, units30: 0, asinUnits: new Map() });
     const style = styles.get(key);
     const sold = units.get(row.sku.toLowerCase());
@@ -136,9 +144,37 @@ export function coverageOf(term, { title, bullets = [], backend = '' }) {
   return null;
 }
 
+// ---------- 同类商品判断 ----------
+
+// 比标题时不看的词:品类通用词、尺码、颜色、卖点套话
+const GENERIC_WORDS = new Set(('dog cat bed pet puppy puppie kitten for with and the of to in on or by from up size sized small medium large '
+  + 'extra inch inche lbs pound black grey gray brown green blue beige white pink red khaki charcoal navy dark light cream olive coffee tan '
+  + 'best new pack set piece pcs one two cover removable washable machine wash easy clean all soft comfortable comfy durable premium '
+  + 'quality perfect great gift anti slip non skid bottom design indoor use home house type').split(' '));
+// 形态词:对方是笼垫、垫子、圆窝、高架床而我们不是,多半不是同一种东西
+const FORM_WORDS = ['crate', 'mat', 'pad', 'kennel', 'cot', 'elevated', 'raised', 'donut', 'round', 'cave', 'hooded', 'tent',
+  'sofa', 'couch', 'blanket', 'heated', 'heating', 'cooling', 'stair', 'step', 'ramp'];
+
+/** 标题里有区分度的词(去掉通用词、数字、品牌) */
+export function titleWords(title, brand = '') {
+  const skip = clean(brand).toLowerCase();
+  return new Set(wordsOf(title).filter((word) => word.length > 2 && !/\d/.test(word) && !GENERIC_WORDS.has(word) && word !== skip));
+}
+
+/** 两个标题是不是同类商品:有区分度的词的重合度(0–1);形态不同的打对折 */
+export function relevance(ownTitle, otherTitle, brand = '') {
+  const own = titleWords(ownTitle, brand), other = titleWords(otherTitle, brand);
+  if (!own.size || !other.size) return 0;
+  let common = 0;
+  for (const word of own) if (other.has(word)) common += 1;
+  const score = common / Math.sqrt(own.size * other.size);
+  const conflict = FORM_WORDS.some((word) => other.has(word) && !own.has(word));
+  return round(conflict ? score / 2 : score, 3);
+}
+
 // ---------- 目录缓存 ----------
 
-function catalogMap(asins) {
+export function catalogMap(asins) {
   const list = [...new Set(asins.filter(Boolean))];
   const result = new Map();
   for (let index = 0; index < list.length; index += 500) {
@@ -298,6 +334,94 @@ export function recordSnapshots(families, today) {
 }
 
 /**
+ * 自动给在卖款式挂对手,每个款式凑够 AUTO_TARGET 个(手动加的、已有的都算)。
+ * 候选:款式最大的两个核心词在目录里搜出来的商品 + 每周推荐里这个款式的候选。
+ * 只要:不是自家、品牌不同、商品类型相同、标题相似度够、价格在我们的一半到两倍之间;按相似度 × 排名挑。
+ * 被删掉(忽略)的不会再挂回来。
+ */
+export async function autoPickCompetitors(account, gateway, today, styles, onStep = () => {}) {
+  const ownAsins = new Set(styles.flatMap((style) => style.asins));
+  const rows = db.prepare('SELECT style_key, asin, status FROM pet_competitors').all();
+  const activeCount = new Map();
+  for (const row of rows) if (row.status === 'active') activeCount.set(row.style_key, (activeCount.get(row.style_key) ?? 0) + 1);
+  const targets = styles.filter((style) => style.units30 > 0 && style.asins.length && (activeCount.get(style.key) ?? 0) < AUTO_TARGET)
+    .slice(0, AUTO_STYLES);
+  if (!targets.length) return { styles: 0, added: 0 };
+  // 自家商品的标题、类型:目录缓存里没有的现查
+  const own = catalogMap([...ownAsins]);
+  const missing = [...ownAsins].filter((asin) => !own.get(asin)?.title);
+  if (missing.length) {
+    const fetched = await fetchCatalogDetails(account, missing, gateway);
+    saveCatalog(fetched);
+    for (const [asin, row] of catalogMap([...fetched.keys()])) own.set(asin, row);
+  }
+  const ownBrands = new Set([...own.values()].map((row) => clean(row.brand).toLowerCase()).filter(Boolean));
+  const listingPrice = new Map(db.prepare(`SELECT upper(asin) AS asin, MIN(price) AS price FROM pet_listing_cache
+    WHERE asin IS NOT NULL AND price IS NOT NULL GROUP BY upper(asin)`).all().map((row) => [row.asin, row.price]));
+  const upsert = db.prepare(`INSERT INTO pet_competitors (style_key, asin, status, source, score, evidence_json)
+    VALUES (?, ?, 'active', 'auto', ?, ?)
+    ON CONFLICT(style_key, asin) DO UPDATE SET status='active', source='auto', score=excluded.score,
+      evidence_json=excluded.evidence_json, updated_at=datetime('now','localtime') WHERE pet_competitors.status='suggested'`);
+  let added = 0;
+  for (const [index, style] of targets.entries()) {
+    onStep(`给「${style.key}」挑对手 ${index + 1}/${targets.length}`);
+    const lead = [...style.asins].sort((a, b) => (style.asinUnits.get(b) ?? 0) - (style.asinUnits.get(a) ?? 0))
+      .map((asin) => own.get(asin)).find((row) => row?.title);
+    if (!lead) continue;
+    const brand = clean(lead.brand).toLowerCase();
+    const taken = new Set(rows.filter((row) => row.style_key === style.key && row.status !== 'suggested').map((row) => row.asin));
+    const stylePrice = median(style.asins.map((asin) => listingPrice.get(asin)));
+    // 候选池:目录搜索 + 推荐
+    const pool = new Map();
+    const terms = coreTerms(style.asins, 10).filter((term) => !ownBrands.has(term.term.split(' ')[0]));
+    for (const term of terms.slice(0, 2)) {
+      let found = [];
+      try { found = await searchCatalogItems(account, term.term, gateway); } catch { found = []; }
+      for (const detail of found) if (!pool.has(detail.asin)) pool.set(detail.asin, { detail, term: term.term, via: 'search' });
+    }
+    const suggested = rows.filter((row) => row.style_key === style.key && row.status === 'suggested').map((row) => row.asin);
+    const needDetails = suggested.filter((asin) => !pool.has(asin));
+    if (needDetails.length) {
+      for (const [asin, detail] of await fetchCatalogDetails(account, needDetails, gateway)) pool.set(asin, { detail, term: null, via: 'aba' });
+    }
+    // 收成家族,过滤
+    const families = new Map();
+    for (const { detail, term, via } of pool.values()) {
+      const family = detail.parentAsin ?? detail.asin;
+      if (ownAsins.has(detail.asin) || ownAsins.has(family) || taken.has(family) || taken.has(detail.asin)) continue;
+      const otherBrand = clean(detail.brand).toLowerCase();
+      if (otherBrand && (otherBrand === brand || ownBrands.has(otherBrand))) continue;
+      if (lead.product_type && detail.productType && detail.productType !== lead.product_type) continue;
+      const score = relevance(lead.title, detail.title, brand);
+      if (score < MIN_RELEVANCE) continue;
+      const current = families.get(family);
+      if (!current || score > current.relevance) families.set(family, { family, detail, term, via, relevance: score });
+    }
+    let candidates = [...families.values()].sort((a, b) => b.relevance - a.relevance).slice(0, 20);
+    let offers = new Map();
+    try { offers = await fetchItemOffers(account, candidates.map((item) => item.detail.asin), gateway); } catch { offers = new Map(); }
+    candidates = candidates.map((item) => ({ ...item, price: offers.get(item.detail.asin)?.price ?? null }))
+      .filter((item) => !(item.price && stylePrice && (item.price > stylePrice * 2 || item.price < stylePrice / 2)));
+    // 相似度为主,排名靠前的优先(BSR 1 万比 10 万好)
+    const popularity = (bsr) => (bsr ? 1 / Math.log10(bsr + 10) : 0.15);
+    candidates.sort((a, b) => b.relevance * popularity(b.detail.bsr) - a.relevance * popularity(a.detail.bsr));
+    const picked = candidates.slice(0, AUTO_TARGET - (activeCount.get(style.key) ?? 0));
+    if (!picked.length) continue;
+    db.transaction(() => {
+      for (const item of picked) {
+        const result = upsert.run(style.key, item.family, item.relevance, JSON.stringify({
+          auto: true, via: item.via, term: item.term, relevance: item.relevance, title: item.detail.title, brand: item.detail.brand,
+          image: item.detail.mainImage, price: item.price, stylePrice, bsr: item.detail.bsr,
+        }));
+        added += result.changes;
+      }
+    })();
+    saveCatalog(new Map(picked.map((item) => [item.detail.asin, item.detail])), offers);
+  }
+  return { styles: targets.length, added };
+}
+
+/**
  * 每天同步一次:竞品家族 → 子体目录 → 竞品价格 → 自家 Listing(后台搜索词、问题)→ 快照和变化。
  * 价格接口要「定价」角色,没有也不影响其它数据,只记下原因。
  */
@@ -307,10 +431,20 @@ export function syncCompetitors(actorId = null, gateway = amazonGateway, env = p
     const today = pacificDay(now());
     const styles = ownStyles(today);
     const ownAsins = [...new Set(styles.flatMap((style) => style.asins))];
-    let tracked = db.prepare("SELECT id, style_key, asin FROM pet_competitors WHERE status='active'").all();
-    if (!tracked.length && !ownAsins.length) throw Object.assign(new Error('还没有竞品,SKU 库里也没有 ASIN'), { status: 400 });
-    const progress = Object.assign(jobs.daily, { total: 5, done: 0, step: '读取竞品家族', stage: 'working', retryAt: null });
+    if (!ownAsins.length) throw Object.assign(new Error('SKU 库里还没有 ASIN'), { status: 400 });
+    const progress = Object.assign(jobs.daily, { total: 6, done: 0, step: '给在卖款式挑对手', stage: 'working', retryAt: null });
     const step = (name) => Object.assign(progress, { done: progress.done + 1, step: name, stage: 'working' });
+
+    // 0. 在卖款式对手不够的,自动挑几个挂上
+    let auto = { styles: 0, added: 0 };
+    try {
+      auto = await autoPickCompetitors(account, gateway, today, styles, (name) => { progress.step = name; });
+      clearState('competitors_autopick_error');
+    } catch (error) {
+      setState('competitors_autopick_error', { at: new Date().toISOString(), message: String(error.message).slice(0, 300) });
+    }
+    step('读取竞品家族');
+    let tracked = db.prepare("SELECT id, style_key, asin FROM pet_competitors WHERE status='active'").all();
 
     // 1. 家族本身。存的是子体的(手动加的子体 ASIN),换成父 ASIN
     let details = await fetchCatalogDetails(account, tracked.map((row) => row.asin), gateway);
@@ -384,7 +518,7 @@ export function syncCompetitors(actorId = null, gateway = amazonGateway, env = p
     if (ownAsins.length) {
       db.prepare(`DELETE FROM pet_competitor_changes WHERE day=? AND family_asin IN (${ownAsins.map(() => '?').join(',')})`).run(today, ...ownAsins);
     }
-    const result = { today, families: tracked.length, children: competitorChildren.length, ownAsins: ownAsins.length,
+    const result = { today, autoAdded: auto.added, families: tracked.length, children: competitorChildren.length, ownAsins: ownAsins.length,
       prices: offers.size, changes: db.prepare('SELECT COUNT(*) AS n FROM pet_competitor_changes WHERE day=?').get(today).n,
       recorded: changes, listingErrors };
     if (actorId) audit(actorId, 'US', 'sync', 'pet_competitors', null, result);
@@ -552,7 +686,11 @@ export function suggestCompetitors(actorId = null, gateway = amazonGateway, env 
         entry.brand ||= detail?.brand ?? null;
         entry.image ||= detail?.mainImage ?? null;
       }
+      // 标题和我们不像的(笼垫推给狗窝、毛绒圆窝推给牛津布窝)不推荐
+      const lead = [...style.asins].sort((a, b) => (style.asinUnits.get(b) ?? 0) - (style.asinUnits.get(a) ?? 0))
+        .map((asin) => details.get(asin)).find((detail) => detail?.title);
       for (const entry of families.values()) {
+        if (lead && entry.title && relevance(lead.title, entry.title, lead.brand) < MIN_RELEVANCE) continue;
         const current = best.get(entry.family);
         if (!current || entry.score > current.entry.score) best.set(entry.family, { style: style.key, entry, stylePrice });
       }
@@ -701,9 +839,13 @@ export function styleDetail(styleKey, today) {
   };
 }
 
+// 近 4 周市场成交到这个数才算「有量的词」
+export const BIG_TERM_PURCHASES = 20;
+
 /**
- * 自家 Listing 体检:每个在售 ASIN 一行,红 = 必须改,黄 = 建议改。
- * 规则:标题含品牌、长度 80–200、五点 5 条、图片 7 张以上、核心词覆盖、后台搜索词不超过 249 字节、亚马逊报的问题、比竞品中位价贵多少。
+ * 自家 Listing 体检:每个 ASIN 一行。红 = 影响展示或收录(亚马逊报错、后台搜索词超 249 字节、标题超 200、没五点没图),
+ * 黄 = 建议改(品牌、标题长度、五点条数、图片数、有量的核心词没写、亚马逊警告、比同尺码竞品贵 20% 以上)。
+ * 每条检查带 code,页面和「本周要做」按 code 给修改办法。
  */
 export function listingHealth(today) {
   const styles = ownStyles(today);
@@ -733,44 +875,48 @@ export function listingHealth(today) {
       const row = catalog.get(asin);
       const sku = style.skus.find((item) => item.asin === asin);
       const checks = [];
-      const add = (level, text) => checks.push({ level, text });
+      const add = (level, code, text) => checks.push({ level, code, text });
       if (!row) {
         rows.push({ styleKey: style.key, asin, sku: sku?.sku ?? null, size: sku?.size ?? null, color: sku?.color ?? null,
-          units30: style.asinUnits.get(asin) ?? 0, title: null, checks: [{ level: 'info', text: '还没同步到这个 ASIN 的目录数据' }] });
+          units30: style.asinUnits.get(asin) ?? 0, title: null, checks: [{ level: 'info', code: 'no_data', text: '还没同步到这个 ASIN 的目录数据' }] });
         continue;
       }
       const title = row.title ?? '';
       const bullets = parseJson(row.bullets_json, []);
-      if (row.brand && !title.toLowerCase().includes(row.brand.toLowerCase())) add('red', `标题里没有品牌「${row.brand}」`);
-      if (title.length > 200) add('red', `标题 ${title.length} 字符，超过 200 可能被亚马逊压制`);
-      else if (title.length && title.length < 80) add('yellow', `标题只有 ${title.length} 字符，可以多放核心词`);
-      if (bullets.length < 5) add('yellow', `五点只有 ${bullets.length} 条`);
-      if ((row.image_count ?? 0) < 7) add('yellow', `图片 ${row.image_count ?? 0} 张，少于 7 张`);
-      if (imageMedian && row.image_count != null && row.image_count < imageMedian) add('yellow', `图片比竞品中位数（${imageMedian} 张）少`);
       const backend = row.backend_terms ?? '';
-      if (Buffer.byteLength(backend, 'utf8') > 249) add('red', `后台搜索词 ${Buffer.byteLength(backend, 'utf8')} 字节，超过 249 字节整段不生效`);
-      const missing = terms.filter((term) => !coverageOf(term.term, { title, bullets, backend }));
-      const topMissing = missing.filter((term) => terms.indexOf(term) < 3);
-      if (topMissing.length) add('red', `前 3 大核心词没写：${topMissing.map((term) => term.term).join('、')}`);
-      const otherMissing = missing.filter((term) => !topMissing.includes(term));
-      if (otherMissing.length) add('yellow', `核心词没写：${otherMissing.map((term) => term.term).join('、')}`);
       const issues = parseJson(row.issues_json, []);
       const errors = issues.filter((issue) => /error/i.test(issue.severity));
       const warnings = issues.filter((issue) => /warn/i.test(issue.severity));
-      if (errors.length) add('red', `亚马逊报错 ${errors.length} 条：${errors[0].message}`);
-      if (warnings.length) add('yellow', `亚马逊警告 ${warnings.length} 条：${warnings[0].message}`);
+      // 红 = 影响展示或收录:亚马逊报错(主图被屏蔽、五点违规)、后台搜索词超字节整段不生效、标题超长、没有五点或图片
+      if (errors.length) add('red', 'amazon_error', `亚马逊报错 ${errors.length} 条：${errors[0].message}`);
+      if (Buffer.byteLength(backend, 'utf8') > 249) add('red', 'backend_bytes', `后台搜索词 ${Buffer.byteLength(backend, 'utf8')} 字节，超过 249 字节整段不生效`);
+      if (title.length > 200) add('red', 'title_long', `标题 ${title.length} 字符，超过 200 可能被亚马逊压制`);
+      if (!bullets.length) add('red', 'no_bullets', '没有五点描述');
+      if (!row.image_count) add('red', 'no_images', '目录里没有图片');
+      // 黄 = 建议改
+      if (row.brand && !title.toLowerCase().includes(row.brand.toLowerCase())) add('yellow', 'brand', `标题里没有品牌「${row.brand}」`);
+      if (title.length && title.length < 80) add('yellow', 'title_short', `标题只有 ${title.length} 字符，可以多放核心词`);
+      if (bullets.length && bullets.length < 5) add('yellow', 'bullets', `五点只有 ${bullets.length} 条`);
+      if (row.image_count && row.image_count < 7) add('yellow', 'images', `图片 ${row.image_count} 张，少于 7 张`);
+      if (imageMedian && row.image_count && row.image_count < imageMedian) add('yellow', 'images_vs', `图片比竞品中位数（${imageMedian} 张）少`);
+      // 只提有量的词(近 4 周市场成交 20 单以上),颜色、品牌这类小词不算
+      const missing = terms.filter((term) => term.marketPurchases >= BIG_TERM_PURCHASES && !coverageOf(term.term, { title, bullets, backend }));
+      if (missing.length) add('yellow', 'terms', `有量的核心词没写：${missing.map((term) => `${term.term}（4 周 ${term.marketPurchases} 单）`).join('、')}`);
+      if (warnings.length) add('yellow', 'amazon_warning', `亚马逊警告 ${warnings.length} 条：${warnings[0].message}`);
       const sizeKey = sizeLabel(row.size ?? sku?.size);
       const priceMedian = sizeKey ? median(priceBySize.get(sizeKey) ?? []) : null;
       if (priceMedian && row.price && row.price > priceMedian * 1.2) {
-        add('yellow', `售价 $${row.price.toFixed(2)} 比同尺码（${sizeKey}）竞品中位价 $${priceMedian.toFixed(2)} 高 ${Math.round((row.price / priceMedian - 1) * 100)}%`);
+        add('yellow', 'price', `售价 $${row.price.toFixed(2)} 比同尺码（${sizeKey}）竞品中位价 $${priceMedian.toFixed(2)} 高 ${Math.round((row.price / priceMedian - 1) * 100)}%`);
       }
       rows.push({ styleKey: style.key, asin, sku: sku?.sku ?? null, size: row.size ?? sku?.size ?? null, color: row.color ?? sku?.color ?? null,
         units30: style.asinUnits.get(asin) ?? 0, title, brand: row.brand, bulletCount: bullets.length, imageCount: row.image_count,
         backendBytes: row.backend_terms == null ? null : Buffer.byteLength(backend, 'utf8'), price: row.price, checks });
     }
   }
-  const weight = (row) => row.checks.filter((check) => check.level === 'red').length * 100 + row.checks.filter((check) => check.level === 'yellow').length;
-  return rows.sort((a, b) => weight(b) - weight(a) || b.units30 - a.units30);
+  // 有红的在前;同一档里卖得多的在前(不卖的老款排后面)
+  const reds = (row) => row.checks.some((check) => check.level === 'red') ? 1 : 0;
+  const yellows = (row) => row.checks.filter((check) => check.level === 'yellow').length;
+  return rows.sort((a, b) => reds(b) - reds(a) || b.units30 - a.units30 || yellows(b) - yellows(a));
 }
 
 // ---------- 第三方月度数据(卖家精灵) ----------
@@ -889,7 +1035,9 @@ competitorRouter.put('/:id', (req, res) => {
 competitorRouter.delete('/:id', (req, res) => {
   const row = db.prepare('SELECT * FROM pet_competitors WHERE id=?').get(Number(req.params.id));
   if (!row) return res.status(404).json({ error: '找不到这个竞品' });
-  db.prepare('DELETE FROM pet_competitors WHERE id=?').run(row.id);
+  // 自动挂上的移出后记成忽略,不然第二天又会被自动挂回来
+  if (row.source === 'auto') db.prepare("UPDATE pet_competitors SET status='ignored', updated_at=datetime('now','localtime') WHERE id=?").run(row.id);
+  else db.prepare('DELETE FROM pet_competitors WHERE id=?').run(row.id);
   audit(req.session.user.id, 'US', 'delete', 'pet_competitors', row.id, { asin: row.asin, styleKey: row.style_key });
   res.json({ ok: true });
 });

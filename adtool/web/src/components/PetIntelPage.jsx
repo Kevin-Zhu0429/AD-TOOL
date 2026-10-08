@@ -207,7 +207,8 @@ function FamilyRows({ family, open, sameOnly, onToggle, onCompare, onRemove, onI
     <tr className={open ? 'open' : ''}>
       <td>{family.mainImage ? <img src={family.mainImage} alt="" loading="lazy" /> : null}</td>
       <td className="title-cell"><span className="row"><b>{family.brand ?? '—'}</b><a href={amazon(family.asin)} target="_blank" rel="noreferrer" className="mono">{family.asin}</a>
-        {family.source === 'aba' && <span className="tag blue" title={(family.evidence?.terms ?? []).map((term) => term.term).join('、')}>ABA 推荐</span>}</span>
+        {family.source === 'aba' && <span className="tag blue" title={(family.evidence?.terms ?? []).map((term) => term.term).join('、')}>ABA 推荐</span>}
+        {family.source === 'auto' && <span className="tag gray" title={`标题相似度 ${family.evidence?.relevance ?? ''}${family.evidence?.term ? `，从「${family.evidence.term}」搜到` : ''}。不像对手就点「忽略」或「移出」，以后不会再挂回来。`}>自动挂上</span>}</span>
         <span title={family.title ?? ''}>{family.title ?? (family.synced ? '' : '下次同步后显示')}</span></td>
       <td className="num"><button className="btn ghost sm" onClick={onToggle} aria-expanded={open}>{family.children.length} {open ? '▴' : '▾'}</button></td>
       <td className="num with-trend">{range(family.priceMin, family.priceMax)}
@@ -226,17 +227,97 @@ function FamilyRows({ family, open, sameOnly, onToggle, onCompare, onRemove, onI
   </>;
 }
 
+const LEVEL = { high: ['要紧', 'red'], medium: ['该看', 'amber'], low: ['可选', 'gray'] };
+
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; } catch { return false; }
+}
+
+/** 一条事项:级别、标题、依据、建议,以及能做的动作 */
+function ActionItem({ action, owner, onFix, onOpenStyle, styleKey }) {
+  const [copied, setCopied] = useState(false);
+  const [label, tone] = LEVEL[action.level];
+  const fix = action.fix;
+  return <li className={`intel-action ${action.level}`}>
+    <span className={`tag ${tone}`}>{label}</span>
+    <div className="intel-action-body">
+      <b>{action.title}</b>
+      <p>{action.detail}</p>
+      {action.hint && <p className="hint">{action.hint}</p>}
+    </div>
+    <div className="intel-action-do">
+      {fix?.type === 'rule' && owner && <button className="btn sm" onClick={() => onFix(fix)}>{fix.label}</button>}
+      {fix?.type === 'claude' && <button className="btn sm" title={fix.prompt}
+        onClick={async () => { if (await copyText(fix.prompt)) { setCopied(true); setTimeout(() => setCopied(false), 2500); } else window.prompt('复制这段话发给 Claude', fix.prompt); }}>
+        {copied ? '已复制，发给 Claude' : fix.label}</button>}
+      {['competitor_price_down', 'competitor_out', 'competitor_edit', 'price_high', 'price_low', 'rating_gap', 'no_competitors'].includes(action.kind)
+        && <button className="btn ghost sm" onClick={() => onOpenStyle(styleKey)}>看对手</button>}
+    </div>
+  </li>;
+}
+
+/** 本周要做:每个在卖款式这周该处理的事 */
+function WeeklyActions({ revision, owner, onOpenStyle }) {
+  const [data, setData] = useState(null), [error, setError] = useState(''), [message, setMessage] = useState('');
+  const [showLow, setShowLow] = useState(false);
+  useEffect(() => { api.intelActions().then(setData).catch((e) => setError(e.message)); }, [revision]);
+  async function fix(item) {
+    setError(''); setMessage('');
+    try {
+      const result = await api.intelFix(item.code, item.skus);
+      const made = result.created?.length ?? 0, rejected = result.rejected ?? [];
+      setMessage(`已生成 ${made} 条改动，去「待确认」页确认后才会改亚马逊。${rejected.length ? `${rejected.length} 条没生成：${rejected[0].error}` : ''}`);
+    } catch (e) { setError(e.message); }
+  }
+  if (error && !data) return <p className="note err" role="alert">{error}</p>;
+  if (!data) return <p role="status">正在整理本周要做的事…</p>;
+  const { totals } = data;
+  return <section className="intel-weekly">
+    <div className="row wrap intel-toolbar">
+      <h3>本周要做 <span className="hint">{data.styles.length} 个在卖款式：要紧 {totals.high} 件、该看 {totals.medium} 件、可选 {totals.low} 件
+        {data.inactive ? `；另有 ${data.inactive} 个款式近 30 天没销量，没列出` : ''}</span></h3>
+      <div className="spacer" />
+      <label className="intel-check"><input type="checkbox" checked={showLow} onChange={(e) => setShowLow(e.target.checked)} /> 显示可选的</label>
+    </div>
+    {message && <p className="note ok" role="status">{message} <a href="#changes">去待确认 →</a></p>}
+    {error && <p className="note err" role="alert">{error}</p>}
+    {!data.styles.length && <p className="note">近 30 天没有销量数据。先在价格策略表同步一次亚马逊数据。</p>}
+    <div className="intel-weekly-grid">{data.styles.map((style) => {
+      const actions = style.actions.filter((action) => showLow || action.level !== 'low');
+      const trend = style.prevUnits7 ? Math.round((style.units7 / style.prevUnits7 - 1) * 100) : null;
+      return <article key={style.key} className="card intel-weekly-card">
+        <header>
+          {style.mainImage ? <img src={style.mainImage} alt="" width="56" height="56" loading="lazy" /> : <span className="intel-thumb" />}
+          <div>
+            <button className="intel-style-name" onClick={() => onOpenStyle(style.key)}>{style.key}</button>
+            <small className="hint">近 7 天 {style.units7} 件{trend != null ? `（${trend >= 0 ? '+' : ''}${trend}%）` : ''} · 30 天 {style.units30} 件 · 在库 {style.stock}
+              {style.rating != null ? ` · ${style.rating} 星 ${style.reviews ?? ''} 评` : ''} · 对手 {style.competitors}</small>
+          </div>
+        </header>
+        {actions.length ? <ul className="intel-actions">{actions.map((action) =>
+          <ActionItem key={action.id} action={action} owner={owner} onFix={fix} onOpenStyle={onOpenStyle} styleKey={style.key} />)}</ul>
+          : <p className="hint intel-none">{style.actions.length ? '只有可选的事项。' : '这周没发现要处理的事。'}</p>}
+      </article>;
+    })}</div>
+    <p className="hint">依据：销量和库存来自每天的亚马逊同步，份额和转化来自品牌分析（ABA）每周数据，对手价格和变化来自每日竞品同步，评分来自卖家精灵导入。
+      「生成…改动」只放进待确认，不会直接改亚马逊；「让 Claude…」会复制一段话，发到 Claude 里，它用连接器看数据、起草改动。</p>
+  </section>;
+}
+
 function Health({ revision }) {
   const [data, setData] = useState(null), [error, setError] = useState(''), [redOnly, setRedOnly] = useState(false), [style, setStyle] = useState('');
+  const [sellingOnly, setSellingOnly] = useState(true);
   useEffect(() => { api.competitorHealth().then(setData).catch((e) => setError(e.message)); }, [revision]);
   if (error) return <p className="note err" role="alert">{error}</p>;
   if (!data) return <p role="status">正在体检…</p>;
   const styles = [...new Set(data.rows.map((row) => row.styleKey))];
-  const rows = data.rows.filter((row) => (!redOnly || row.checks.some((check) => check.level === 'red')) && (!style || row.styleKey === style));
+  const rows = data.rows.filter((row) => (!redOnly || row.checks.some((check) => check.level === 'red')) && (!style || row.styleKey === style)
+    && (!sellingOnly || row.units30 > 0));
   const reds = data.rows.filter((row) => row.checks.some((check) => check.level === 'red')).length;
   return <section className="card">
-    <div className="row wrap intel-toolbar"><h3>自家 Listing 体检 <span className="hint">{data.rows.length} 个 ASIN，{reds} 个有必须改的问题</span></h3><div className="spacer" />
+    <div className="row wrap intel-toolbar"><h3>自家 Listing 体检 <span className="hint">{data.rows.length} 个 ASIN，{reds} 个有影响展示或收录的问题</span></h3><div className="spacer" />
       <label>款式 <select className="inp" value={style} onChange={(e) => setStyle(e.target.value)}><option value="">全部</option>{styles.map((item) => <option key={item}>{item}</option>)}</select></label>
+      <label className="intel-check"><input type="checkbox" checked={sellingOnly} onChange={(e) => setSellingOnly(e.target.checked)} /> 只看近 30 天有销量的</label>
       <label className="intel-check"><input type="checkbox" checked={redOnly} onChange={(e) => setRedOnly(e.target.checked)} /> 只看红色</label></div>
     <div className="intel-table" role="region" tabIndex={0} aria-label="Listing 体检"><table className="tbl intel-health">
       <thead><tr><th>款式</th><th>ASIN / SKU</th><th>尺码 · 颜色</th><th className="num">30 天销量</th><th>标题</th><th className="num">五点</th><th className="num">图片</th><th className="num">后台词</th><th>问题</th></tr></thead>
@@ -248,7 +329,8 @@ function Health({ revision }) {
         <td><ul className="checks">{row.checks.map((check, index) => <li key={index} className={check.level}>{check.text}</li>)}
           {!row.checks.length && <li className="ok">没有发现问题</li>}</ul></td></tr>)}
         {!rows.length && <tr><td colSpan={9} className="empty">{data.rows.length ? '这个筛选下没有 ASIN。' : '还没有数据：先在 SKU 库同步 ASIN，再点「同步竞品数据」。'}</td></tr>}</tbody></table></div>
-    <p className="hint">红色＝必须改：标题没品牌、超过 200 字符、前 3 大核心词没写、后台搜索词超过 249 字节、亚马逊报错。黄色＝建议改：五点不足 5 条、图片少于 7 张或少于竞品、次要核心词没写、比同尺码竞品中位价高 20% 以上。核心词覆盖同时看标题、五点和后台搜索词。</p>
+    <p className="hint">红色＝影响展示或收录，必须改：亚马逊报错（主图被屏蔽、五点违规等）、后台搜索词超过 249 字节（整段不生效）、标题超过 200 字符、没有五点或图片。
+      黄色＝建议改：标题没品牌、五点不足 5 条、图片少于 7 张或少于竞品、有量的核心词（近 4 周全市场成交 20 单以上）没写、亚马逊警告、比同尺码竞品中位价高 20% 以上。核心词覆盖同时看标题、五点和后台搜索词。</p>
   </section>;
 }
 
@@ -334,8 +416,9 @@ const JOB_LABEL = {
   daily: { label: '竞品同步进度', hint: '竞品价格接口每 10 秒只能查 20 个 ASIN，竞品多时要几分钟。' },
 };
 
-export default function PetIntelPage({ market }) {
-  const [tab, setTab] = useState('monitor');
+export default function PetIntelPage({ market, owner = false }) {
+  const [tab, setTab] = useState('weekly');
+  const [allStyles, setAllStyles] = useState(false);
   const [overview, setOverview] = useState(null), [styleKey, setStyleKey] = useState('');
   const [error, setError] = useState(''), [message, setMessage] = useState(''), [busy, setBusy] = useState(false);
   const [revision, setRevision] = useState(0), [importing, setImporting] = useState(false);
@@ -370,7 +453,7 @@ export default function PetIntelPage({ market }) {
   const failed = (part) => part?.lastError && (!part.lastSuccess || part.lastError.at > part.lastSuccess.completedAt);
   return <div className="lib pet-intel animate-in">
     <header className="lib-head"><div><h1>产品情报 <span className="tag blue">US 站</span></h1>
-      <p className="hint">竞品挂在自家款式下，每天自动同步价格、排名、标题和主图并找出变化；候选竞品每周从品牌分析搜索词报告里推荐。
+      <p className="hint">「本周要做」按款式列出这周该处理的事。在卖款式每天自动挂上同类对手（每款 5 个，不像的移出就不会再挂），同步价格、排名、标题和主图并找出变化。
         {sync_ && (sync_.configured ? ` 上次同步：${daily?.lastSuccess ? beijing(daily.lastSuccess.completedAt) : '尚未同步'}；上次推荐：${suggest?.lastSuccess ? `${beijing(suggest.lastSuccess.completedAt)}（${suggest.lastSuccess.week} 那周${timingText(suggest.lastSuccess.timing)}）` : '尚未生成'}（北京时间）。` : ` ${sync_.issues?.[0] ?? '服务器还没有配置宠物店铺的亚马逊 SP-API 凭证。'}`)}</p></div>
       <div className="row wrap">
         <button className="btn" onClick={() => setImporting(true)}>导入卖家精灵数据</button>
@@ -385,7 +468,7 @@ export default function PetIntelPage({ market }) {
     {message && <p className="note ok" role="status">{message}</p>}
     {error && <p className="note err" role="alert">{error}</p>}
     <div className="aba-tabs intel-tabs" role="tablist" aria-label="产品情报视图">
-      {[['monitor', '竞品监控'], ['health', '自家 Listing 体检'], ['legacy', '历史月度表']].map(([key, label]) =>
+      {[['weekly', '本周要做'], ['monitor', '竞品监控'], ['health', '自家 Listing 体检'], ['legacy', '历史月度表']].map(([key, label]) =>
         <button key={key} role="tab" aria-selected={tab === key} className={`btn${tab === key ? ' primary' : ''}`} onClick={() => setTab(key)}>{label}</button>)}
     </div>
     {tab === 'monitor' && overview && overview.styles.length > 0 && <ChangeFeed changes={overview.changes} onPick={setStyleKey} />}
@@ -393,16 +476,19 @@ export default function PetIntelPage({ market }) {
       <div className="intel-layout">
         <nav className="card intel-styles" aria-label="自家款式">
           <h3>自家款式</h3>
-          {overview.styles.map((style) => <button key={style.key} className={`intel-style-btn${style.key === styleKey ? ' on' : ''}`} aria-current={style.key === styleKey ? 'true' : undefined} onClick={() => setStyleKey(style.key)}>
+          {overview.styles.filter((style) => allStyles || style.units30 > 0 || style.active > 0 || style.key === styleKey).map((style) => <button key={style.key} className={`intel-style-btn${style.key === styleKey ? ' on' : ''}`} aria-current={style.key === styleKey ? 'true' : undefined} onClick={() => setStyleKey(style.key)}>
             <b>{style.key}</b><small>30 天 {style.units30} 件 · 竞品 {style.active}</small>
             <span className="badges">{style.suggested > 0 && <span className="tag blue" title="待确认的推荐">荐 {style.suggested}</span>}
               {style.changes7 > 0 && <span className="tag red" title="近 7 天竞品变化">变 {style.changes7}</span>}</span></button>)}
+          {overview.styles.some((style) => !(style.units30 > 0 || style.active > 0)) && <button className="btn ghost sm" onClick={() => setAllStyles((value) => !value)}>
+            {allStyles ? '只看在卖的款式' : `显示没销量的 ${overview.styles.filter((style) => !(style.units30 > 0 || style.active > 0)).length} 个款式`}</button>}
         </nav>
         <div className="intel-main">
           {styleKey && <StyleDetail key={styleKey} styleKey={styleKey} revision={revision} busy={busy} setBusy={setBusy}
             onChanged={() => setRevision((n) => n + 1)} />}
         </div>
       </div>)}
+    {tab === 'weekly' && <WeeklyActions revision={revision} owner={owner} onOpenStyle={(key) => { setStyleKey(key); setTab('monitor'); }} />}
     {tab === 'health' && <Health revision={revision} />}
     {tab === 'legacy' && <PetProductPage market={market} />}
     {importing && <MetricsImport onClose={() => setImporting(false)} onDone={(text) => { setImporting(false); setMessage(text); setRevision((n) => n + 1); }} />}
