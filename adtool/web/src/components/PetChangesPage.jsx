@@ -18,7 +18,7 @@ const STATE_LABEL = { enabled: '启用', paused: '暂停' };
 const VIEWS = [['pending', '待确认'], ['active', '处理中'], ['history', '历史'], ['log', '日志']];
 const EDITABLE = new Set(['listing_title', 'listing_bullets', 'listing_search_terms', 'listing_price', 'ad_bid', 'ad_budget']);
 const NUMERIC = new Set(['listing_price', 'ad_bid', 'ad_budget']);
-const SOURCE_LABEL = { claude: 'Claude 提议', revert: '撤回', manual: '手动' };
+const SOURCE_LABEL = { claude: 'Claude 提议', revert: '撤回', manual: '手动', intel: '产品情报' };
 
 function targetText(item) {
   const t = item.target ?? {};
