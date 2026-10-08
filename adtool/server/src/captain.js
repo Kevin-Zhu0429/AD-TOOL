@@ -147,10 +147,12 @@ function normalizeInventory(item) {
     sku,
     skuKey: keyOf(sku),
     asin: /^[A-Z0-9]{10}$/.test(asin) ? asin : null,
-    stock: intOf(details.fulfillableQuantity),
-    transit: intOf(details.inboundShippedQuantity)
-      + intOf(details.inboundReceivingQuantity)
-      + intOf(details.inboundWorkingQuantity),
+    // 在库 = 可用 + 亚马逊运营中心转运 + 正在接收；在途 = 处理中 + 已发货。
+    stock: intOf(details.fulfillableQuantity)
+      + intOf(details.reservedQuantity?.pendingTransshipmentQuantity)
+      + intOf(details.inboundReceivingQuantity),
+    transit: intOf(details.inboundWorkingQuantity)
+      + intOf(details.inboundShippedQuantity),
     isDeleted: 0,
   };
 }

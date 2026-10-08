@@ -100,8 +100,10 @@ SKU 库点击「同步亚马逊库存」，超级管理员也可统一同步全�
   `MARKETS` 里列了但账号没开通的站点，读取店铺时会提示。
 * 开发者应用需要勾选「亚马逊物流（Amazon Fulfillment）」角色，否则库存接口会返回拒绝访问。
 
-库存来源为 `/fba/inventory/v1/summaries`：可售数量（fulfillable）写入在库库存，已发货、接收中、处理中三项
-相加写入在途库存。同步只更新已存在且账号、品牌、SKU 匹配的行，不自动新建 SKU，也不覆盖型号、
+库存来源为 `/fba/inventory/v1/summaries`：可用（`fulfillableQuantity`）+ 亚马逊运营中心转运
+（`reservedQuantity.pendingTransshipmentQuantity`）+ 正在接收（`inboundReceivingQuantity`）相加写入在库库存；
+处理中（`inboundWorkingQuantity`）+ 已发货（`inboundShippedQuantity`）相加写入在途库存。
+同步只更新已存在且账号、品牌、SKU 匹配的行，不自动新建 SKU，也不覆盖型号、
 套组等人工资料；没有匹配的亚马逊 SKU 会计入结果提示。
 
 欧洲大陆 ES / DE / FR / IT 在亚马逊是同一份共享 FBA 库存，同一卖家的这四站归成一个店铺组，

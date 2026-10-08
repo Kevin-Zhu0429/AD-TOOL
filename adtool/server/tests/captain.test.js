@@ -132,6 +132,7 @@ test('Amazon SP-API shared EU inventory is assigned to separate users by country
   let inFlight = 0;
   let maxInFlight = 0;
   const quantityOverrides = new Map();
+  const detailOverrides = new Map();
   const inventoryCalls = new Map();
   global.fetch = async (input, options = {}) => {
     const url = new URL(String(input));
@@ -204,7 +205,9 @@ test('Amazon SP-API shared EU inventory is assigned to separate users by country
       if (channel === 'hp-us') assert.equal(url.searchParams.get('nextToken'), 'us-page-2');
       return Response.json({
         payload: { granularity: { granularityType: 'Marketplace', granularityId: marketplaceId },
-          inventorySummaries: [summary('EU-SKU-1', stock, transit)] },
+          inventorySummaries: [{ ...summary('EU-SKU-1', stock, transit),
+            ...(detailOverrides.has(channel) ? { inventoryDetails: detailOverrides.get(channel) } : {}),
+          }] },
       });
     }
     throw new Error(`Unexpected remote request: ${url}`);
@@ -464,4 +467,67 @@ test('Amazon SP-API shared EU inventory is assigned to separate users by country
   assert.equal(allOut.status, 200);
   assert.equal(allOut.data.outOfStock, 1);
   assert.equal(allOut.data.results.find((row) => row.userId === users['aba-test']).outOfStock, 1);
+
+  // 覆盖真实同步和回写：不把预留总数、客户订单、运营中心处理中等数量重复计入。
+  const inventoryCases = [
+    {
+      name: '截图口径：转运 1100 和接收 150 计入在库，已发货 1800 计入在途',
+      details: {
+        fulfillableQuantity: 0, inboundWorkingQuantity: 0,
+        inboundShippedQuantity: 1800, inboundReceivingQuantity: 150,
+        reservedQuantity: { totalReservedQuantity: 1191, pendingTransshipmentQuantity: 1100,
+          pendingCustomerOrderQuantity: 41, fcProcessingQuantity: 50 },
+      },
+      expected: { stock: 1250, transit: 1800 },
+    },
+    {
+      name: '五种数量都有值时分别汇总，不加入其他预留或不可售数量',
+      details: {
+        fulfillableQuantity: 10, inboundWorkingQuantity: 20,
+        inboundShippedQuantity: 30, inboundReceivingQuantity: 40,
+        reservedQuantity: { totalReservedQuantity: 80, pendingTransshipmentQuantity: 50,
+          pendingCustomerOrderQuantity: 10, fcProcessingQuantity: 20 },
+        unfulfillableQuantity: { totalUnfulfillableQuantity: 7 },
+        researchingQuantity: { totalResearchingQuantity: 8 },
+      },
+      expected: { stock: 100, transit: 50 },
+    },
+    {
+      name: '仅运营中心转运有库存时，在库不为零',
+      details: { reservedQuantity: { pendingTransshipmentQuantity: 12 } },
+      expected: { stock: 12, transit: 0 },
+    },
+    {
+      name: '仅正在接收有库存时，计入在库且不计入在途',
+      details: { inboundReceivingQuantity: 13 },
+      expected: { stock: 13, transit: 0 },
+    },
+    {
+      name: '仅处理中和已发货有库存时，只计入在途',
+      details: { inboundWorkingQuantity: 14, inboundShippedQuantity: 15 },
+      expected: { stock: 0, transit: 29 },
+    },
+    {
+      name: '空预留明细按零处理',
+      details: { fulfillableQuantity: 16, reservedQuantity: {} },
+      expected: { stock: 16, transit: 0 },
+    },
+    {
+      name: '缺少库存明细按零处理',
+      details: null,
+      expected: { stock: 0, transit: 0 },
+    },
+  ];
+  for (const { name, details, expected } of inventoryCases) {
+    await t.test(name, async () => {
+      detailOverrides.set('hp-us', details);
+      const result = await sync('/captain/sync', esCookie);
+      assert.equal(result.status, 200);
+      assert.deepEqual(result.data.errors, []);
+      assert.deepEqual(server.db.prepare(
+        "SELECT stock, transit FROM sku_items WHERE user_id = ? AND country = 'US' AND brand = 'HP'"
+      ).get(users['aba-test']), expected);
+      if (expected.stock > 0) assert.equal(result.data.stockSync.outCount, 0);
+    });
+  }
 });
