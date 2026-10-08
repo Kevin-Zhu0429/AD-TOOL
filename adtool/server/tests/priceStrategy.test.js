@@ -56,7 +56,7 @@ function fakeAmazon({ failOn } = {}) {
       if (document) return { reportDocumentId: document[1], url: document[1] };
       if (path === '/fba/inventory/v1/summaries') {
         if (!query.nextToken) return { payload: { inventorySummaries: [
-          { sellerSku: 'DOG-L', asin: 'B000000001', inventoryDetails: { fulfillableQuantity: 25, inboundShippedQuantity: 3, inboundReceivingQuantity: 2 } },
+          { sellerSku: 'DOG-L', asin: 'B000000001', inventoryDetails: { fulfillableQuantity: 20, reservedQuantity: { pendingTransshipmentQuantity: 3, pendingCustomerOrderQuantity: 9 }, inboundShippedQuantity: 4, inboundReceivingQuantity: 2, inboundWorkingQuantity: 1 } },
         ] }, pagination: { nextToken: 'page-2' } };
         return { payload: { inventorySummaries: [
           { sellerSku: 'DOG-XL', asin: 'B000000002', inventoryDetails: { fulfillableQuantity: 0, inboundWorkingQuantity: 40 } },

@@ -313,7 +313,11 @@ export async function fetchListings(account, gateway = amazonGateway, onProgress
   return [...listings.values()];
 }
 
-/** 美国站全部 FBA 库存。在途 = 已发货 + 接收中 + 处理中,和墨盒版口径一致 */
+/**
+ * 美国站全部 FBA 库存,按卖家后台库存面板的项目拆:
+ *   在库 = 可用 + 亚马逊运营中心转运 + 正在接收(货已到仓,只是还不能卖)
+ *   在途 = 处理中 + 已发货
+ */
 export async function fetchInventory(account, gateway = amazonGateway) {
   const latest = new Map();
   let nextToken = '';
@@ -329,9 +333,9 @@ export async function fetchInventory(account, gateway = amazonGateway) {
       const details = raw.inventoryDetails ?? {};
       latest.set(sku.toLowerCase(), {
         sku, asin: validAsin(raw.asin),
-        stock: intOf(details.fulfillableQuantity),
-        transit: intOf(details.inboundShippedQuantity) + intOf(details.inboundReceivingQuantity)
-          + intOf(details.inboundWorkingQuantity),
+        stock: intOf(details.fulfillableQuantity) + intOf(details.reservedQuantity?.pendingTransshipmentQuantity)
+          + intOf(details.inboundReceivingQuantity),
+        transit: intOf(details.inboundWorkingQuantity) + intOf(details.inboundShippedQuantity),
       });
     }
     nextToken = clean(payload?.pagination?.nextToken);
