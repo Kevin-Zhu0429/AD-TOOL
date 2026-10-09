@@ -17,7 +17,7 @@
   transition: border-color .14s var(--ease), opacity .14s var(--ease);
 }
 .unitbox:last-of-type { margin-bottom: 0; }
-.unitbox.on { border-color: var(--accent-line); }
+.unitbox.on { border-color: var(--accent-line); box-shadow: var(--hairline); }
 .unitbox:not(.on) { opacity: .62; }
 .unitbox:not(.on) textarea { display: none; }
 
@@ -61,3 +61,38 @@
 .mform .col-preview .probs,
 .mform .col-preview .minigrid { flex: 0 0 auto; }
 .mform .col-preview .sec { overflow: hidden; }
+
+/* ---------- 三合一:一个粘贴框,三种匹配各自的开关和出价排成一行 ---------- */
+.seg-new::before {
+  content: 'NEW'; position: absolute; top: -7px; right: 8px;
+  padding: 0 6px; border-radius: 10px;
+  font-size: 9px; font-weight: 700; letter-spacing: .06em; line-height: 15px;
+  color: #fff; background: var(--grad-brand);
+  box-shadow: 0 3px 10px -3px var(--violet);
+}
+.triplebox {
+  background:
+    radial-gradient(360px 140px at 100% 0%, var(--accent-soft), transparent 70%),
+    var(--panel-2);
+}
+.triple-matches {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px;
+  margin-bottom: 9px;
+}
+.triple-match {
+  display: flex; flex-direction: column; gap: 6px; min-width: 0;
+  padding: 8px 9px;
+  background: var(--bg-2);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  transition: border-color .15s var(--ease), opacity .15s var(--ease);
+}
+.triple-match.on { border-color: var(--accent-line); }
+.triple-match:not(.on) { opacity: .6; }
+.triple-match .bidmini { width: 100%; }
+.triple-note { font-size: 10.5px; line-height: 1.45; }
+@media (max-width: 880px) {
+  .triple-matches { grid-template-columns: 1fr; }
+  .triple-match { flex-direction: row; align-items: center; }
+  .triple-match .bidmini { width: 88px; flex: 0 0 auto; }
+}
