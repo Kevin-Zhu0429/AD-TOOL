@@ -1,5 +1,11 @@
 # CYES 广告工作台 UX 合约
 
+## ChatGPT / Claude MCP 授权与提议来源（2026-10-09）
+
+- 授权页由 `server/src/mcpAuth.js` 维护，发现文档与回调由 `server/src/mcp.js` 维护；沿用店主身份、PKCE 和精确回调白名单。授权文案说明可查数据、可提交提议，店主在网站确认后才执行。
+- `PetChangesPage` 是提议来源和操作日志的展示入口；根据服务端来源显示 ChatGPT 或 Claude，未知来源保留原始标签，不按客户端自行声明的名字判断权限。
+- 业务依据：`PET-DEPLOY.md` 的 MCP 和待确认改动说明；验证入口：`server/tests/mcp.test.js`、`server/tests/petChanges.test.js`。
+
 ## 宠物版美国站（2026-09-21）
 
 本节仅适用于 APP_PROFILE=pet。用户批准：首期仅美国站；SKU 使用款式、尺码、颜色、面料外观、在库和在途库存；保留产品情报和 ABA；关闭墨盒专用否定词库和跑偏规则。

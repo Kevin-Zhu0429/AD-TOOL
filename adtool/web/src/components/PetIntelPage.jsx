@@ -158,7 +158,7 @@ function StyleDetail({ styleKey, revision, busy, setBusy, onChanged }) {
     <section className="card">
       <div className="row wrap intel-toolbar"><h3>竞品对比 <span className="hint">{competitors.length} 个竞品家族</span></h3><div className="spacer" />
         <label className="intel-check"><input type="checkbox" checked={sameOnly} onChange={(e) => setSameOnly(e.target.checked)} /> 展开时只看同尺码子体</label>
-        <form className="row" onSubmit={(e) => { e.preventDefault(); if (asins.trim()) add(); }}>
+        <form className="row" noValidate onSubmit={(e) => { e.preventDefault(); if (asins.trim()) add(); }}>
           <input className="inp" aria-label="竞品 ASIN" value={asins} onChange={(e) => setAsins(e.target.value)} placeholder="粘贴竞品 ASIN 或链接，多个用空格分开" />
           <button className="btn primary" disabled={busy || !asins.trim()}>加入监控</button></form></div>
       <div className="intel-table" role="region" tabIndex={0} aria-label="竞品对比表"><table className="tbl">

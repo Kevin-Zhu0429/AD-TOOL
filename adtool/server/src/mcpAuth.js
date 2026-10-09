@@ -1,7 +1,6 @@
-// Claude 连接器(MCP)的 OAuth 授权:网站自己当授权服务器,协议细节交给 MCP SDK 的 mcpAuthRouter。
-// 流程:Claude 注册客户端 → 浏览器跳到 /authorize 的登录页 → 超级管理员输入网站账号密码 →
-// 网站发授权码 → Claude 换访问令牌(1 小时)和刷新令牌(30 天,每用一次换新)。
-// 只允许跳回 Claude 的回调地址和本机回环地址,别人注册的客户端没法把授权码骗到自己的网站。
+// AI 连接器(MCP)的 OAuth 授权:网站自己当授权服务器,协议细节交给 MCP SDK 的 mcpAuthRouter。
+// 流程:客户端注册 → /authorize 超级管理员登录授权 → 授权码换访问令牌(1 小时)和刷新令牌(30 天)。
+// 只允许 ChatGPT/Claude 的精确回调和本机回环地址;刷新令牌每次使用后轮换。
 // OAuth 错误说明会放进 WWW-Authenticate 响应头,只能用英文(响应头不能有中文)。
 import bcrypt from 'bcryptjs';
 import { createHash, randomBytes } from 'node:crypto';
@@ -13,8 +12,9 @@ const CODE_TTL_S = 10 * 60;
 const ACCESS_TTL_S = 60 * 60;
 const REFRESH_TTL_S = 30 * 24 * 60 * 60;
 
-// claude.ai 网页版、桌面版、手机 App 共用的回调;Claude Code 和 MCP Inspector 用本机回环地址
-const HOSTED_CALLBACKS = new Set(['https://claude.ai/api/mcp/auth_callback', 'https://claude.com/api/mcp/auth_callback']);
+// ChatGPT 的固定回调配合 mcp.js 中的 RFC 9207 issuer 标识。不要放行整个域名或任意回调路径。
+export const CHATGPT_CALLBACK = 'https://chatgpt.com/connector_platform_oauth_redirect';
+const HOSTED_CALLBACKS = new Set(['https://claude.ai/api/mcp/auth_callback', 'https://claude.com/api/mcp/auth_callback', CHATGPT_CALLBACK]);
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
 
 export function allowedRedirectUri(value) {
@@ -62,7 +62,7 @@ function loginPage({ client, params, error }) {
     .map(([name, value]) => `<input type="hidden" name="${name}" value="${escapeHtml(value)}">`).join('');
   const target = new URL(params.redirectUri);
   return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>授权 Claude 读取宠物版数据</title><style>
+<title>授权 AI 连接宠物广告工作台</title><style>
 body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f5f5f4;color:#1c1917;font:15px/1.6 system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif}
 main{width:min(380px,calc(100% - 32px));background:#fff;border:1px solid #e7e5e4;border-radius:12px;padding:28px}
 h1{font-size:19px;margin:0 0 8px}p{margin:0 0 16px;color:#57534e}ul{margin:0 0 18px;padding-left:20px;color:#57534e}
@@ -70,9 +70,9 @@ label{display:block;font-size:13px;margin:12px 0 4px}input[type=text],input[type
 button{margin-top:18px;width:100%;padding:10px;border:0;border-radius:8px;background:#1c1917;color:#fff;font:inherit;cursor:pointer}
 .err{color:#b91c1c;background:#fef2f2;border-radius:8px;padding:8px 10px}.small{font-size:12px;color:#78716c;margin-top:14px}
 </style></head><body><main>
-<h1>授权 Claude 读取宠物版数据</h1>
-<p><b>${escapeHtml(client.client_name || 'Claude')}</b> 请求连接本网站。授权后它可以：</p>
-<ul><li>只读查看 SKU、库存、销量、价格和 ABA 搜索词</li><li>只读查看亚马逊上的 Listing 和竞品信息</li><li>不能修改任何数据，也不能改亚马逊上的任何东西</li></ul>
+<h1>授权 AI 连接宠物广告工作台</h1>
+<p><b>${escapeHtml(client.client_name || 'AI 客户端')}</b> 请求连接本网站。授权后它可以：</p>
+<ul><li>查看 SKU、库存、销量、流量、价格、利润和 ABA 搜索词</li><li>查看亚马逊上的 Listing、图片、竞品信息和改动效果</li><li>向网站提交 Listing 和广告改动提议；店主在「待确认改动」页确认后才会执行</li></ul>
 ${error ? `<p class="err">${escapeHtml(error)}</p>` : ''}
 <form method="post" action="/authorize">${fields}
 <label for="u">网站用户名</label><input id="u" type="text" name="username" autocomplete="username" required autofocus>
@@ -90,7 +90,7 @@ const clientsStore = {
   registerClient(client) {
     const uris = client.redirect_uris ?? [];
     if (!uris.length || !uris.every(allowedRedirectUri)) {
-      throw new InvalidClientMetadataError('redirect_uris must be Claude callbacks or loopback addresses');
+      throw new InvalidClientMetadataError('redirect_uris must be approved ChatGPT or Claude callbacks, or loopback addresses');
     }
     db.prepare('INSERT INTO mcp_oauth_clients(client_id,data_json) VALUES(?,?)').run(client.client_id, JSON.stringify(client));
     return client;
@@ -114,7 +114,7 @@ export function createOAuthProvider({ resourceUrl }) {
   async authorize(client, params, res) {
     const req = res.req;
     res.set('X-Frame-Options', 'DENY');
-    res.set('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; form-action 'self' https://claude.ai https://claude.com http://localhost:* http://127.0.0.1:*; frame-ancestors 'none'");
+    res.set('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; form-action 'self' https://chatgpt.com https://claude.ai https://claude.com http://localhost:* http://127.0.0.1:*; frame-ancestors 'none'");
     checkResource(params.resource);
     const { username, password } = req.method === 'POST' ? req.body ?? {} : {};
     if (!username && !password) return void res.type('html').send(loginPage({ client, params }));
@@ -123,7 +123,7 @@ export function createOAuthProvider({ resourceUrl }) {
       return void res.status(401).type('html').send(loginPage({ client, params, error: '用户名或密码错误' }));
     }
     if (!authorizedUser(row.id)) {
-      return void res.status(403).type('html').send(loginPage({ client, params, error: '只有在用的超级管理员账号可以授权 Claude 连接' }));
+      return void res.status(403).type('html').send(loginPage({ client, params, error: '只有在用的超级管理员账号可以授权 AI 连接' }));
     }
     const code = newSecret();
     db.transaction(() => {
@@ -171,8 +171,10 @@ export function createOAuthProvider({ resourceUrl }) {
     const row = db.prepare("SELECT * FROM mcp_oauth_tokens WHERE token_hash=? AND kind='access'").get(digest(token));
     if (!row || row.expires_at < now()) throw new InvalidTokenError('Invalid or expired access token');
     if (!authorizedUser(row.user_id)) throw new InvalidTokenError('The authorizing account is disabled or no longer an owner');
+    const client = clientsStore.getClient(row.client_id);
+    const source = client?.redirect_uris?.includes(CHATGPT_CALLBACK) ? 'chatgpt' : 'claude';
     return { token, clientId: row.client_id, scopes: row.scopes.split(' '), expiresAt: row.expires_at,
-      resource: row.resource ? new URL(row.resource) : undefined, extra: { userId: row.user_id } };
+      resource: row.resource ? new URL(row.resource) : undefined, extra: { userId: row.user_id, source } };
   },
 
   async revokeToken(client, { token }) {

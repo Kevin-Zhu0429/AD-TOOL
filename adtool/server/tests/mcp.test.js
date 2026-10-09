@@ -10,6 +10,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
 const CALLBACK = 'https://claude.ai/api/mcp/auth_callback';
+const CHATGPT_CALLBACK = 'https://chatgpt.com/connector_platform_oauth_redirect';
 const SP_ENV = { PET_SP_LWA_CLIENT_ID: 'pet-client', PET_SP_LWA_CLIENT_SECRET: 'pet-secret', PET_SP_LWA_REFRESH_TOKEN: 'Atzr|pet', PET_SP_SELLER_ID: 'apetseller' };
 
 function fakeAmazon() {
@@ -121,7 +122,7 @@ const pkce = () => {
 };
 const form = (fields) => new URLSearchParams(Object.entries(fields).filter(([, value]) => value !== undefined));
 
-test('Claude connector: OAuth login, read-only tools and token lifecycle', async (t) => {
+test('AI connectors: OAuth login, read tools, proposals and token lifecycle', async (t) => {
   const backend = await startServer();
   t.after(() => backend.close());
   seed(backend.db);
@@ -138,13 +139,19 @@ test('Claude connector: OAuth login, read-only tools and token lifecycle', async
     const metadata = await (await fetch(`${url}/.well-known/oauth-authorization-server`)).json();
     assert.equal(metadata.registration_endpoint, `${url}/register`);
     assert.deepEqual(metadata.code_challenge_methods_supported, ['S256']);
+    assert.equal(metadata.authorization_response_iss_parameter_supported, true);
+    assert.equal(metadata.issuer, resource.authorization_servers[0]);
   });
 
-  const register = (redirect) => post('/register', JSON.stringify({ client_name: 'Claude', redirect_uris: [redirect], token_endpoint_auth_method: 'none',
+  const register = (redirect, name = 'Claude') => post('/register', JSON.stringify({ client_name: name, redirect_uris: [redirect], token_endpoint_auth_method: 'none',
     grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'] }), { 'content-type': 'application/json' });
 
-  await t.test('only Claude callbacks and loopback redirects can register', async () => {
-    assert.equal((await register('https://evil.example/callback')).status, 400);
+  await t.test('only exact hosted callbacks and loopback redirects can register', async () => {
+    for (const redirect of ['https://evil.example/callback', 'https://chatgpt.com.evil.example/connector_platform_oauth_redirect',
+      `${CHATGPT_CALLBACK}/extra`, `${CHATGPT_CALLBACK}?next=https://evil.example`, `${CHATGPT_CALLBACK}#fragment`,
+      'http://chatgpt.com/connector_platform_oauth_redirect', 'https://chatgpt.com/connector/oauth/unregistered']) {
+      assert.equal((await register(redirect)).status, 400, redirect);
+    }
     assert.equal((await register('http://localhost:33418/callback')).status, 201);
   });
 
@@ -165,11 +172,13 @@ test('Claude connector: OAuth login, read-only tools and token lifecycle', async
     assert.equal((await post('/authorize', form({ ...authorize, username: 'staff', password: 'test-password' }))).status, 403);
     const wrongResource = await post('/authorize', form({ ...authorize, resource: 'https://other.example/mcp', username: 'owner', password: 'test-password' }));
     assert.equal(new URL(wrongResource.headers.get('location')).searchParams.get('error'), 'invalid_target');
+    assert.equal(new URL(wrongResource.headers.get('location')).searchParams.get('iss'), `${url}/`);
     const ok = await post('/authorize', form({ ...authorize, username: 'owner', password: 'test-password' }));
     assert.equal(ok.status, 302);
     const location = new URL(ok.headers.get('location'));
     assert.equal(location.origin + location.pathname, CALLBACK);
     assert.equal(location.searchParams.get('state'), 'xyz');
+    assert.equal(location.searchParams.get('iss'), `${url}/`);
     code = location.searchParams.get('code');
     assert.ok(code);
   });
@@ -353,6 +362,61 @@ test('Claude connector: OAuth login, read-only tools and token lifecycle', async
     assert.deepEqual(progress.rows.map((row) => [row.change, row.target, row.statusLabel]),
       [['投放状态', '100 / dog toy', '待确认'], ['标题', 'DOG-L · 圆窝 L Grey', '待确认']]);
     assert.equal(progress.writeChannels.ads, '批量表（广告 API 未配置）');
+  });
+
+  await t.test('ChatGPT can authorize with issuer identification, read tools and queue proposals', async () => {
+    const registration = await register(CHATGPT_CALLBACK, 'ChatGPT');
+    assert.equal(registration.status, 201);
+    const chatgpt = await registration.json();
+    const proof = pkce();
+    const request = { response_type: 'code', client_id: chatgpt.client_id, redirect_uri: CHATGPT_CALLBACK,
+      code_challenge: proof.challenge, code_challenge_method: 'S256', state: 'chatgpt-state', scope: 'pet:read', resource: `${url}/mcp` };
+    const page = await fetch(`${url}/authorize?${form(request)}`);
+    assert.equal(page.status, 200);
+    const html = await page.text();
+    assert.match(html, /ChatGPT/);
+    assert.match(html, /店主在「待确认改动」页确认后才会执行/);
+    assert.doesNotMatch(html, /授权 Claude|不能修改任何数据/);
+    assert.match(page.headers.get('content-security-policy'), /form-action[^;]*https:\/\/chatgpt\.com/);
+
+    // Validation errors generated by the SDK also carry the same issuer.
+    const bad = await post('/authorize', form({ ...request, response_type: 'token' }));
+    assert.equal(bad.status, 302);
+    const badLocation = new URL(bad.headers.get('location'));
+    assert.equal(badLocation.origin + badLocation.pathname, CHATGPT_CALLBACK);
+    assert.equal(badLocation.searchParams.get('error'), 'invalid_request');
+    assert.equal(badLocation.searchParams.get('iss'), `${url}/`);
+    const unregistered = await post('/authorize', form({ ...request, redirect_uri: 'https://evil.example/callback' }));
+    assert.equal(unregistered.status, 400);
+    assert.equal(unregistered.headers.get('location'), null);
+
+    const granted = await post('/authorize', form({ ...request, username: 'owner', password: 'test-password' }));
+    assert.equal(granted.status, 302);
+    const callback = new URL(granted.headers.get('location'));
+    assert.equal(callback.origin + callback.pathname, CHATGPT_CALLBACK);
+    assert.equal(callback.searchParams.get('iss'), `${url}/`);
+    assert.equal(callback.searchParams.get('state'), request.state);
+    const exchange = await post('/token', form({ grant_type: 'authorization_code', client_id: chatgpt.client_id,
+      code: callback.searchParams.get('code'), code_verifier: proof.verifier, redirect_uri: CHATGPT_CALLBACK, resource: `${url}/mcp` }));
+    assert.equal(exchange.status, 200);
+    const access = await exchange.json();
+    const mcp = new Client({ name: 'chatgpt-test', version: '1.0.0' });
+    await mcp.connect(new StreamableHTTPClientTransport(new URL(`${url}/mcp`), {
+      requestInit: { headers: { Authorization: `Bearer ${access.access_token}` } } }));
+    t.after(() => mcp.close());
+    assert.ok((await mcp.listTools()).tools.some((tool) => tool.name === 'store_overview'));
+    const overview = await mcp.callTool({ name: 'store_overview', arguments: {} });
+    assert.ok(!overview.isError);
+    assert.equal(JSON.parse(overview.content[0].text).catalog.skus, 3);
+    const before = backend.gateway.calls.length;
+    const proposal = await mcp.callTool({ name: 'propose_ad_changes', arguments: { title: 'ChatGPT 待确认建议', changes: [
+      { action: 'pause', entity: 'keyword', campaignId: '101', adGroupId: '201', entityId: '301', reason: '测试连接器只写提议' }] } });
+    assert.ok(!proposal.isError);
+    const id = JSON.parse(proposal.content[0].text).created[0].id;
+    const stored = backend.db.prepare('SELECT status,source FROM pet_change_proposals WHERE id=?').get(id);
+    assert.deepEqual(stored, { status: 'pending', source: 'chatgpt' });
+    assert.equal(backend.db.prepare("SELECT actor FROM pet_change_log WHERE proposal_id=? AND action='proposed'").get(id).actor, 'chatgpt');
+    assert.equal(backend.gateway.calls.length, before);
   });
 
   await t.test('refresh tokens rotate; disabling the owner cuts access', async () => {

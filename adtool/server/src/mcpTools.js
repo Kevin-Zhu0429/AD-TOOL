@@ -464,13 +464,13 @@ function confirmUrl(siteUrl) {
 
 const NEXT_STEP = '这些改动已放进网站「待确认改动」页，还没有改亚马逊。请店主到网站上逐条确认，确认后 Listing 改动通过 SP-API 提交，广告改动在广告 API 开通前会生成批量表。';
 
-export async function proposeListing(input, { userId, gateway = amazonGateway, env = process.env, siteUrl } = {}) {
-  const result = await proposeListingChanges(input, { userId, gateway, env });
+export async function proposeListing(input, { userId, source, gateway = amazonGateway, env = process.env, siteUrl } = {}) {
+  const result = await proposeListingChanges(input, { userId, source, gateway, env });
   return { ...result, confirmUrl: confirmUrl(siteUrl), next: result.created.length ? NEXT_STEP : '没有改动进入待确认队列，原因见 rejected。' };
 }
 
-export function proposeAds(input, { userId, siteUrl } = {}) {
-  const result = proposeAdChanges(input, { userId });
+export function proposeAds(input, { userId, source, siteUrl } = {}) {
+  const result = proposeAdChanges(input, { userId, source });
   return { ...result, confirmUrl: confirmUrl(siteUrl), next: result.created.length ? NEXT_STEP : '没有改动进入待确认队列，原因见 rejected。',
     notes: ['网站里还没有广告数据，编号和当前值按你给的记录，确认页会标成「未核实」。'] };
 }
@@ -629,6 +629,7 @@ export function createPetMcpServer(deps = {}) {
   // 提议类:只写网站自己的待确认队列,不碰亚马逊
   const propose = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false };
   const userOf = (extra) => extra?.authInfo?.extra?.userId ?? null;
+  const sourceOf = (extra) => extra?.authInfo?.extra?.source === 'chatgpt' ? 'chatgpt' : 'claude';
   const reason = z.string().trim().min(1).max(1000).describe('为什么改:写依据的数据');
 
   server.registerTool('propose_listing_changes', {
@@ -649,7 +650,7 @@ export function createPetMcpServer(deps = {}) {
       })).min(1).max(40),
     },
     annotations: { ...propose, openWorldHint: true },
-  }, wrap((args, extra) => proposeListing(args, { ...deps, userId: userOf(extra) })));
+  }, wrap((args, extra) => proposeListing(args, { ...deps, userId: userOf(extra), source: sourceOf(extra) })));
 
   server.registerTool('propose_ad_changes', {
     title: '提议修改广告',
@@ -676,7 +677,7 @@ export function createPetMcpServer(deps = {}) {
       })).min(1).max(40),
     },
     annotations: propose,
-  }, wrap((args, extra) => proposeAds(args, { ...deps, userId: userOf(extra) })));
+  }, wrap((args, extra) => proposeAds(args, { ...deps, userId: userOf(extra), source: sourceOf(extra) })));
 
   server.registerTool('list_change_proposals', {
     title: '待确认改动的进度',

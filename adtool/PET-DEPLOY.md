@@ -156,7 +156,7 @@ ABA 报告 → ASIN 视图顶部的「从亚马逊同步」读取品牌分析「
 - **卖家精灵数据**：评分、评论数、子体销量亚马逊接口没有，点「导入卖家精灵数据」按月导入 Excel / CSV（自动认 ASIN、父 ASIN、子体销量 / 月销量、评分、评分数 / 评论数、价格列，可手动改映射）。同 ASIN 同月再导入覆盖。
 - 没有「定价」角色时其它数据照常同步，页面提示价格没读到。
 
-## Claude 连接器（MCP）
+## ChatGPT / Claude 连接器（MCP）
 
 网站提供一个 MCP 接口，加到 claude.ai 的自定义连接器后，在 Claude 网页版、桌面版、手机 App 里就能直接问“分析一下某款狗窝最近为什么掉单”，Claude 会自己调用下面的工具查数据。查数据的工具全部只读；提改动的两个工具只往网站的「待确认改动」里加条目，不直接改亚马逊，要你在网站上勾选确认后才执行（见下一节）。
 
@@ -189,16 +189,25 @@ ABA 报告 → ASIN 视图顶部的「从亚马逊同步」读取品牌分析「
    MCP_PUBLIC_URL=https://你的域名
    ```
 
-   同时确认 `TRUST_PROXY=true`（登录页按真实 IP 限流需要）。然后照常 `docker compose ... up -d --build`。日志里出现 `[mcp] Claude 连接器地址 https://你的域名/mcp` 就是开好了。不填这一项时连接器关闭，`/mcp` 返回 503。
+   同时确认 `TRUST_PROXY=true`（登录页按真实 IP 限流需要）。然后照常 `docker compose ... up -d --build`。日志里出现 `[mcp] AI 连接器地址 https://你的域名/mcp` 就是开好了。不填这一项时连接器关闭，`/mcp` 返回 503。
 2. 反向代理要把 `/mcp`、`/authorize`、`/token`、`/register`、`/revoke` 和 `/.well-known/` 开头的路径转给网站（整站都转发的话不用改）。接口直接返回 JSON，不用开 SSE 或长连接。
 3. 打开 claude.ai → 设置 → 连接器 → 添加自定义连接器，名称随意，地址填 `https://你的域名/mcp`，其他留空。点连接后会跳到网站的授权页，用**超级管理员**账号登录并授权，跳回 Claude 即可使用。
+
+### 接到 ChatGPT
+
+1. 部署包含 ChatGPT 兼容改动的版本，保留现有 `MCP_PUBLIC_URL`。本店的接口是 `https://amazon.novagaming.top/mcp`，不用额外填 OpenAI API key。
+2. 打开 [ChatGPT 插件页面](https://chatgpt.com/plugins)，添加自定义 MCP 服务：名称填「宠物运营工作台」，服务地址填上面的 `/mcp` 地址，认证选择 OAuth。现有服务支持动态客户端注册，客户端 ID 和密钥无需手工填写；按页面提示创建并安装。
+3. 跳到本站授权页后，用网站的**超级管理员**账号登录并授权。回到 ChatGPT 后，先让它调用 `store_overview` 检查店铺概览和数据日期，再查一个 SKU 验证连接。
+4. Listing 和广告改动只会进入网站的「待确认改动」，来源和日志标为 ChatGPT；仍由店主确认后执行。
+
+服务声明 `authorization_response_iss_parameter_supported: true`，成功和错误授权回调都带与发现文档完全一致的 `iss`（包括末尾 `/`）。因此使用稳定回调 `https://chatgpt.com/connector_platform_oauth_redirect`。只放行这个精确地址，不放行整个 ChatGPT 域名或任意路径。若 ChatGPT 显示含 callback ID 的回调地址，先确认线上已更新发现文档和授权回调，不要扩大白名单绕过。[OpenAI OAuth 文档](https://developers.openai.com/plugins/build/auth)
 
 ### 安全
 
 - 授权用网站自己的账号密码（OAuth 2.1 + PKCE），只有在用的超级管理员能授权；账号停用或改成非超级管理员后，已发的令牌立即失效。
-- 只接受 Claude 的回调地址（`https://claude.ai/api/mcp/auth_callback`）和本机回环地址（Claude Code、MCP Inspector 用），别人注册的客户端没法把授权码转到自己的网站。
+- 只接受 ChatGPT 的稳定回调、Claude 的回调地址（`https://claude.ai/api/mcp/auth_callback`、`https://claude.com/api/mcp/auth_callback`）和本机回环地址（MCP Inspector 等本地客户端用），别人注册的客户端没法把授权码转到自己的网站。
 - 访问令牌 1 小时有效，刷新令牌 30 天、每用一次换新的；数据库只存令牌的 SHA-256 摘要。授权页同一 IP 15 分钟最多 30 次请求。
-- Claude 没有执行改动的工具：提议只进待确认队列，确认只能由超级管理员在网站页面上点。
+- ChatGPT 和 Claude 都没有执行改动的工具：提议只进待确认队列，确认只能由超级管理员在网站页面上点。
 - 每次授权记一条操作日志（`authorize` / `mcp_client`）。想让 Claude 断开，在 Claude 的连接器设置里删除即可；要立刻作废全部令牌，清空 `mcp_oauth_tokens` 表。
 
 ## 待确认改动（Claude 提议，你确认后写回亚马逊）
