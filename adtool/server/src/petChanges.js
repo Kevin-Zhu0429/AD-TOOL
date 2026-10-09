@@ -281,7 +281,7 @@ function saveProposals({ title, summary, source, userId, items }) {
   if (!items.length) return { batchId: null, ids: [], superseded: 0 };
   let batchId = null, superseded = 0;
   const ids = [];
-  const actor = source === 'claude' ? 'claude' : 'user';
+  const actor = ['claude', 'chatgpt'].includes(source) ? source : 'user';
   db.transaction(() => {
     batchId = Number(db.prepare('INSERT INTO pet_change_batches (title, summary, source, created_by) VALUES (?, ?, ?, ?)')
       .run(title, summary || null, source, userId ?? null).lastInsertRowid);

@@ -18,7 +18,8 @@ const STATE_LABEL = { enabled: '启用', paused: '暂停' };
 const VIEWS = [['pending', '待确认'], ['active', '处理中'], ['history', '历史'], ['log', '日志']];
 const EDITABLE = new Set(['listing_title', 'listing_bullets', 'listing_search_terms', 'listing_price', 'listing_sale_price', 'ad_bid', 'ad_budget']);
 const NUMERIC = new Set(['listing_price', 'ad_bid', 'ad_budget']);
-const SOURCE_LABEL = { claude: 'Claude 提议', revert: '撤回', manual: '手动', intel: '产品情报' };
+const AI_LABEL = { claude: 'Claude', chatgpt: 'ChatGPT' };
+const SOURCE_LABEL = { claude: 'Claude 提议', chatgpt: 'ChatGPT 提议', revert: '撤回', manual: '手动', intel: '产品情报' };
 
 function targetText(item) {
   const t = item.target ?? {};
@@ -45,7 +46,7 @@ function AdBody({ item }) {
     {kind !== 'ad_negative' && <span className="tag gray">{ENTITY_LABEL[target.entity]}</span>}{change}
     <span className="hint mono">活动 #{target.campaignId}{target.adGroupId ? ` · 广告组 #${target.adGroupId}` : ''}
       {target.entityId && !['campaign', 'adGroup'].includes(target.entity) ? ` · 编号 #${target.entityId}` : ''}</span>
-    {target.currentReported && <span className="hint">当前值来自 Claude 读到的数据，未核实</span>}
+    {target.currentReported && <span className="hint">当前值来自 AI 客户端读到的数据，未核实</span>}
   </div>;
 }
 
@@ -114,7 +115,7 @@ function Result({ item }) {
 }
 
 function ChangeItem({ item, checked, onCheck, busy, onEdit, onAction, onRevert }) {
-  const meta = [`${item.createdBy ?? ''} ${SOURCE_LABEL[item.source] === 'Claude 提议' ? '经 Claude ' : ''}提议于 ${short(item.createdAt)}`,
+  const meta = [`${item.createdBy ?? ''} ${AI_LABEL[item.source] ? `经 ${AI_LABEL[item.source]} ` : ''}提议于 ${short(item.createdAt)}`,
     item.decidedAt ? `${item.decidedBy ?? ''} ${item.status === 'rejected' ? '拒绝' : '确认'}于 ${short(item.decidedAt)}` : ''].filter(Boolean).join(' · ');
   const canRevert = ['applied', 'submitted', 'not_applied'].includes(item.status) && item.kind !== 'ad_negative'
     && (item.before != null || item.kind === 'listing_sale_price');
@@ -168,7 +169,7 @@ function EditDialog({ item, onClose, onSaved }) {
       <label className="row">结束<input className="inp" type="date" value={end} disabled={busy} onChange={(e) => setEnd(e.target.value)} /></label>
     </div>}
     {numeric ? <input className="inp" type="number" step="0.01" min="0" value={text} disabled={busy} aria-label="新值" onChange={(e) => setText(e.target.value)} />
-      : <textarea className="inp chg-edit" rows={item.kind === 'listing_bullets' ? 12 : 4} value={text} disabled={busy} aria-label="新值" onChange={(e) => setText(e.target.value)} />}
+      : <textarea className="inp chg-edit resize-none" rows={item.kind === 'listing_bullets' ? 12 : 4} value={text} disabled={busy} aria-label="新值" onChange={(e) => setText(e.target.value)} />}
     <p className="hint">{count}。保存后会重新检查，仍需勾选确认才会执行。</p>
     {error && <p className="note err" role="alert">{error}</p>}
     <footer className="row"><div className="spacer" /><button className="btn" disabled={busy} onClick={onClose}>取消</button>
@@ -199,7 +200,7 @@ function detailText(event) {
 
 function LogTable({ events }) {
   if (!events.length) return <p className="note">还没有记录。</p>;
-  const who = (event) => (event.actor === 'claude' ? `Claude（${event.userName ?? ''} 授权）` : event.actor === 'system' ? '网站' : event.userName ?? '');
+  const who = (event) => (AI_LABEL[event.actor] ? `${AI_LABEL[event.actor]}（${event.userName ?? ''} 授权）` : event.actor === 'system' ? '网站' : event.userName ?? '');
   return <div className="card chg-log"><table className="tbl"><thead><tr><th>时间</th><th>谁</th><th>动作</th><th>改动</th><th>对象</th><th>详情</th></tr></thead>
     <tbody>{events.map((event) => <tr key={event.id}><td className="mono">{event.at}</td><td>{who(event)}</td><td>{event.actionLabel}</td>
       <td>#{event.proposalId} {event.kindLabel}</td><td>{event.target}</td><td className="chg-log-detail">{detailText(event)}</td></tr>)}</tbody></table></div>;
@@ -320,7 +321,7 @@ export default function PetChangesPage() {
 
   return <div className="lib pet-changes animate-in">
     <header className="lib-head"><div><h1>待确认改动 <span className="tag blue">US 站</span></h1>
-      <p className="hint">Claude 通过连接器提出的 Listing 和广告改动先放在这里，勾选「确认执行」后才会动亚马逊。Listing 改动用 SP-API 提交，提交前先让亚马逊预检，
+      <p className="hint">ChatGPT 或 Claude 通过连接器提出的 Listing 和广告改动先放在这里，勾选「确认执行」后才会动亚马逊。Listing 改动用 SP-API 提交，提交前先让亚马逊预检，
         提交后每 20 分钟核对一次是否生效；广告改动{config?.adsApi ? '通过广告 API 直接执行' : '在广告 API 开通前生成批量表，下载后到广告后台上传'}。每一步都记在「日志」里。</p></div></header>
     {config && !config.spApi && <p className="note warn">服务器还没有配置宠物店铺的 SP-API 凭证，Listing 改动确认后会失败。</p>}
     {config?.issues?.length > 0 && <p className="note warn">{config.issues.join('；')}</p>}
@@ -344,7 +345,7 @@ export default function PetChangesPage() {
       </div>
     </section>}
 
-    {view !== 'log' && shown && !items.length && <p className="note">{view === 'pending' ? '没有待确认的改动。在 Claude 里分析完产品，让它「提议修改」，改动就会出现在这里。'
+    {view !== 'log' && shown && !items.length && <p className="note">{view === 'pending' ? '没有待确认的改动。在 ChatGPT 或 Claude 里分析完产品，让它「提议修改」，改动就会出现在这里。'
       : view === 'active' ? '没有正在处理的改动。' : '还没有历史记录。'}</p>}
 
     {view !== 'log' && groups.map(({ batch, items: list }) => <section key={batch?.id ?? 0} className="card chg-batch">
