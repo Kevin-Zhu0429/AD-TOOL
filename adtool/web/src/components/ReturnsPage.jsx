@@ -144,19 +144,20 @@ export default function ReturnsPage() {
           <div className="spacer" /><span className="hint">{rows.length} 个 SKU · 点表头排序，点一行看明细</span></div>
         {!rows.length ? <p className="note">{data.skus.length ? '当前筛选没有结果。' : '还没有数据。'}</p> :
           <div className="scroll ret-table"><table className="tbl">
-            <thead><tr>{head('sku', 'SKU')}{head('sold', '卖出', 'num')}{head('returned', '退货', 'num')}{head('rate', '退货率', 'num')}
+            <thead><tr>{head('sku', 'SKU')}<th>ASIN</th>{head('sold', '卖出', 'num')}{head('returned', '退货', 'num')}{head('rate', '退货率', 'num')}
               <th>主要原因</th><th>留言主题</th><th className="num">可售回库</th><th>最新留言</th></tr></thead>
             <tbody>{rows.map((row) => <Fragment key={row.sku}>
               <tr className={`ret-row${open === row.sku ? ' open' : ''}`} onClick={() => setOpen(open === row.sku ? null : row.sku)}
                 tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(open === row.sku ? null : row.sku); } }} aria-expanded={open === row.sku}>
                 <td className="col-sku"><b>{row.sku}</b>{nameOf(row) && <small>{nameOf(row)}</small>}</td>
+                <td className="mono">{row.asin ?? ''}</td>
                 <td className="num">{fmt(row.sold)}</td><td className="num strong">{row.returned ? fmt(row.returned) : ''}</td>
                 <td className={`num strong ${rateLevel(row, total.rate ?? 0)}`}>{row.returned ? (row.rate == null ? <span className="hint" title="这段时间没卖出，退的是之前的订单">没卖</span> : pct(row.rate)) : ''}</td>
                 <td>{row.reasons.slice(0, 2).map((reason) => `${reason.label} ${reason.count}`).join('、')}</td>
                 <td>{row.themes.slice(0, 3).map((theme) => <span key={theme.key} className="tag amber">{theme.label}</span>)}</td>
                 <td className="num">{row.returned ? pct(row.sellableShare) : ''}</td>
                 <td className="ret-latest" title={row.comments[0]?.comment ?? ''}>{row.comments[0]?.comment ?? ''}</td></tr>
-              {open === row.sku && <tr className="ret-detail"><td colSpan={8}><Records sku={row.sku} days={days} /></td></tr>}</Fragment>)}</tbody>
+              {open === row.sku && <tr className="ret-detail"><td colSpan={9}><Records sku={row.sku} days={days} /></td></tr>}</Fragment>)}</tbody>
           </table></div>}
         <p className="hint price-legend">{data.notes.slice(-2).join(' ')} 退货率<span className="danger">红色</span>是全店的 1.5 倍以上（且不低于 8%），<span className="warn">黄色</span>高于全店；只退了 1 件的不标色。</p>
       </section></>}
