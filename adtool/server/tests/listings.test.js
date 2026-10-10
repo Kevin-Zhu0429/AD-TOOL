@@ -287,3 +287,15 @@ test('changes become top-level JSON patches; delete keeps marketplace and langua
   assert.throws(() => buildPatches({ color: [{ value: 'Negro' }] }), /目前不开放修改/);
   assert.throws(() => buildPatches({ item_name: 'text' }), /值格式不对/);
 });
+
+test('补填项:空壳算缺;亚马逊报缺而缓存显示有时,按页面选的值强制补', async () => {
+  const { fillMissing, forcedFillPatches } = await import('../src/listings.js');
+  const fill = { gdpr_risk: 'no_electronic_information_stored', country_of_origin: 'CN' };
+  assert.deepEqual(Object.keys(fillMissing({ gdpr_risk: [{ marketplace_id: 'M1' }], country_of_origin: [{ value: 'CN' }] }, fill, 'M1')), ['gdpr_risk']);
+  const issues = [{ severity: 'ERROR', attributeNames: ['gdpr_risk'] }, { severity: 'WARNING', attributeNames: ['country_of_origin'] }];
+  assert.deepEqual(forcedFillPatches(issues, [], fill, 'M1'), [
+    { op: 'replace', path: '/attributes/gdpr_risk', value: [{ value: 'no_electronic_information_stored', marketplace_id: 'M1' }] },
+  ]);
+  // 已经在补丁里的不重复加
+  assert.deepEqual(forcedFillPatches(issues, [{ path: '/attributes/gdpr_risk' }], fill, 'M1'), []);
+});

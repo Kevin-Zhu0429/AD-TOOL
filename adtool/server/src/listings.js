@@ -551,8 +551,29 @@ export function fillMissing(attributes, fill = {}, marketplaceId) {
   const added = {};
   for (const [name, raw] of Object.entries(fill ?? {})) {
     const build = FILL_ATTRIBUTES[name];
-    if (!build || raw === '' || raw === null || raw === undefined || attributes?.[name]?.length) continue;
+    if (!build || raw === '' || raw === null || raw === undefined || hasValue(attributes?.[name])) continue;
     added[name] = build(raw, marketplaceId);
+  }
+  return added;
+}
+
+/** 属性里至少有一条带值的才算有;[{ marketplace_id }] 这种空壳亚马逊照样报缺 */
+const hasValue = (entries) => Array.isArray(entries)
+  && entries.some((entry) => entry?.value !== undefined && entry?.value !== null && entry?.value !== '');
+
+/**
+ * 亚马逊校验报「缺了」的补填项,本地缓存却显示有(缓存旧了或者是空壳),按页面选的值强制补上。
+ * 返回要追加的补丁;没有要补的就是空数组。
+ */
+export function forcedFillPatches(issues, patches, fill = {}, marketplaceId) {
+  const already = new Set(patches.map((patch) => patch.path));
+  const flagged = new Set((issues ?? []).filter((issue) => issue?.severity === 'ERROR')
+    .flatMap((issue) => issue?.attributeNames ?? []));
+  const added = [];
+  for (const [name, raw] of Object.entries(fill ?? {})) {
+    const build = FILL_ATTRIBUTES[name];
+    if (!build || !flagged.has(name) || already.has(`/attributes/${name}`) || raw === '' || raw === null || raw === undefined) continue;
+    added.push({ op: 'replace', path: `/attributes/${name}`, value: build(raw, marketplaceId) });
   }
   return added;
 }
@@ -662,7 +683,12 @@ listingsRouter.post('/variation/merge', wrap(async (req, res) => {
 
   const results = [];
   for (const plan of plans) {
-    const preview = await sendPatch(store, plan.sku, plan.productType, plan.patches, true);
+    let preview = await sendPatch(store, plan.sku, plan.productType, plan.patches, true);
+    const extra = isBlocked(preview) ? forcedFillPatches(preview.issues, plan.patches, fill, store.marketplaceId) : [];
+    if (extra.length) {
+      plan.patches.push(...extra);
+      preview = await sendPatch(store, plan.sku, plan.productType, plan.patches, true);
+    }
     results.push({ sku: plan.sku, mode: 'preview', ...submissionOf(preview), blocked: isBlocked(preview), patches: plan.patches });
   }
   const blocked = results.some((row) => row.blocked);
