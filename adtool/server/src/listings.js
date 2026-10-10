@@ -430,7 +430,8 @@ function productTypeOf(store, cached) {
 function sendPatch(store, sku, productType, patches, preview) {
   return listingCall(store, skuPath(store, sku), {
     method: 'PATCH',
-    query: { includedData: 'issues,identifiers', ...(preview ? { mode: 'VALIDATION_PREVIEW' } : {}) },
+    // identifiers 只有校验模式能要,正式提交带上会被亚马逊 400 拒掉
+    query: preview ? { includedData: 'issues,identifiers', mode: 'VALIDATION_PREVIEW' } : { includedData: 'issues' },
     body: { productType, patches },
   });
 }
@@ -595,7 +596,8 @@ export function parentAttributes({ theme, itemName, brand, category, country, ma
 function sendPut(store, sku, productType, attributes, preview) {
   return listingCall(store, skuPath(store, sku), {
     method: 'PUT',
-    query: { includedData: 'issues,identifiers', ...(preview ? { mode: 'VALIDATION_PREVIEW' } : {}) },
+    // identifiers 只有校验模式能要,正式提交带上会被亚马逊 400 拒掉
+    query: preview ? { includedData: 'issues,identifiers', mode: 'VALIDATION_PREVIEW' } : { includedData: 'issues' },
     body: { productType, requirements: 'LISTING_PRODUCT_ONLY', attributes },
   });
 }

@@ -174,6 +174,8 @@ test('owner pulls a whole store, validates edits, and live submit validates firs
   assert.deepEqual(created.data.results.map((r) => [r.sku, r.status]), [['SKU-3', 'ACCEPTED']]);
   const order = requests.slice(calls).map((r) => `${r.method}:${r.query.mode ?? 'live'}`);
   assert.deepEqual(order, ['PUT:VALIDATION_PREVIEW', 'PUT:live', 'PATCH:VALIDATION_PREVIEW', 'PATCH:live']);
+  // 正式提交不能要 identifiers,否则亚马逊回 400
+  assert.deepEqual(requests.slice(calls).map((r) => r.query.includedData), ['issues,identifiers', 'issues', 'issues,identifiers', 'issues']);
   // 父体照抄子体的商品属性(这里是 color),缺的必填项按页面选的补上,空值不补
   assert.deepEqual(requests[calls].body, { productType: 'INK_OR_TONER', requirements: 'LISTING_PRODUCT_ONLY', attributes: {
     color: [{ language_tag: 'es_ES', value: 'Tricolor', marketplace_id: 'A1RKKUPIHCS9HS' }],
