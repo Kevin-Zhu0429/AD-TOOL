@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  diffAttributes, localeOf, merchantQuantity, priceOf, setImageUrl, setMerchantQuantity, setPrice, setTextValues, textValues,
+  diffAttributes, localeOf, pageYieldOf, priceOf, salePriceOf, setPageYield, setPrice, setSalePrice, setTextValues, textValues,
 } from './listingEdit.js';
 
 const M = 'A1RKKUPIHCS9HS';
@@ -13,9 +13,10 @@ const attributes = {
   ],
   purchasable_offer: [
     { audience: 'B2B', currency: 'EUR', marketplace_id: M, our_price: [{ schedule: [{ value_with_tax: 15 }] }] },
-    { audience: 'ALL', currency: 'EUR', marketplace_id: M, our_price: [{ schedule: [{ value_with_tax: 19.99 }] }] },
+    { audience: 'ALL', currency: 'EUR', marketplace_id: M, our_price: [{ schedule: [{ value_with_tax: 19.99 }] }],
+      discounted_price: [{ schedule: [{ value_with_tax: 16.19, start_at: '2026-08-26T07:00:00.000Z', end_at: '2026-12-31T08:00:00.000Z' }] }] },
   ],
-  fulfillment_availability: [{ fulfillment_channel_code: 'DEFAULT', quantity: 7 }],
+  page_yield: [{ value: 480, marketplace_id: M }],
   color: [{ value: 'Negro', language_tag: 'es_ES', marketplace_id: M }],
 };
 const locale = localeOf(attributes, { marketplaceId: M, country: 'ES' });
@@ -46,11 +47,21 @@ test('改价只动面向所有买家的报价，B2B 价不变', () => {
   assert.deepEqual(attributes.purchasable_offer[1].our_price[0].schedule[0].value_with_tax, 19.99);
 });
 
-test('自发货库存可改，FBA 返回 null；图片地址清空即删除', () => {
-  assert.equal(merchantQuantity(attributes), '7');
-  assert.equal(setMerchantQuantity(attributes, '12').fulfillment_availability[0].quantity, 12);
-  assert.equal(merchantQuantity({ fulfillment_availability: [{ fulfillment_channel_code: 'AMAZON_EU' }] }), null);
-  const withImage = setImageUrl(attributes, 'main_product_image_locator', ' https://example.com/a.jpg ', locale);
-  assert.deepEqual(withImage.main_product_image_locator, [{ media_location: 'https://example.com/a.jpg', marketplace_id: M }]);
-  assert.equal(setImageUrl(withImage, 'main_product_image_locator', '', locale).main_product_image_locator, undefined);
+test('促销价和日期：只改截止日期时开始时间原样保留，清空促销价就去掉', () => {
+  assert.deepEqual(salePriceOf(attributes), { value: '16.19', start: '2026-08-26', end: '2026-12-31' });
+  const edited = setSalePrice(attributes, { value: '15.5', start: '2026-08-26', end: '2027-01-15' }, { locale, currency: 'EUR' });
+  assert.deepEqual(edited.purchasable_offer[1].discounted_price, [{ schedule: [
+    { value_with_tax: 15.5, start_at: '2026-08-26T07:00:00.000Z', end_at: '2027-01-15T00:00:00.000Z' },
+  ] }]);
+  assert.equal(edited.purchasable_offer[1].our_price[0].schedule[0].value_with_tax, 19.99);
+  const cleared = setSalePrice(attributes, { value: '', start: '', end: '' }, { locale, currency: 'EUR' });
+  assert.equal(cleared.purchasable_offer[1].discounted_price, undefined);
+  assert.ok(attributes.purchasable_offer[1].discounted_price);
+});
+
+test('打印页数可改，清空即删除', () => {
+  assert.equal(pageYieldOf(attributes), '480');
+  assert.deepEqual(setPageYield(attributes, '600', locale).page_yield, [{ value: 600, marketplace_id: M }]);
+  assert.equal(setPageYield(attributes, '', locale).page_yield, undefined);
+  assert.deepEqual(setPageYield({}, '300', locale).page_yield, [{ value: 300, marketplace_id: M }]);
 });

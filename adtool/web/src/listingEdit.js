@@ -7,18 +7,6 @@ export const LANGUAGE_OF = {
   US: 'en_US', CA: 'en_CA', AU: 'en_AU', AE: 'en_AE',
 };
 
-export const IMAGE_KEYS = [
-  'main_product_image_locator',
-  ...Array.from({ length: 8 }, (_, i) => `other_product_image_locator_${i + 1}`),
-  'swatch_product_image_locator',
-];
-
-/** 表单里单独做了输入框的属性;其余属性在「其他属性」里按 JSON 改 */
-export const FORM_KEYS = new Set([
-  'item_name', 'bullet_point', 'product_description', 'generic_keyword',
-  'purchasable_offer', 'fulfillment_availability', ...IMAGE_KEYS,
-]);
-
 const clone = (value) => (value === undefined ? undefined : JSON.parse(JSON.stringify(value)));
 
 /** 一个文字属性的所有值,如五点 → ['第一点', '第二点', …] */
@@ -89,33 +77,64 @@ export function setPrice(attributes, value, { locale, currency }) {
   return next;
 }
 
-/** 自发货(DEFAULT)库存;FBA 的库存由亚马逊仓库决定,改不了,返回 null */
-export function merchantQuantity(attributes) {
-  const row = (attributes?.fulfillment_availability ?? []).find((entry) => entry?.fulfillment_channel_code === 'DEFAULT');
-  return row ? String(row.quantity ?? '') : null;
+const dateOf = (value) => (value ? String(value).slice(0, 10) : '');
+
+/** 促销价:purchasable_offer → discounted_price → schedule[0],带开始、结束日期 */
+export function salePriceOf(attributes) {
+  const offers = attributes?.purchasable_offer ?? [];
+  const schedule = offers[consumerOfferIndex(offers)]?.discounted_price?.[0]?.schedule?.[0];
+  return {
+    value: schedule?.value_with_tax === undefined || schedule?.value_with_tax === null ? '' : String(schedule.value_with_tax),
+    start: dateOf(schedule?.start_at),
+    end: dateOf(schedule?.end_at),
+  };
 }
 
-export function setMerchantQuantity(attributes, quantity) {
+/**
+ * 写回促销价。value 为空就去掉促销价;日期没改时保留亚马逊原来的时间点(带时区的那几个小时),
+ * 改了就写成那天的 00:00 UTC。
+ */
+export function setSalePrice(attributes, { value, start, end }, { locale, currency }) {
   const next = { ...attributes };
-  next.fulfillment_availability = (attributes?.fulfillment_availability ?? []).map((entry) => (
-    entry?.fulfillment_channel_code === 'DEFAULT' ? { ...entry, quantity: Math.max(0, Math.round(Number(quantity) || 0)) } : entry
-  ));
+  const offers = clone(attributes?.purchasable_offer ?? []);
+  let index = consumerOfferIndex(offers);
+  if (index < 0) {
+    offers.push({ marketplace_id: locale.marketplace_id, currency, audience: 'ALL' });
+    index = 0;
+  }
+  const offer = offers[index];
+  if (String(value ?? '').trim() === '') {
+    delete offer.discounted_price;
+  } else {
+    const before = offer.discounted_price?.[0]?.schedule?.[0] ?? {};
+    const at = (date, old) => (!date ? undefined : dateOf(old) === date ? old : `${date}T00:00:00.000Z`);
+    const schedule = { ...before, value_with_tax: Number(value) };
+    for (const [key, date] of [['start_at', start], ['end_at', end]]) {
+      const stamp = at(date, before[key]);
+      if (stamp) schedule[key] = stamp;
+      else delete schedule[key];
+    }
+    offer.discounted_price = [{ schedule: [schedule] }];
+  }
+  next.purchasable_offer = offers;
   return next;
 }
 
-export function imageUrl(attributes, key) {
-  return String(attributes?.[key]?.[0]?.media_location ?? '');
+/** 打印页数 page_yield:[{ value: 480, marketplace_id }] */
+export function pageYieldOf(attributes) {
+  const value = attributes?.page_yield?.[0]?.value;
+  return value === undefined || value === null ? '' : String(value);
 }
 
-export function setImageUrl(attributes, key, url, locale) {
+export function setPageYield(attributes, value, locale) {
   const next = { ...attributes };
-  const value = String(url ?? '').trim();
-  if (!value) {
-    delete next[key];
+  const text = String(value ?? '').trim();
+  if (!text) {
+    delete next.page_yield;
     return next;
   }
-  const base = attributes?.[key]?.[0] ?? {};
-  next[key] = [{ ...base, media_location: value, marketplace_id: base.marketplace_id ?? locale.marketplace_id }];
+  const base = attributes?.page_yield?.[0] ?? {};
+  next.page_yield = [{ ...base, value: Math.round(Number(text)), marketplace_id: base.marketplace_id ?? locale.marketplace_id }];
   return next;
 }
 
@@ -132,17 +151,4 @@ export function diffAttributes(original = {}, edited = {}) {
     }
   }
   return changes;
-}
-
-/** 列表里一个属性值的简短说明,给「其他属性」表格用 */
-export function attributePreview(value) {
-  const parts = (Array.isArray(value) ? value : [value]).map((entry) => {
-    if (entry && typeof entry === 'object') {
-      if ('value' in entry && typeof entry.value !== 'object') return String(entry.value) + (entry.unit ? ` ${entry.unit}` : '');
-      return JSON.stringify(Object.fromEntries(Object.entries(entry).filter(([key]) => key !== 'marketplace_id' && key !== 'language_tag')));
-    }
-    return String(entry);
-  });
-  const text = parts.join(' | ');
-  return text.length > 160 ? `${text.slice(0, 160)}…` : text;
 }

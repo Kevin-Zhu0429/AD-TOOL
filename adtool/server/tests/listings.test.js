@@ -192,6 +192,6 @@ test('changes become top-level JSON patches; delete keeps marketplace and langua
     { op: 'delete', path: '/attributes/generic_keyword', value: [{ marketplace_id: 'M1', language_tag: 'es_ES' }] },
   ]);
   assert.throws(() => buildPatches({}), /没有要提交的改动/);
-  assert.throws(() => buildPatches({ 'bad/name': [{ value: 1 }] }), /属性名不对/);
+  assert.throws(() => buildPatches({ color: [{ value: 'Negro' }] }), /目前不开放修改/);
   assert.throws(() => buildPatches({ item_name: 'text' }), /值格式不对/);
 });

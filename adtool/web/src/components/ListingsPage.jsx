@@ -1,15 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api.js';
 import {
-  FORM_KEYS, IMAGE_KEYS, attributePreview, diffAttributes, imageUrl, localeOf, merchantQuantity, priceOf,
-  setImageUrl, setMerchantQuantity, setPrice, setTextValues, textValues,
+  diffAttributes, localeOf, pageYieldOf, priceOf, salePriceOf, setPageYield, setPrice, setSalePrice, setTextValues, textValues,
 } from '../listingEdit.js';
 import './ListingsPage.css';
 
 const STATUS_LABEL = { BUYABLE: '可购买', DISCOVERABLE: '可搜索到' };
 const SEVERITY = { ERROR: { label: '错误', cls: 'red' }, WARNING: { label: '警告', cls: 'amber' }, INFO: { label: '提示', cls: 'gray' } };
-const IMAGE_LABEL = (key) => (key === 'main_product_image_locator' ? '主图'
-  : key === 'swatch_product_image_locator' ? '颜色样图' : `副图 ${key.split('_').pop()}`);
 const TEXT_LIMITS = { item_name: 200, bullet_point: 500, product_description: 2000, generic_keyword: 249 };
 const storeKey = (store) => `${store.brand}|${store.country}`;
 const formatTime = (ms) => (ms ? new Date(ms).toLocaleString('zh-CN', { hour12: false }) : '');
@@ -221,11 +218,9 @@ function ListingEditor({ store, sku, liveSubmit, onClose, onRefreshed }) {
   const [busy, setBusy] = useState('');
   const [message, setMessage] = useState(null);
   const [result, setResult] = useState(null);
-  const [rawKey, setRawKey] = useState('');
-  const [rawText, setRawText] = useState('');
-  const [newAttr, setNewAttr] = useState('');
   // 价格输入框自己留一份文字,输到「17.」这种半截数字时不被改写
   const [priceDraft, setPriceDraft] = useState(null);
+  const [saleDraft, setSaleDraft] = useState(null);
 
   async function load(refresh = false) {
     setBusy(refresh ? 'refresh' : 'load');
@@ -235,6 +230,7 @@ function ListingEditor({ store, sku, liveSubmit, onClose, onRefreshed }) {
       setData(next);
       setEdited(next.item.attributes ?? {});
       setPriceDraft(null);
+      setSaleDraft(null);
       setResult(null);
       if (refresh) onRefreshed();
     } catch (error) {
@@ -271,32 +267,17 @@ function ListingEditor({ store, sku, liveSubmit, onClose, onRefreshed }) {
     }
   }
 
-  function openRaw(key) {
-    setRawKey(key);
-    setRawText(JSON.stringify(edited[key] ?? [{ value: '', ...locale }], null, 2));
-  }
-
-  function saveRaw() {
-    try {
-      const value = rawText.trim() ? JSON.parse(rawText) : null;
-      if (value !== null && !Array.isArray(value)) throw new Error('要是一个数组');
-      setEdited((current) => {
-        const next = { ...current };
-        if (value === null || !value.length) delete next[rawKey];
-        else next[rawKey] = value;
-        return next;
-      });
-      setRawKey('');
-    } catch (error) {
-      setMessage({ kind: 'err', text: `${rawKey} 的 JSON 不对：${error.message}` });
-    }
-  }
-
   const summary = data?.item.summaries?.[0] ?? {};
   const issues = data?.item.issues ?? [];
-  const otherKeys = Object.keys(edited ?? {}).filter((key) => !FORM_KEYS.has(key)).sort();
   const price = edited ? priceOf(edited) : { value: '', currency: '' };
-  const quantity = edited ? merchantQuantity(edited) : null;
+  const sale = edited ? salePriceOf(edited) : { value: '', start: '', end: '' };
+  const saleValue = saleDraft ?? sale.value;
+  const updateSale = (patch) => {
+    const next = { ...sale, value: saleValue, ...patch };
+    // 促销价没填完整(空或半截数字)时先不写进属性
+    if (next.value.trim() !== '' && !(Number(next.value) > 0)) return;
+    setEdited((current) => setSalePrice(current, next, { locale, currency: price.currency }));
+  };
   const bullets = edited ? textValues(edited, 'bullet_point') : [];
   const textField = (key, label, { rows = 2 } = {}) => {
     const value = textValues(edited, key).join(key === 'generic_keyword' ? ' ' : '\n');
@@ -351,7 +332,7 @@ function ListingEditor({ store, sku, liveSubmit, onClose, onRefreshed }) {
               {textField('item_name', '标题', { rows: 2 })}
               <div className={`field${changes.bullet_point !== undefined ? ' changed' : ''}`}>
                 <span>五点描述</span>
-                {[...bullets, ''].slice(0, Math.max(5, bullets.length + 1)).map((text, index) => (
+                {[...bullets, ...Array(Math.max(5, bullets.length + 1) - bullets.length).fill('')].map((text, index) => (
                   <textarea
                     key={index} className="inp" rows={2} value={text}
                     placeholder={`第 ${index + 1} 点`}
@@ -368,10 +349,10 @@ function ListingEditor({ store, sku, liveSubmit, onClose, onRefreshed }) {
             </section>
 
             <section className="stack">
-              <h3>价格和库存</h3>
-              <div className="row wrap">
-                <label className={`field${changes.purchasable_offer !== undefined ? ' changed' : ''}`}>
-                  <span>售价（{price.currency || '站点货币'}）</span>
+              <h3>价格</h3>
+              <div className="listings-grid">
+                <label className="field">
+                  <span>您的价格（{price.currency || '站点货币'}）</span>
                   <input
                     className="inp" type="number" step="0.01" min="0" value={priceDraft ?? price.value}
                     onChange={(e) => {
@@ -381,55 +362,37 @@ function ListingEditor({ store, sku, liveSubmit, onClose, onRefreshed }) {
                     }}
                   />
                 </label>
-                <label className={`field${changes.fulfillment_availability !== undefined ? ' changed' : ''}`}>
-                  <span>自发货库存</span>
-                  {quantity === null
-                    ? <input className="inp" disabled value="FBA，由亚马逊仓库决定" readOnly />
-                    : <input className="inp" type="number" min="0" step="1" value={quantity}
-                        onChange={(e) => setEdited((current) => setMerchantQuantity(current, e.target.value))} />}
+                <label className="field">
+                  <span title="清空就是取消促销">销售价格（促销价）</span>
+                  <input
+                    className="inp" type="number" step="0.01" min="0" value={saleValue}
+                    onChange={(e) => { setSaleDraft(e.target.value); updateSale({ value: e.target.value }); }}
+                  />
+                </label>
+                <label className="field">
+                  <span>销售开始日期</span>
+                  <input className="inp" type="date" value={sale.start} disabled={!saleValue} onChange={(e) => updateSale({ start: e.target.value })} />
+                </label>
+                <label className="field">
+                  <span>销售截止日期</span>
+                  <input className="inp" type="date" value={sale.end} disabled={!saleValue} onChange={(e) => updateSale({ end: e.target.value })} />
                 </label>
               </div>
-            </section>
-
-            <section className="stack">
-              <h3>图片 <span className="hint">填公网能打开的图片地址，亚马逊会自己去下载</span></h3>
-              <div className="listings-images">
-                {IMAGE_KEYS.map((key) => {
-                  const url = imageUrl(edited, key);
-                  return (
-                    <label key={key} className={`listings-image${changes[key] !== undefined ? ' changed' : ''}`}>
-                      {url ? <img src={url} alt="" loading="lazy" /> : <span className="listings-image-empty">{IMAGE_LABEL(key)}</span>}
-                      <span className="hint">{IMAGE_LABEL(key)}</span>
-                      <input className="inp" value={url} placeholder="https://…" onChange={(e) => setEdited((current) => setImageUrl(current, key, e.target.value, locale))} />
-                    </label>
-                  );
-                })}
-              </div>
-            </section>
-
-            <section className="stack">
-              <h3>其他属性 <span className="hint">{otherKeys.length} 个，点「改」按亚马逊原格式编辑</span></h3>
-              <table className="tbl listings-attrs">
-                <tbody>
-                  {otherKeys.map((key) => (
-                    <tr key={key} className={changes[key] !== undefined ? 'changed' : ''}>
-                      <td className="mono">{key}</td>
-                      <td>{attributePreview(edited[key])}</td>
-                      <td><button className="btn sm ghost" onClick={() => openRaw(key)}>改</button></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {rawKey && (
-                <div className="card stack">
-                  <div className="row"><b className="mono">{rawKey}</b><div className="spacer" /><span className="hint">清空 = 删除这个属性</span></div>
-                  <textarea className="inp mono" rows={10} value={rawText} onChange={(e) => setRawText(e.target.value)} />
-                  <div className="row"><button className="btn sm primary" onClick={saveRaw}>确定</button><button className="btn sm" onClick={() => setRawKey('')}>取消</button></div>
-                </div>
+              {changes.purchasable_offer !== undefined && saleValue && (!sale.start || !sale.end) && (
+                <div className="note warn">促销价要同时填开始和截止日期，亚马逊才会接受。</div>
               )}
-              <div className="row">
-                <input className="inp mono" placeholder="新增属性名，如 special_feature" value={newAttr} onChange={(e) => setNewAttr(e.target.value)} />
-                <button className="btn sm" disabled={!/^[a-z][a-z0-9_]*$/.test(newAttr.trim())} onClick={() => { openRaw(newAttr.trim()); setNewAttr(''); }}>添加</button>
+            </section>
+
+            <section className="stack">
+              <h3>规格</h3>
+              <div className="listings-grid">
+                <label className={`field${changes.page_yield !== undefined ? ' changed' : ''}`}>
+                  <span>打印页数（page_yield）</span>
+                  <input
+                    className="inp" type="number" min="0" step="1" value={pageYieldOf(edited)}
+                    onChange={(e) => setEdited((current) => setPageYield(current, e.target.value, locale))}
+                  />
+                </label>
               </div>
             </section>
           </div>
@@ -449,7 +412,7 @@ function ListingEditor({ store, sku, liveSubmit, onClose, onRefreshed }) {
           <div className="row">
             <span className="stat">改了 <b>{changedKeys.length}</b> 项{changedKeys.length ? `：${changedKeys.join('、')}` : ''}</span>
             <div className="spacer" />
-            <button className="btn" disabled={!changedKeys.length || !!busy} onClick={() => { setEdited(original); setPriceDraft(null); }}>撤销改动</button>
+            <button className="btn" disabled={!changedKeys.length || !!busy} onClick={() => { setEdited(original); setPriceDraft(null); setSaleDraft(null); }}>撤销改动</button>
             <button className="btn" disabled={!changedKeys.length || !!busy} onClick={() => submit(false)}>{busy === 'preview' ? '校验中…' : '校验（不改线上）'}</button>
             <button
               className="btn primary" disabled={!liveSubmit || !changedKeys.length || !!busy} onClick={() => submit(true)}

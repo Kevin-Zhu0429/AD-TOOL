@@ -281,7 +281,10 @@ export function listRow(row, marketplaceId) {
 
 // ---------- 改动 → JSON Patch ----------
 
-const ATTRIBUTE_NAME = /^[a-z][a-z0-9_]{0,99}$/;
+/** 目前只开放这几个属性:标题、五点、描述、搜索词、价格(含促销价和日期)、打印页数 */
+export const EDITABLE_ATTRIBUTES = new Set([
+  'item_name', 'bullet_point', 'product_description', 'generic_keyword', 'purchasable_offer', 'page_yield',
+]);
 
 /**
  * 页面提交的是「改了的属性 → 新值」,新值是亚马逊属性格式的数组;null 表示删掉这个属性。
@@ -291,9 +294,8 @@ export function buildPatches(changes, original = {}) {
   if (!changes || typeof changes !== 'object' || Array.isArray(changes)) throw httpError(400, '没有要提交的改动');
   const entries = Object.entries(changes);
   if (!entries.length) throw httpError(400, '没有要提交的改动');
-  if (entries.length > 100) throw httpError(400, '一次最多提交 100 个属性的改动');
   return entries.map(([name, value]) => {
-    if (!ATTRIBUTE_NAME.test(name)) throw httpError(400, `属性名不对：${name}`);
+    if (!EDITABLE_ATTRIBUTES.has(name)) throw httpError(400, `${name} 目前不开放修改`);
     if (value === null) {
       const keys = (original[name] ?? []).map((entry) => Object.fromEntries(
         ['marketplace_id', 'language_tag'].filter((key) => entry?.[key]).map((key) => [key, entry[key]])
