@@ -158,7 +158,23 @@ const THEME_PART_ATTRIBUTE = {
   COLOR: 'color', COLOR_NAME: 'color', SIZE: 'size', SIZE_NAME: 'size', STYLE: 'style', STYLE_NAME: 'style',
   SET_NAME: 'set_name', PATTERN: 'pattern', PATTERN_NAME: 'pattern', MATERIAL: 'material', SCENT_NAME: 'scent',
   FLAVOR_NAME: 'flavor', MODEL: 'model_number', MODEL_NAME: 'model_name',
+  NUMBER_OF_ITEMS: 'number_of_items', PAGE_YIELD: 'page_yield', COMPATIBLE_PRINTER_MODELS: 'compatible_printer_models',
 };
+
+/** 墨盒(INKJET_PRINTER_INK)能用的变体主题,美国站和西班牙站的分类模板里列出来的并集 */
+export const INK_THEMES = [
+  'SET_NAME', 'SIZE/SET_NAME', 'COLOR', 'INK_COLOR', 'COLOR/SIZE', 'COLOR/NUMBER_OF_ITEMS', 'COLOR/SIZE/NUMBER_OF_ITEMS',
+  'COLOR/SIZE/TOTAL_PRODUCT_QUANTITY', 'COLOR/TOTAL_PRODUCT_QUANTITY', 'COMPATIBLE_PRINTER_MODELS', 'NUMBER_OF_ITEMS',
+  'NUMBER_OF_ITEMS/PAGE_YIELD', 'PAGE_YIELD', 'SIZE', 'SIZE/NUMBER_OF_ITEMS', 'SIZE/TOTAL_PRODUCT_QUANTITY', 'TOTAL_PRODUCT_QUANTITY',
+];
+
+/** 新建父体的分类填哪一列:美国站模板是商品类型关键词,欧洲站模板是推荐浏览节点(和服务器 categoryAttribute 一致) */
+export function parentCategoryField(country) {
+  if (['ES', 'DE', 'FR', 'IT', 'UK'].includes(country)) {
+    return { attribute: 'recommended_browse_nodes', label: '推荐浏览节点（recommended_browse_nodes）', fallback: country === 'ES' ? '34285014031' : '' };
+  }
+  return { attribute: 'item_type_keyword', label: '商品类型关键词（item_type_keyword）', fallback: country === 'US' ? 'inkjet-printer-ink-cartridges' : '' };
+}
 
 /** 变体主题名 → 子体要带的属性,如 SIZE_NAME/COLOR_NAME → ['size', 'color']、SET_NAME → ['set_name']。亚马逊返回了属性列表时以它为准 */
 export function themeAttributes(theme, fromAmazon = []) {

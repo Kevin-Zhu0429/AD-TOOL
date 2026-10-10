@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api.js';
-import { themeAttributes } from '../listingEdit.js';
+import { INK_THEMES, parentCategoryField, themeAttributes } from '../listingEdit.js';
 
 const SEVERITY = { ERROR: '错误', WARNING: '警告', INFO: '提示' };
 
-const NEW_PARENT = { sku: '', itemName: '', brand: '', itemTypeKeyword: 'inkjet-printer-ink-cartridges' };
+const newParentDraft = (country) => ({ sku: '', itemName: '', brand: '', category: parentCategoryField(country).fallback });
 
 const matches = (item, needle) => !needle
   || [item.sku, item.asin, item.itemName].some((value) => String(value ?? '').toLowerCase().includes(needle));
@@ -12,7 +12,8 @@ const matches = (item, needle) => !needle
 export default function VariationPanel({ store, items, liveSubmit, onChanged }) {
   // existing = 挂到已有父体;new = 新建父体(同事模板的做法:建一个只有标题和品牌的父体,主题 SET_NAME)
   const [mode, setMode] = useState('existing');
-  const [draft, setDraft] = useState(NEW_PARENT);
+  const [draft, setDraft] = useState(() => newParentDraft(store.country));
+  const categoryField = parentCategoryField(store.country);
   const [parentQuery, setParentQuery] = useState('');
   const [parentSku, setParentSku] = useState('');
   const [theme, setTheme] = useState('');
@@ -66,7 +67,7 @@ export default function VariationPanel({ store, items, liveSubmit, onChanged }) 
   function switchMode(next) {
     setMode(next);
     setParentSku('');
-    setDraft(NEW_PARENT);
+    setDraft(newParentDraft(store.country));
     setTheme(next === 'new' ? 'SET_NAME' : '');
     setPicked([]);
     setResults(null);
@@ -142,7 +143,7 @@ export default function VariationPanel({ store, items, liveSubmit, onChanged }) 
       const res = await api.mergeVariation({
         ...store, theme: theme.trim(), live,
         ...(mode === 'new'
-          ? { newParent: { ...draft, sku: draft.sku.trim(), itemName: draft.itemName.trim(), brand: draft.brand.trim(), itemTypeKeyword: draft.itemTypeKeyword.trim() } }
+          ? { newParent: { ...draft, sku: draft.sku.trim(), itemName: draft.itemName.trim(), brand: draft.brand.trim(), category: draft.category.trim() } }
           : { parentSku: parent.sku }),
         children: picked.map((row) => ({ sku: row.sku, values: row.values })),
       });
@@ -153,7 +154,7 @@ export default function VariationPanel({ store, items, liveSubmit, onChanged }) 
         if (mode === 'new') {
           setMode('existing');
           setParentSku(targetSku);
-          setDraft(NEW_PARENT);
+          setDraft(newParentDraft(store.country));
         }
         onChanged();
       }
@@ -212,8 +213,8 @@ export default function VariationPanel({ store, items, liveSubmit, onChanged }) 
             <input className="inp" value={draft.brand} onChange={(e) => setDraft({ ...draft, brand: e.target.value })} />
           </label>
           <label className="field">
-            <span>商品类型关键词（item_type_keyword）</span>
-            <input className="inp mono" value={draft.itemTypeKeyword} onChange={(e) => setDraft({ ...draft, itemTypeKeyword: e.target.value })} />
+            <span>{categoryField.label}</span>
+            <input className="inp mono" value={draft.category} onChange={(e) => setDraft({ ...draft, category: e.target.value })} />
           </label>
         </div>
       )}
@@ -235,7 +236,8 @@ export default function VariationPanel({ store, items, liveSubmit, onChanged }) 
           <div className="row wrap">
             <label className="field">
               <span>变体主题（variation_theme）</span>
-              <input className="inp mono" value={theme} onChange={(e) => setTheme(e.target.value.toUpperCase())} placeholder="如 COLOR、SIZE_NAME/COLOR_NAME" />
+              <input className="inp mono" list="variation-themes" value={theme} onChange={(e) => setTheme(e.target.value.toUpperCase())} placeholder="如 SET_NAME、COLOR" />
+              <datalist id="variation-themes">{INK_THEMES.map((name) => <option key={name} value={name} />)}</datalist>
             </label>
             <span className="stat">子体要带的属性：<b className="mono">{attributes.join('、') || '—'}</b></span>
           </div>

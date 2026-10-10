@@ -515,17 +515,23 @@ export function detachPatches(marketplaceId) {
 const languageOf = (item) => Object.values(item.attributes ?? {}).flat().find((entry) => entry?.language_tag)?.language_tag;
 
 /**
- * 新建父体的属性,和卖家后台模板里父体那一行一致:父体标记、变体主题、标题、品牌、商品类型关键词。
+ * 父体的分类写在哪个属性:美国站模板用 item_type_keyword(如 inkjet-printer-ink-cartridges),
+ * 欧洲站模板没有这一列,用 recommended_browse_nodes(西班牙墨盒是 34285014031)。
+ */
+export const categoryAttribute = (country) => (['ES', 'DE', 'FR', 'IT', 'UK'].includes(country) ? 'recommended_browse_nodes' : 'item_type_keyword');
+
+/**
+ * 新建父体的属性,和卖家后台模板里父体那一行一致:父体标记、变体主题、标题、品牌、分类。
  * 父体不卖货,没有价格、库存和 UPC。
  */
-export function parentAttributes({ theme, itemName, brand, itemTypeKeyword, marketplaceId, languageTag }) {
+export function parentAttributes({ theme, itemName, brand, category, country, marketplaceId, languageTag }) {
   const text = (value) => [{ ...(languageTag ? { language_tag: languageTag } : {}), value, marketplace_id: marketplaceId }];
   return {
     parentage_level: [{ marketplace_id: marketplaceId, value: 'parent' }],
     variation_theme: [{ name: theme }],
     item_name: text(itemName),
     brand: text(brand),
-    ...(itemTypeKeyword ? { item_type_keyword: [{ value: itemTypeKeyword, marketplace_id: marketplaceId }] } : {}),
+    ...(category ? { [categoryAttribute(country)]: [{ value: category, marketplace_id: marketplaceId }] } : {}),
   };
 }
 
@@ -540,7 +546,7 @@ function sendPut(store, sku, productType, attributes, preview) {
 /**
  * 合并:children = [{ sku, values: { set_name: '67xl Black' } }]。
  * 挂到已有父体:所有子体先逐个校验,有一个不通过就整批不提交;live 时全部通过才逐个正式提交。
- * 新建父体(newParent = { sku, itemName, brand, itemTypeKeyword }):父体还不存在,子体的校验可能报「找不到父体」,
+ * 新建父体(newParent = { sku, itemName, brand, category }):父体还不存在,子体的校验可能报「找不到父体」,
  * 所以 live 时先校验并建好父体,再校验子体,全部通过才挂子体。
  */
 listingsRouter.post('/variation/merge', wrap(async (req, res) => {
@@ -592,7 +598,7 @@ listingsRouter.post('/variation/merge', wrap(async (req, res) => {
     const brand = clean(newParent.brand);
     if (!itemName || !brand) throw httpError(400, '新父体要填标题和品牌');
     parentAttrs = parentAttributes({
-      theme, itemName, brand, itemTypeKeyword: clean(newParent.itemTypeKeyword),
+      theme, itemName, brand, category: clean(newParent.category), country: store.country,
       marketplaceId: store.marketplaceId, languageTag,
     });
     const preview = await sendPut(store, parentSku, parentType, parentAttrs, true);

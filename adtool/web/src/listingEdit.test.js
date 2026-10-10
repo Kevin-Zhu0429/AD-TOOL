@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  diffAttributes, localeOf, themeAttributes, pageYieldOf, priceOf, salePriceOf, setPageYield, setPrice, setSalePrice, setTextValues, textValues,
+  diffAttributes, localeOf, parentCategoryField, themeAttributes, pageYieldOf, priceOf, salePriceOf, setPageYield, setPrice, setSalePrice, setTextValues, textValues,
 } from './listingEdit.js';
 
 const M = 'A1RKKUPIHCS9HS';
@@ -70,5 +70,8 @@ test('变体主题换算成子体要带的属性，亚马逊给了就用亚马�
   assert.deepEqual(themeAttributes('SIZE_NAME/COLOR_NAME'), ['size', 'color']);
   assert.deepEqual(themeAttributes('COLOR'), ['color']);
   assert.deepEqual(themeAttributes('SET_NAME'), ['set_name']);
+  assert.deepEqual(themeAttributes('NUMBER_OF_ITEMS/PAGE_YIELD'), ['number_of_items', 'page_yield']);
+  assert.equal(parentCategoryField('ES').fallback, '34285014031');
+  assert.equal(parentCategoryField('US').attribute, 'item_type_keyword');
   assert.deepEqual(themeAttributes('COLOR', ['color', 'item_package_quantity']), ['color', 'item_package_quantity']);
 });
