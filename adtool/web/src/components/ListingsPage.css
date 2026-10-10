@@ -1,0 +1,41 @@
+.listings-page { width: 100%; min-width: 0; padding: 20px clamp(14px, 2vw, 36px) 32px; display: flex; flex-direction: column; gap: 12px; }
+.listings-page h1 .tag { vertical-align: middle; margin-left: 6px; }
+.listings-bar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; }
+.listings-bar .field { min-width: 180px; }
+.listings-filters { margin-bottom: 10px; }
+.listings-filters > .inp { flex: 1 1 240px; max-width: 360px; }
+.listings-table { max-height: calc(100vh - 300px); }
+.listings-table tbody tr { cursor: pointer; }
+.listings-table tbody tr.on { background: var(--accent-soft); }
+.listings-table td { vertical-align: top; }
+.listings-table .tag { margin: 0 4px 2px 0; }
+.listings-thumb { width: 40px; height: 40px; object-fit: contain; border-radius: 6px; background: #fff; display: block; border: 1px solid var(--border); }
+.listings-thumb.blank { background: var(--panel-2); }
+.listings-title { max-width: 420px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+
+.listings-drawer-mask { position: fixed; inset: 0; z-index: 50; background: rgba(0, 0, 0, .28); display: flex; justify-content: flex-end; }
+.listings-drawer { width: min(820px, 100vw); height: 100%; background: var(--panel); border-left: 1px solid var(--border); display: flex; flex-direction: column; }
+.listings-drawer-head { display: flex; align-items: center; gap: 8px; padding: 14px 18px; border-bottom: 1px solid var(--border); }
+.listings-drawer-body { flex: 1; overflow: auto; padding: 16px 18px 24px; }
+.listings-drawer-body h3 { margin: 4px 0 0; font-size: 13px; }
+.listings-drawer-body h3 .hint { font-weight: 400; margin-left: 6px; }
+.listings-drawer-body > .note, .listings-drawer > .note { margin: 10px 18px 0; }
+.listings-drawer-body .field textarea { resize: vertical; }
+.listings-drawer-body .field .inp + .inp { margin-top: 6px; }
+.listings-drawer-body .field.changed > span, .listings-image.changed .hint { color: var(--accent-text); }
+.listings-drawer-body .field.changed .inp, .listings-image.changed .inp { border-color: var(--accent); }
+.listings-drawer-foot { border-top: 1px solid var(--border); padding: 12px 18px; display: flex; flex-direction: column; gap: 8px; }
+.listings-drawer-foot .stat { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.listings-issue { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; font-size: 12px; }
+.listings-images { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
+.listings-image { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.listings-image img, .listings-image-empty { width: 100%; aspect-ratio: 1; object-fit: contain; background: #fff; border: 1px solid var(--border); border-radius: 8px; }
+.listings-image-empty { display: flex; align-items: center; justify-content: center; background: var(--panel-2); color: var(--text-faint); font-size: 12px; }
+.listings-image .inp { font-size: 11px; }
+.listings-attrs td { vertical-align: top; word-break: break-word; }
+.listings-attrs td:first-child { white-space: nowrap; width: 1%; }
+.listings-attrs tr.changed td:first-child { color: var(--accent-text); }
+@media (max-width: 700px) {
+  .listings-page { padding: 16px 12px 24px; }
+  .listings-drawer-head, .listings-drawer-body, .listings-drawer-foot { padding-left: 12px; padding-right: 12px; }
+}

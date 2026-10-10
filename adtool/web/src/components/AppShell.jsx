@@ -36,6 +36,8 @@ export default function AppShell({
     ...(user.productIntel ? [{ id: 'products', label: '产品情报', icon: 'chart' }] : []),
     { id: 'tools', label: '小工具', icon: 'box' },
     { id: 'agedFees', label: '超龄仓储费', icon: 'box' },
+    // Listing 管理还在内测,只给超级管理员
+    ...(user.role === 'owner' ? [{ id: 'listings', label: 'Listing 管理', icon: 'edit' }] : []),
     ...(user.role === 'owner' ? [{ id: 'admin', label: '账号管理', icon: 'users' }] : []),
   ];
 
@@ -63,7 +65,7 @@ export default function AppShell({
 
         <div className="spacer" />
 
-        {page === 'abaPublic' ? null : user.markets.length > 1 ? (
+        {page === 'abaPublic' || page === 'listings' ? null : user.markets.length > 1 ? (
           <div className="market-wrap">
             <select
               className="inp market-pick"

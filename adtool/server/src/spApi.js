@@ -249,10 +249,10 @@ async function waitTurn(key) {
 }
 
 /**
- * GET 一个 SP-API 接口,返回解析后的 JSON。
+ * 请求一个 SP-API 接口(默认 GET),返回解析后的 JSON。
  * access token 过期(401/403)会换一次新 token 重试;429、5xx 和网络错误退避重试。
  */
-export async function spApiRequest(account, region, path, { method = 'GET', query = {}, body, role } = {}) {
+export async function spApiRequest(account, region, path, { method = 'GET', query = {}, body, role, rateKey } = {}) {
   const host = REGION_HOSTS[region];
   if (!host) throw new SpApiError(`未知的亚马逊接口区域：${region}`);
   const url = new URL(`${host}${path}`);
@@ -263,7 +263,8 @@ export async function spApiRequest(account, region, path, { method = 'GET', quer
   let refreshedToken = false;
   for (let attempt = 0; ; attempt += 1) {
     const token = await accessToken(account);
-    await waitTurn(`${account.sellerId}:${region}:${path.startsWith('/reports/') ? method + ':reports' : path}`);
+    // rateKey 让同一个接口的不同路径(比如按 SKU 逐个读)共用一个限速队列
+    await waitTurn(`${account.sellerId}:${region}:${rateKey ?? (path.startsWith('/reports/') ? method + ':reports' : path)}`);
     let response;
     try {
       response = await fetch(url, {

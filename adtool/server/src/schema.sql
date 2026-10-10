@@ -432,3 +432,20 @@ CREATE TABLE IF NOT EXISTS aba_public_lanes (lane TEXT PRIMARY KEY, next_create 
 
 -- 公共视图按国家关联全部账号的 SKU，不经过 user_id 前缀索引。
 CREATE INDEX IF NOT EXISTS idx_sku_country_asin ON sku_items(country, asin);
+
+-- Listing 管理:按「卖家账号 × 站点」缓存从 Listings Items API 拉下来的商品信息。
+-- data_json 是亚马逊返回的整条 Item(summaries / attributes / issues / offers …),
+-- report_json 是「所有商品」报告里这一行(超过 1000 个 SKU 的店铺才会有)。
+CREATE TABLE IF NOT EXISTS listing_items (
+  seller_id TEXT NOT NULL,
+  country TEXT NOT NULL,
+  sku TEXT NOT NULL,
+  brand TEXT NOT NULL,
+  asin TEXT,
+  product_type TEXT,
+  item_name TEXT,
+  data_json TEXT NOT NULL,
+  report_json TEXT,
+  fetched_at INTEGER NOT NULL,
+  PRIMARY KEY (seller_id, country, sku)
+);

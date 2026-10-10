@@ -17,6 +17,7 @@ import { abaRouter } from './aba.js';
 import { abaPublicRouter, startPublicAbaScheduler } from './abaPublic.js';
 import { captainRouter } from './captain.js';
 import { agedFeesRouter } from './agedFees.js';
+import { listingsRouter } from './listings.js';
 import { bumpOnWrite } from './workers/pool.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -64,6 +65,7 @@ app.use('/api/aba', abaRouter);
 app.use('/api/aba-public', abaPublicRouter);
 app.use('/api/captain', captainRouter);
 app.use('/api/aged-fees', agedFeesRouter);
+app.use('/api/listings', listingsRouter);
 
 app.get('/api/health', (req, res) => {
   res.json({ ok: true, time: new Date().toISOString() });

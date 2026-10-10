@@ -150,6 +150,14 @@ export const api = {
   updateSku: (id, body) => request(`/sku/${id}`, { method: 'PATCH', body }),
   deleteSkus: (ids) => request('/sku/delete', { method: 'POST', body: { ids } }),
 
+  // ---------- Listing 管理(内测,只有超级管理员) ----------
+  listingStores: () => request('/listings/stores'),
+  pullListings: (store, options) => followSyncJob(`/listings/pull?${new URLSearchParams(store)}`, { ...options, start: true }),
+  resumeListingPull: (store, options) => followSyncJob(`/listings/pull?${new URLSearchParams(store)}`, options),
+  listingItems: (store) => request(`/listings/items?${new URLSearchParams(store)}`),
+  listingItem: (store, sku, refresh = false) =>
+    request(`/listings/item?${new URLSearchParams({ ...store, sku, ...(refresh ? { refresh: '1' } : {}) })}`),
+  submitListing: (body) => request('/listings/item/submit', { method: 'POST', body }),
   // ---------- 亚马逊 SP-API 库存同步(接口路径沿用 captain) ----------
   captainStatus: () => request('/captain/status'),
   syncCaptainInventory: (options) => followSyncJob('/captain/sync', { ...options, start: true }),
