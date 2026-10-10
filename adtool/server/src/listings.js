@@ -1,7 +1,7 @@
 // Listing 管理(内测,只给超级管理员):选「品牌 - 站点」,把这个站点下所有 SKU 的商品信息
 // 从 Listings Items API 拉下来缓存到本地,页面上改完再用 patchListingsItem 传回亚马逊。
-// 上传默认只走 VALIDATION_PREVIEW(亚马逊只校验、不改 Listing);服务器 .env 设
-// LISTINGS_LIVE_SUBMIT=true 之后,页面上的「提交到亚马逊」才会真正改线上 Listing。
+// 「校验」只走 VALIDATION_PREVIEW(亚马逊只校验、不改 Listing);「提交到亚马逊」先自动校验一遍,
+// 没有错误才真正改线上 Listing。出问题时可以在 .env 设 LISTINGS_LIVE_SUBMIT=false 临时关掉正式提交。
 // 按要求这一块暂时不写操作日志。
 import express from 'express';
 import { randomUUID } from 'node:crypto';
@@ -29,7 +29,7 @@ listingsRouter.use(requireRole('owner'));
 const clean = (value) => String(value ?? '').trim();
 const sleep = (ms) => (ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve());
 const httpError = (status, message) => Object.assign(new Error(message), { status });
-const liveSubmitEnabled = () => process.env.LISTINGS_LIVE_SUBMIT === 'true';
+const liveSubmitEnabled = () => process.env.LISTINGS_LIVE_SUBMIT !== 'false';
 
 /** 能选的「品牌 - 站点」:每个配置完整的卖家账号管的站点 */
 function storeOptions() {
@@ -380,6 +380,20 @@ listingsRouter.get('/items', wrap((req, res) => {
   });
 }));
 
+/** 正式提交被接收后,把改动写进本地缓存,页面马上显示新值;亚马逊真正生效以「从亚马逊刷新」为准 */
+function applyToCache(store, cached, patches) {
+  const attributes = { ...(cached.item.attributes ?? {}) };
+  for (const { op, path, value } of patches) {
+    const name = path.replace('/attributes/', '');
+    if (op === 'delete') delete attributes[name];
+    else attributes[name] = value;
+  }
+  const item = { ...cached.item, attributes };
+  const title = attributes.item_name?.[0]?.value;
+  db.prepare('UPDATE listing_items SET data_json = ?, item_name = COALESCE(?, item_name) WHERE seller_id = ? AND country = ? AND sku = ?')
+    .run(JSON.stringify(item), title ? clean(title) : null, store.account.sellerId, store.country, cached.row.sku);
+}
+
 function cachedItem(store, sku) {
   const row = db.prepare('SELECT * FROM listing_items WHERE seller_id = ? AND country = ? AND sku = ?')
     .get(store.account.sellerId, store.country, sku);
@@ -400,8 +414,8 @@ listingsRouter.get('/item', wrap(async (req, res) => {
 }));
 
 /**
- * 上传改动。live 不为 true,或服务器没开 LISTINGS_LIVE_SUBMIT,都只让亚马逊校验(VALIDATION_PREVIEW),
- * 不会改线上 Listing。
+ * 上传改动。live 不为 true 时只让亚马逊校验(VALIDATION_PREVIEW),不改线上 Listing。
+ * live 为 true 时先校验,校验不通过就停下把问题返回;通过了才正式提交,并把改动写进本地缓存。
  */
 listingsRouter.post('/item/submit', wrap(async (req, res) => {
   const store = storeOf(req);
@@ -411,22 +425,32 @@ listingsRouter.post('/item/submit', wrap(async (req, res) => {
   if (!cached) throw httpError(404, '本地还没有这个 SKU，请先拉取');
   const live = req.body?.live === true;
   if (live && !liveSubmitEnabled()) {
-    throw httpError(403, '服务器还没有开启正式提交（.env 里 LISTINGS_LIVE_SUBMIT=true），这次只能校验');
+    throw httpError(403, '服务器关闭了正式提交（.env 里 LISTINGS_LIVE_SUBMIT=false），这次只能校验');
   }
   const productType = clean(req.body?.productType) || clean(summaryOf(cached.item, store.marketplaceId).productType)
     || clean(cached.item.productTypes?.[0]?.productType);
   if (!productType) throw httpError(400, '不知道这个 SKU 的商品类型（productType），请先刷新这个 SKU');
   const patches = buildPatches(req.body?.changes, cached.item.attributes ?? {});
-  const result = await listingCall(store, skuPath(store, sku), {
+  const patch = (preview) => listingCall(store, skuPath(store, sku), {
     method: 'PATCH',
-    query: { includedData: 'issues,identifiers', ...(live ? {} : { mode: 'VALIDATION_PREVIEW' }) },
+    query: { includedData: 'issues,identifiers', ...(preview ? { mode: 'VALIDATION_PREVIEW' } : {}) },
     body: { productType, patches },
   });
-  res.json({
-    mode: live ? 'live' : 'preview',
+  const reply = (mode, result, extra = {}) => res.json({
+    mode,
     status: clean(result.status),
     submissionId: clean(result.submissionId) || null,
     issues: Array.isArray(result.issues) ? result.issues : [],
     patches,
+    ...extra,
   });
+
+  const preview = await patch(true);
+  const blocked = clean(preview.status) !== 'VALID'
+    || (preview.issues ?? []).some((issue) => issue?.severity === 'ERROR');
+  if (!live || blocked) return reply('preview', preview, live ? { blocked: true } : {});
+
+  const result = await patch(false);
+  if (clean(result.status) === 'ACCEPTED') applyToCache(store, cached, patches);
+  reply('live', result);
 }));

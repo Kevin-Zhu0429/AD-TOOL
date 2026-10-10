@@ -116,8 +116,8 @@ export default function ListingsPage() {
         <h1>Listing 管理 <span className="tag amber">内测</span></h1>
         <p className="hint">
           只有超级管理员能看到。{config.liveSubmit
-            ? '服务器已开启正式提交，「提交到亚马逊」会直接改线上 Listing。'
-            : '现在上传只让亚马逊校验，不会改线上 Listing。'}
+            ? '「校验」不会改线上；「提交到亚马逊」会先自动校验，没有错误才改线上 Listing。'
+            : '服务器关闭了正式提交，现在只能校验，不会改线上 Listing。'}
         </p>
       </div>
 
@@ -254,11 +254,20 @@ function ListingEditor({ store, sku, liveSubmit, onClose, onRefreshed }) {
   const locale = useMemo(() => localeOf(original, { marketplaceId: data?.marketplaceId, country: store.country }), [original, data, store.country]);
 
   async function submit(live) {
-    if (live && !window.confirm(`确定把 ${changedKeys.length} 项改动提交到亚马逊？这会直接修改 ${store.brand}-${store.country} 的线上 Listing（${sku}）。`)) return;
+    if (live && !window.confirm(`确定把 ${changedKeys.length} 项改动提交到亚马逊？会先自动校验，没有错误就直接修改 ${store.brand}-${store.country} 的线上 Listing（${sku}）。`)) return;
     setBusy(live ? 'live' : 'preview');
     setMessage(null);
     try {
       const res = await api.submitListing({ ...store, sku, changes, live });
+      if (res.mode === 'live' && res.status === 'ACCEPTED') {
+        // 服务器已把改动写进本地缓存,重新读一次,改过的值变成新的原值
+        const next = await api.listingItem(store, sku);
+        setData(next);
+        setEdited(next.item.attributes ?? {});
+        setPriceDraft(null);
+        setSaleDraft(null);
+        onRefreshed();
+      }
       setResult(res);
     } catch (error) {
       setMessage({ kind: 'err', text: error.message });
@@ -400,8 +409,10 @@ function ListingEditor({ store, sku, liveSubmit, onClose, onRefreshed }) {
 
         <footer className="listings-drawer-foot">
           {result && (
-            <div className={`note ${result.status === 'INVALID' ? 'err' : 'ok'}`}>
-              {result.mode === 'preview'
+            <div className={`note ${result.status === 'INVALID' || result.blocked ? 'err' : 'ok'}`}>
+              {result.blocked
+                ? '校验没通过，没有提交到亚马逊，改完下面的问题再提交'
+                : result.mode === 'preview'
                 ? (result.status === 'VALID' ? '校验通过（没有改线上 Listing）' : `校验结果：${result.status}`)
                 : (result.status === 'ACCEPTED' ? '亚马逊已接收，一般几分钟到几小时生效，之后点「从亚马逊刷新」确认' : `提交结果：${result.status}`)}
               {result.issues.map((issue, index) => (
@@ -416,7 +427,7 @@ function ListingEditor({ store, sku, liveSubmit, onClose, onRefreshed }) {
             <button className="btn" disabled={!changedKeys.length || !!busy} onClick={() => submit(false)}>{busy === 'preview' ? '校验中…' : '校验（不改线上）'}</button>
             <button
               className="btn primary" disabled={!liveSubmit || !changedKeys.length || !!busy} onClick={() => submit(true)}
-              title={liveSubmit ? '' : '服务器还没开启正式提交'}
+              title={liveSubmit ? '先自动校验，没有错误才改线上' : '服务器关闭了正式提交'}
             >{busy === 'live' ? '提交中…' : '提交到亚马逊'}</button>
           </div>
         </footer>

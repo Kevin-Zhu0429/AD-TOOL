@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { gzipSync } from 'node:zlib';
 import { startAbaTestServer } from './abaHarness.js';
 
-test('owner pulls a whole store, edits validate only, live submit stays locked', async (t) => {
+test('owner pulls a whole store, validates edits, and live submit validates first', async (t) => {
   const env = {
     BRAND1_NAME: 'CC', BRAND1_MARKETS: 'ES,US',
     BRAND1_LWA_CLIENT_ID: 'cc-client', BRAND1_LWA_CLIENT_SECRET: 'cc-secret',
@@ -49,7 +49,10 @@ test('owner pulls a whole store, edits validate only, live submit stays locked',
         : json({ numberOfResults: 3, items: [item('SKU-1', 1), item('SKU-2', 2)], pagination: { nextToken: 'p2' } });
     }
     if (url.pathname === '/listings/2021-08-01/items/CCEU/SKU-1' && init.method === 'PATCH') {
-      return json({ sku: 'SKU-1', status: 'VALID', submissionId: 's1', issues: [] });
+      const bad = JSON.parse(init.body).patches[0].value[0].value === 'BAD';
+      if (bad) return json({ sku: 'SKU-1', status: 'INVALID', submissionId: 's0', issues: [{ code: '1', message: '标题不合规', severity: 'ERROR' }] });
+      const preview = url.searchParams.get('mode') === 'VALIDATION_PREVIEW';
+      return json({ sku: 'SKU-1', status: preview ? 'VALID' : 'ACCEPTED', submissionId: 's1', issues: [] });
     }
     throw new Error(`unexpected ${url.href}`);
   };
@@ -69,7 +72,7 @@ test('owner pulls a whole store, edits validate only, live submit stays locked',
   assert.equal((await call('/listings/stores', operator)).status, 403);
   const stores = await call('/listings/stores', owner);
   assert.deepEqual(stores.data.stores, [{ brand: 'CC', country: 'ES', sellerId: 'CCEU' }]);
-  assert.equal(stores.data.liveSubmit, false);
+  assert.equal(stores.data.liveSubmit, true);
 
   const q = 'brand=CC&country=ES';
   assert.equal((await call(`/listings/items?brand=CC&country=US`, owner)).status, 400);
@@ -103,11 +106,33 @@ test('owner pulls a whole store, edits validate only, live submit stays locked',
   assert.equal(patch.query.mode, 'VALIDATION_PREVIEW');
   assert.deepEqual(patch.body, { productType: 'INK_OR_TONER', patches: [{ op: 'replace', path: '/attributes/item_name', value: changes.item_name }] });
 
-  // 服务器没开正式提交:live 请求直接拒绝,不会发到亚马逊
-  const patchCount = requests.filter((r) => r.method === 'PATCH').length;
-  const live = await call('/listings/item/submit', owner, 'POST', { brand: 'CC', country: 'ES', sku: 'SKU-1', changes, live: true });
-  assert.equal(live.status, 403);
-  assert.equal(requests.filter((r) => r.method === 'PATCH').length, patchCount);
+  const patches = () => requests.filter((r) => r.method === 'PATCH');
+  const submit = (body) => call('/listings/item/submit', owner, 'POST', { brand: 'CC', country: 'ES', sku: 'SKU-1', ...body });
+
+  // 校验不通过:只发了校验,没有正式提交
+  let before = patches().length;
+  const blocked = await submit({ changes: { item_name: [{ ...changes.item_name[0], value: 'BAD' }] }, live: true });
+  assert.equal(blocked.data.blocked, true);
+  assert.equal(blocked.data.issues[0].message, '标题不合规');
+  assert.deepEqual(patches().slice(before).map((r) => r.query.mode), ['VALIDATION_PREVIEW']);
+
+  // 正式提交:先校验再提交,接收后本地缓存变成新标题
+  before = patches().length;
+  const live = await submit({ changes, live: true });
+  assert.equal(live.status, 200, live.data.error);
+  assert.equal(live.data.mode, 'live');
+  assert.equal(live.data.status, 'ACCEPTED');
+  assert.deepEqual(patches().slice(before).map((r) => r.query.mode), ['VALIDATION_PREVIEW', undefined]);
+  const after = await call(`/listings/item?${q}&sku=SKU-1`, owner);
+  assert.equal(after.data.item.attributes.item_name[0].value, 'Tinta nueva');
+  assert.equal(after.data.row.itemName, 'Tinta nueva');
+
+  // 服务器设了 LISTINGS_LIVE_SUBMIT=false:直接拒绝,不会发到亚马逊
+  process.env.LISTINGS_LIVE_SUBMIT = 'false';
+  before = patches().length;
+  assert.equal((await submit({ changes, live: true })).status, 403);
+  assert.equal(patches().length, before);
+  delete process.env.LISTINGS_LIVE_SUBMIT;
 });
 
 test('stores over 1000 SKUs fill the rest from the all-listings report', async (t) => {
