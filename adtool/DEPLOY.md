@@ -144,6 +144,8 @@ BRAND1_LWA_REFRESH_TOKEN_AE=品牌一中东账号的RefreshToken
 BRAND1_SELLER_ID_AE=品牌一中东账号的SellerID
 ```
 
+瑞典(SE)、比利时(BE)用欧洲账号的授权,不用另加 token,只要在那个品牌的 `MARKETS` 里写上 `SE,BE`;没写的品牌不会多出这两个站。
+
 `BRAND<n>_NAME` 要和 SKU 库里的品牌一致,等号两边不要加空格。账号后缀只有 `_EU`、`_NA`、`_AE`、`_AU` 四种,
 写成别的(比如 `_US`、`_UK`)不会被读到,页面上会点名提示。
 完整说明见 `server/.env.example`。`docker-compose.yml` 会把 `.env` 整个读进容器,不用改它。
