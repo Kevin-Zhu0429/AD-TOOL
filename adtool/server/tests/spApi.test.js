@@ -139,3 +139,19 @@ test('marketplace ids map back to the site codes the tool uses', () => {
   assert.equal(countryOfMarketplace('ATVPDKIKX0DER'), 'US');
   assert.equal(countryOfMarketplace('A1805IZSGTT6HS'), null);
 });
+
+test('瑞典、比利时只开给 MARKETS 里点名的品牌', () => {
+  const app = (n) => ({ [`BRAND${n}_LWA_CLIENT_ID`]: 'id', [`BRAND${n}_LWA_CLIENT_SECRET`]: 'secret',
+    [`BRAND${n}_LWA_REFRESH_TOKEN_EU`]: 'Atzr|eu', [`BRAND${n}_SELLER_ID_EU`]: `S${n}` });
+  const { accounts, issues } = readSpApiConfig({
+    BRAND1_NAME: 'CE', ...app(1), BRAND1_MARKETS: 'ES,DE,FR,IT,UK,SE,BE',
+    BRAND2_NAME: 'CC', ...app(2),
+  });
+  assert.deepEqual(issues, []);
+  assert.deepEqual(accounts.map((a) => [a.brand, a.markets]), [
+    ['CE', ['ES', 'DE', 'FR', 'IT', 'UK', 'SE', 'BE']],
+    ['CC', ['ES', 'DE', 'FR', 'IT', 'UK']],
+  ]);
+  assert.equal(countryOfMarketplace('A2NODRKZP88ZB9'), 'SE');
+  assert.equal(countryOfMarketplace('AMEN7PMS3EDWL'), 'BE');
+});

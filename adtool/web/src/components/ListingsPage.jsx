@@ -328,7 +328,7 @@ function ListingEditor({ store, sku, liveSubmit, onClose, onRefreshed }) {
           </div>
           <div className="spacer" />
           {summary.asin && (
-            <a className="btn sm ghost" href={`https://www.amazon.${{ UK: 'co.uk', US: 'com', CA: 'ca', AU: 'com.au', AE: 'ae' }[store.country] ?? store.country.toLowerCase()}/dp/${summary.asin}`} target="_blank" rel="noreferrer">前台</a>
+            <a className="btn sm ghost" href={`https://www.amazon.${{ UK: 'co.uk', US: 'com', CA: 'ca', AU: 'com.au', AE: 'ae', BE: 'com.be' }[store.country] ?? store.country.toLowerCase()}/dp/${summary.asin}`} target="_blank" rel="noreferrer">前台</a>
           )}
           <button className="btn sm" onClick={() => load(true)} disabled={!!busy}>{busy === 'refresh' ? '刷新中…' : '从亚马逊刷新'}</button>
           <button className="btn sm ghost" onClick={onClose} aria-label="关闭">✕</button>

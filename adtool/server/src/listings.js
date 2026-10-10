@@ -519,7 +519,7 @@ const languageOf = (item) => Object.values(item.attributes ?? {}).flat().find((e
  * 父体的分类写在哪个属性:美国站模板用 item_type_keyword(如 inkjet-printer-ink-cartridges),
  * 欧洲站模板没有这一列,用 recommended_browse_nodes(西班牙墨盒是 34285014031)。
  */
-export const categoryAttribute = (country) => (['ES', 'DE', 'FR', 'IT', 'UK'].includes(country) ? 'recommended_browse_nodes' : 'item_type_keyword');
+export const categoryAttribute = (country) => (['ES', 'DE', 'FR', 'IT', 'UK', 'SE', 'BE'].includes(country) ? 'recommended_browse_nodes' : 'item_type_keyword');
 
 /**
  * 新建父体的属性,和卖家后台模板里父体那一行一致:父体标记、变体主题、标题、品牌、分类。

@@ -18,6 +18,8 @@ export const AMAZON_MARKETPLACES = {
   FR: { id: 'A13V1IB3VIYZZH', region: 'eu' },
   IT: { id: 'APJ6JRA9NG5V4', region: 'eu' },
   UK: { id: 'A1F83G8C2ARO7P', region: 'eu' },
+  SE: { id: 'A2NODRKZP88ZB9', region: 'eu' },
+  BE: { id: 'AMEN7PMS3EDWL', region: 'eu' },
   AE: { id: 'A2VIGQ35RCS4UG', region: 'eu' },
   US: { id: 'ATVPDKIKX0DER', region: 'na' },
   CA: { id: 'A2EUQ1WTGCTBG2', region: 'na' },
@@ -46,15 +48,16 @@ const sleep = (ms) => (ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)
  * 一个品牌下可以配的卖家账号,各管各的站点,互不重叠。region 决定走哪个接口地址:
  * AE 是单独的卖家账号,但亚马逊把它的接口放在欧洲区;AU 在亚马逊的远东区(FE),
  * 变量后缀写 _AU 或 _FE 都认。每组后缀的第一个是文档里写的。
+ * extra 里的站点(瑞典、比利时)只给 BRAND<n>_MARKETS 里点名的品牌开,不填 MARKETS 的品牌不会多出来。
  */
 const ACCOUNT_SLOTS = [
-  { slot: 'eu', label: '欧洲', region: 'eu', suffixes: ['EU'], markets: ['ES', 'DE', 'FR', 'IT', 'UK'] },
+  { slot: 'eu', label: '欧洲', region: 'eu', suffixes: ['EU'], markets: ['ES', 'DE', 'FR', 'IT', 'UK'], extra: ['SE', 'BE'] },
   { slot: 'na', label: '北美', region: 'na', suffixes: ['NA'], markets: ['US', 'CA'] },
   { slot: 'ae', label: '中东', region: 'eu', suffixes: ['AE'], markets: ['AE'] },
   { slot: 'au', label: '澳洲', region: 'fe', suffixes: ['AU', 'FE'], markets: ['AU'] },
 ];
 export const SLOT_LABELS = Object.fromEntries(ACCOUNT_SLOTS.map((item) => [item.slot, item.label]));
-const slotOfMarket = (market) => ACCOUNT_SLOTS.find((def) => def.markets.includes(market));
+const slotOfMarket = (market) => ACCOUNT_SLOTS.find((def) => [...def.markets, ...(def.extra ?? [])].includes(market));
 const KNOWN_BRAND_KEYS = new Set(['NAME', 'MARKETS', 'LWA_CLIENT_ID', 'LWA_CLIENT_SECRET',
   ...ACCOUNT_SLOTS.flatMap((item) => item.suffixes).flatMap((suffix) => [`LWA_REFRESH_TOKEN_${suffix}`, `SELLER_ID_${suffix}`])]);
 
@@ -142,7 +145,7 @@ export function readSpApiConfig(env = process.env) {
     const brandAccounts = [];
     for (const item of filled) {
       const accountMarkets = markets.length
-        ? item.def.markets.filter((market) => markets.includes(market))
+        ? [...item.def.markets, ...(item.def.extra ?? [])].filter((market) => markets.includes(market))
         : item.def.markets;
       if (markets.length && !accountMarkets.length) {
         issues.push(`${label} 填了${item.def.label}账号，但 ${prefix}MARKETS 里没有它管的站点，这个账号不会读取`);

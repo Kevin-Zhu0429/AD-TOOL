@@ -4,7 +4,7 @@ import { INK_THEMES, parentCategoryField, themeAttributes } from '../listingEdit
 
 const SEVERITY = { ERROR: '错误', WARNING: '警告', INFO: '提示' };
 
-const EU_SITES = ['ES', 'DE', 'FR', 'IT', 'UK'];
+const EU_SITES = ['ES', 'DE', 'FR', 'IT', 'UK', 'SE', 'BE'];
 /** 亚马逊常要的几个必填项,只写进还没有这个属性的父体 / 子体;值是接口枚举 */
 const FILL_FIELDS = [
   { name: 'gdpr_risk', label: 'GDPR 风险', euOnly: true, options: [

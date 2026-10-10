@@ -3,7 +3,7 @@
 
 /** 站点默认语言,原值里没有 language_tag 时用 */
 export const LANGUAGE_OF = {
-  ES: 'es_ES', DE: 'de_DE', FR: 'fr_FR', IT: 'it_IT', UK: 'en_GB',
+  ES: 'es_ES', DE: 'de_DE', FR: 'fr_FR', IT: 'it_IT', UK: 'en_GB', SE: 'sv_SE', BE: 'fr_BE',
   US: 'en_US', CA: 'en_CA', AU: 'en_AU', AE: 'en_AE',
 };
 
@@ -170,7 +170,7 @@ export const INK_THEMES = [
 
 /** 新建父体的分类填哪一列:美国站模板是商品类型关键词,欧洲站模板是推荐浏览节点(和服务器 categoryAttribute 一致) */
 export function parentCategoryField(country) {
-  if (['ES', 'DE', 'FR', 'IT', 'UK'].includes(country)) {
+  if (['ES', 'DE', 'FR', 'IT', 'UK', 'SE', 'BE'].includes(country)) {
     return { attribute: 'recommended_browse_nodes', label: '推荐浏览节点（recommended_browse_nodes）', fallback: country === 'ES' ? '34285014031' : '' };
   }
   return { attribute: 'item_type_keyword', label: '商品类型关键词（item_type_keyword）', fallback: country === 'US' ? 'inkjet-printer-ink-cartridges' : '' };
