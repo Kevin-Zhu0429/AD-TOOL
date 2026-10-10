@@ -40,3 +40,5 @@
 .variation-candidate:hover { background: var(--panel-2); }
 .variation-candidate-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 700px) { .variation-candidate { grid-template-columns: 1fr; gap: 2px; } }
+.variation-new-parent .variation-wide { grid-column: span 2; }
+@media (max-width: 700px) { .variation-new-parent .variation-wide { grid-column: auto; } }

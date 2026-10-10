@@ -69,5 +69,6 @@ test('打印页数可改，清空即删除', () => {
 test('变体主题换算成子体要带的属性，亚马逊给了就用亚马逊的', () => {
   assert.deepEqual(themeAttributes('SIZE_NAME/COLOR_NAME'), ['size', 'color']);
   assert.deepEqual(themeAttributes('COLOR'), ['color']);
+  assert.deepEqual(themeAttributes('SET_NAME'), ['set_name']);
   assert.deepEqual(themeAttributes('COLOR', ['color', 'item_package_quantity']), ['color', 'item_package_quantity']);
 });

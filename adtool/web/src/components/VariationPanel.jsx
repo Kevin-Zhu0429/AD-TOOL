@@ -4,10 +4,15 @@ import { themeAttributes } from '../listingEdit.js';
 
 const SEVERITY = { ERROR: '错误', WARNING: '警告', INFO: '提示' };
 
+const NEW_PARENT = { sku: '', itemName: '', brand: '', itemTypeKeyword: 'inkjet-printer-ink-cartridges' };
+
 const matches = (item, needle) => !needle
   || [item.sku, item.asin, item.itemName].some((value) => String(value ?? '').toLowerCase().includes(needle));
 
 export default function VariationPanel({ store, items, liveSubmit, onChanged }) {
+  // existing = 挂到已有父体;new = 新建父体(同事模板的做法:建一个只有标题和品牌的父体,主题 SET_NAME)
+  const [mode, setMode] = useState('existing');
+  const [draft, setDraft] = useState(NEW_PARENT);
   const [parentQuery, setParentQuery] = useState('');
   const [parentSku, setParentSku] = useState('');
   const [theme, setTheme] = useState('');
@@ -24,7 +29,10 @@ export default function VariationPanel({ store, items, liveSubmit, onChanged }) 
     const needle = parentQuery.trim().toLowerCase();
     return items.filter((item) => (item.parentage === 'parent' || item.childCount > 0) && matches(item, needle));
   }, [items, parentQuery]);
-  const parent = bySku.get(parentSku) ?? null;
+  const parent = mode === 'existing' ? bySku.get(parentSku) ?? null : null;
+  const active = mode === 'new' || !!parent;
+  const parentType = parent?.productType ?? picked[0]?.item.productType ?? null;
+  const targetSku = mode === 'new' ? draft.sku.trim() : parent?.sku;
   const attributes = themeAttributes(theme, parent?.themeAttributes ?? []);
   const family = useMemo(() => {
     if (!parent) return [];
@@ -50,10 +58,20 @@ export default function VariationPanel({ store, items, liveSubmit, onChanged }) 
 
   const candidates = useMemo(() => {
     const needle = childQuery.trim().toLowerCase();
-    if (!parent || !needle) return [];
-    const taken = new Set([parent.sku, ...family.map((row) => row.sku), ...picked.map((row) => row.sku)]);
+    if (!active || !needle) return [];
+    const taken = new Set([targetSku, ...family.map((row) => row.sku), ...picked.map((row) => row.sku)]);
     return items.filter((item) => !taken.has(item.sku) && item.parentage !== 'parent' && matches(item, needle)).slice(0, 30);
-  }, [items, childQuery, parent, family, picked]);
+  }, [items, childQuery, active, targetSku, family, picked]);
+
+  function switchMode(next) {
+    setMode(next);
+    setParentSku('');
+    setDraft(NEW_PARENT);
+    setTheme(next === 'new' ? 'SET_NAME' : '');
+    setPicked([]);
+    setResults(null);
+    setMessage(null);
+  }
 
   function chooseParent(sku) {
     const next = bySku.get(sku);
@@ -73,6 +91,14 @@ export default function VariationPanel({ store, items, liveSubmit, onChanged }) 
     try {
       const { item: full } = await api.listingItem(store, item.sku);
       const values = Object.fromEntries(attributes.map((name) => [name, String(full.attributes?.[name]?.[0]?.value ?? '')]));
+      // 新建父体时,品牌和标题先用第一个子体的,再自己改
+      if (mode === 'new') {
+        setDraft((current) => ({
+          ...current,
+          brand: current.brand || String(full.attributes?.brand?.[0]?.value ?? ''),
+          itemName: current.itemName || String(full.attributes?.item_name?.[0]?.value ?? item.itemName ?? ''),
+        }));
+      }
       setPicked((current) => current.map((r) => (r.sku === item.sku ? { ...r, values, loading: false } : r)));
     } catch (error) {
       setPicked((current) => current.map((r) => (r.sku === item.sku ? { ...r, loading: false } : r)));
@@ -102,23 +128,33 @@ export default function VariationPanel({ store, items, liveSubmit, onChanged }) 
     return clash;
   }, [picked, attributes, familyValues]);
   const missing = picked.some((row) => attributes.some((name) => !String(row.values[name] ?? '').trim()));
-  const ready = parent && theme.trim() && picked.length && !missing && !duplicates.size && !picked.some((row) => row.loading);
+  const draftOk = mode === 'existing' || (draft.sku.trim() && draft.itemName.trim() && draft.brand.trim() && !bySku.has(draft.sku.trim()));
+  const ready = active && draftOk && theme.trim() && picked.length && !missing && !duplicates.size && !picked.some((row) => row.loading);
 
   async function merge(live) {
     if (live && !window.confirm(
-      `确定把 ${picked.length} 个 SKU 合并到父体 ${parent.sku} 下面？\n${picked.map((row) => row.sku).join('、')}\n`
-      + '会先全部校验，全部通过才改线上变体关系。',
+      (mode === 'new' ? `确定新建父体 ${targetSku}，并把 ${picked.length} 个 SKU 挂到它下面？\n` : `确定把 ${picked.length} 个 SKU 合并到父体 ${targetSku} 下面？\n`)
+      + `${picked.map((row) => row.sku).join('、')}\n会先校验，通过才改线上变体关系。`,
     )) return;
     setBusy(live ? 'live' : 'preview');
     setMessage(null);
     try {
       const res = await api.mergeVariation({
-        ...store, parentSku: parent.sku, theme: theme.trim(), live,
+        ...store, theme: theme.trim(), live,
+        ...(mode === 'new'
+          ? { newParent: { ...draft, sku: draft.sku.trim(), itemName: draft.itemName.trim(), brand: draft.brand.trim(), itemTypeKeyword: draft.itemTypeKeyword.trim() } }
+          : { parentSku: parent.sku }),
         children: picked.map((row) => ({ sku: row.sku, values: row.values })),
       });
       setResults(res);
-      if (res.mode === 'live') {
+      if (res.mode === 'live' && !res.blocked) {
         setPicked([]);
+        // 新父体建好以后切回「已有父体」并选中它,方便继续往里加
+        if (mode === 'new') {
+          setMode('existing');
+          setParentSku(targetSku);
+          setDraft(NEW_PARENT);
+        }
         onChanged();
       }
     } catch (error) {
@@ -150,11 +186,39 @@ export default function VariationPanel({ store, items, liveSubmit, onChanged }) 
   return (
     <div className="card stack variation-panel">
       <p className="hint">
-        选一个已有评论的父体，再把要借评的 SKU 加进来做子体。合并只在当前站点、同一个卖家账号里生效，子体和父体要是同一个商品类型，
+        把要借评的 SKU 挂到一个父体下面做子体：可以挂到已有评论的父体，也可以像合评模板那样新建一个父体（主题 SET_NAME）。合并只在当前站点、同一个卖家账号里生效，子体和父体要是同一个商品类型，
         每个子体的变体属性值（比如颜色）不能重复。提交前会先全部校验。
       </p>
 
-      <div className="row wrap">
+      <div className="chips">
+        {[['existing', '挂到已有父体'], ['new', '新建父体']].map(([id, label]) => (
+          <button key={id} className={`chip${mode === id ? ' on' : ''}`} onClick={() => switchMode(id)}>{label}</button>
+        ))}
+      </div>
+
+      {mode === 'new' && (
+        <div className="listings-grid variation-new-parent">
+          <label className="field">
+            <span>新父体 SKU</span>
+            <input className="inp mono" value={draft.sku} placeholder="如 67XL0831" onChange={(e) => setDraft({ ...draft, sku: e.target.value })} />
+            {bySku.has(draft.sku.trim()) && <em className="tag red">这个 SKU 已经存在</em>}
+          </label>
+          <label className="field variation-wide">
+            <span>父体标题</span>
+            <input className="inp" value={draft.itemName} placeholder="加入第一个子体后自动带出，可改" onChange={(e) => setDraft({ ...draft, itemName: e.target.value })} />
+          </label>
+          <label className="field">
+            <span>品牌</span>
+            <input className="inp" value={draft.brand} onChange={(e) => setDraft({ ...draft, brand: e.target.value })} />
+          </label>
+          <label className="field">
+            <span>商品类型关键词（item_type_keyword）</span>
+            <input className="inp mono" value={draft.itemTypeKeyword} onChange={(e) => setDraft({ ...draft, itemTypeKeyword: e.target.value })} />
+          </label>
+        </div>
+      )}
+
+      {mode === 'existing' && <div className="row wrap">
         <input className="inp" placeholder="搜父体 SKU / ASIN / 标题" value={parentQuery} onChange={(e) => setParentQuery(e.target.value)} />
         <select className="inp" value={parentSku} onChange={(e) => chooseParent(e.target.value)}>
           <option value="">选择父体（{parents.length} 个）</option>
@@ -162,11 +226,11 @@ export default function VariationPanel({ store, items, liveSubmit, onChanged }) 
             <option key={item.sku} value={item.sku}>{item.sku} · {item.childCount} 个子体 · {(item.itemName ?? '').slice(0, 40)}</option>
           ))}
         </select>
-      </div>
+      </div>}
 
-      {!parents.length && <div className="note info">这个站点的本地数据里没有父体。先在「商品列表」拉取，或者确认这个站点已经有变体家族。</div>}
+      {mode === 'existing' && !parents.length && <div className="note info">这个站点的本地数据里没有父体。先在「商品列表」拉取，或者确认这个站点已经有变体家族。</div>}
 
-      {parent && (
+      {active && (
         <>
           <div className="row wrap">
             <label className="field">
@@ -176,7 +240,7 @@ export default function VariationPanel({ store, items, liveSubmit, onChanged }) 
             <span className="stat">子体要带的属性：<b className="mono">{attributes.join('、') || '—'}</b></span>
           </div>
 
-          <div>
+          {mode === 'existing' && <div>
             <h3>现有子体（{family.length}）</h3>
             <table className="tbl">
               <tbody>
@@ -195,7 +259,7 @@ export default function VariationPanel({ store, items, liveSubmit, onChanged }) 
                 ))}
               </tbody>
             </table>
-          </div>
+          </div>}
 
           <div className="stack">
             <h3>加入子体</h3>
@@ -224,7 +288,7 @@ export default function VariationPanel({ store, items, liveSubmit, onChanged }) 
                 </thead>
                 <tbody>
                   {picked.map((row) => {
-                    const typeMismatch = row.item.productType && parent.productType && row.item.productType !== parent.productType;
+                    const typeMismatch = row.item.productType && parentType && row.item.productType !== parentType;
                     return (
                       <tr key={row.sku}>
                         <td className="mono">
@@ -232,7 +296,7 @@ export default function VariationPanel({ store, items, liveSubmit, onChanged }) 
                           {row.item.parent && <div className="hint">会从 {row.item.parent} 移到这里</div>}
                           {duplicates.has(row.sku) && <div className="tag red">和 {duplicates.get(row.sku).join('、')} 的属性值重复</div>}
                         </td>
-                        <td>{row.item.productType}{typeMismatch && <div className="tag red">和父体 {parent.productType} 不一样</div>}</td>
+                        <td>{row.item.productType}{typeMismatch && <div className="tag red">和{parent ? '父体' : '第一个子体'}的 {parentType} 不一样</div>}</td>
                         {attributes.map((name) => (
                           <td key={name}>
                             <input
@@ -255,13 +319,18 @@ export default function VariationPanel({ store, items, liveSubmit, onChanged }) 
 
           {message && <div className={`note ${message.kind}`}>{message.text}</div>}
           {results && (
-            <div className={`note ${results.blocked || results.results.some((r) => r.status === 'INVALID') ? 'err' : 'ok'}`}>
+            <div className={`note ${results.blocked || [results.parent, ...results.results].some((r) => r?.status === 'INVALID') ? 'err' : 'ok'}`}>
               {results.blocked
-                ? '有子体校验没通过，整批都没有提交'
+                ? (results.parent?.blocked || (results.parent && results.parent.status !== 'ACCEPTED' && results.parent.mode === 'live')
+                  ? '新父体没有通过，什么都没有提交'
+                  : `有子体校验没通过，子体都没有提交${results.parent?.status === 'ACCEPTED' ? '（新父体已经建好；如果报的是找不到父体，等几分钟亚马逊处理完，到「挂到已有父体」里选它再提交）' : ''}`)
                 : results.mode === 'live' ? '亚马逊已接收合并请求，一般几分钟到几小时生效，之后重新拉取确认' : '校验结果（没有改线上）'}
-              {results.results.map((r) => (
+              {!results.blocked && results.mode === 'preview' && results.parent && (
+                <div className="hint">新父体还没建，子体校验里如果只报「找不到父体」可以忽略，提交时会先建父体再挂子体。</div>
+              )}
+              {[results.parent, ...results.results].filter(Boolean).map((r) => (
                 <div key={r.sku}>
-                  · <span className="mono">{r.sku}</span>：{r.status}
+                  · <span className="mono">{r.sku}</span>{r.parent ? '（新父体）' : ''}：{r.status}
                   {r.issues.map((issue, index) => (
                     <span key={index}>；[{SEVERITY[issue.severity] ?? issue.severity}] {issue.message}{issue.attributeNames?.length ? `（${issue.attributeNames.join(', ')}）` : ''}</span>
                   ))}
@@ -272,7 +341,7 @@ export default function VariationPanel({ store, items, liveSubmit, onChanged }) 
 
           <div className="row">
             <span className="stat">
-              {picked.length ? <>准备合并 <b>{picked.length}</b> 个 SKU 到 <span className="mono">{parent.sku}</span></> : '还没有选子体'}
+              {picked.length ? <>准备合并 <b>{picked.length}</b> 个 SKU 到 <span className="mono">{targetSku || '新父体'}</span></> : '还没有选子体'}
               {missing && picked.length > 0 ? '，有变体属性没填' : ''}
             </span>
             <div className="spacer" />

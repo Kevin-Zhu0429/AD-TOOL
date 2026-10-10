@@ -153,8 +153,16 @@ export function diffAttributes(original = {}, edited = {}) {
   return changes;
 }
 
-/** 变体主题名 → 子体要带的属性,如 SIZE_NAME/COLOR_NAME → ['size', 'color']。亚马逊返回了属性列表时以它为准 */
+/** 变体主题里每一段对应的属性名;没列的按小写原样 */
+const THEME_PART_ATTRIBUTE = {
+  COLOR: 'color', COLOR_NAME: 'color', SIZE: 'size', SIZE_NAME: 'size', STYLE: 'style', STYLE_NAME: 'style',
+  SET_NAME: 'set_name', PATTERN: 'pattern', PATTERN_NAME: 'pattern', MATERIAL: 'material', SCENT_NAME: 'scent',
+  FLAVOR_NAME: 'flavor', MODEL: 'model_number', MODEL_NAME: 'model_name',
+};
+
+/** 变体主题名 → 子体要带的属性,如 SIZE_NAME/COLOR_NAME → ['size', 'color']、SET_NAME → ['set_name']。亚马逊返回了属性列表时以它为准 */
 export function themeAttributes(theme, fromAmazon = []) {
   if (fromAmazon.length) return fromAmazon;
-  return String(theme ?? '').split('/').map((part) => part.trim().toLowerCase().replace(/_name$/, '')).filter(Boolean);
+  return String(theme ?? '').split('/').map((part) => part.trim().toUpperCase()).filter(Boolean)
+    .map((part) => THEME_PART_ATTRIBUTE[part] ?? part.toLowerCase());
 }

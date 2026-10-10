@@ -48,6 +48,10 @@ test('owner pulls a whole store, validates edits, and live submit validates firs
         ? json({ numberOfResults: 3, items: [item('SKU-3', 3)], pagination: {} })
         : json({ numberOfResults: 3, items: [item('SKU-1', 1), item('SKU-2', 2)], pagination: { nextToken: 'p2' } });
     }
+    if (url.pathname.startsWith('/listings/2021-08-01/items/CCEU/') && init.method === 'PUT') {
+      const preview = url.searchParams.get('mode') === 'VALIDATION_PREVIEW';
+      return json({ sku: 'NEW-P', status: preview ? 'VALID' : 'ACCEPTED', submissionId: 'p1', issues: [] });
+    }
     if (url.pathname.startsWith('/listings/2021-08-01/items/CCEU/') && init.method === 'PATCH') {
       const sku = decodeURIComponent(url.pathname.split('/').pop());
       if (init.body.includes('BAD')) return json({ sku, status: 'INVALID', submissionId: 's0', issues: [{ code: '1', message: '标题不合规', severity: 'ERROR' }] });
@@ -158,6 +162,29 @@ test('owner pulls a whole store, validates edits, and live submit validates firs
     ['delete', '/attributes/parentage_level'], ['delete', '/attributes/child_parent_sku_relationship'], ['delete', '/attributes/variation_theme'],
   ]);
   assert.equal((await call(`/listings/items?${q}`, owner)).data.items.find((r) => r.sku === 'SKU-3').parent, null);
+
+  // 新建父体:先校验、建好父体,再校验、挂子体
+  const calls = requests.length;
+  const created = await merge({ parentSku: undefined, theme: 'SET_NAME', live: true,
+    newParent: { sku: 'NEW-P', itemName: 'Cyloral 67XL', brand: 'Cyloral', itemTypeKeyword: 'inkjet-printer-ink-cartridges' },
+    children: [{ sku: 'SKU-3', values: { set_name: '67xl Black' } }] });
+  assert.equal(created.status, 200, created.data.error);
+  assert.equal(created.data.parent.status, 'ACCEPTED');
+  assert.deepEqual(created.data.results.map((r) => [r.sku, r.status]), [['SKU-3', 'ACCEPTED']]);
+  const order = requests.slice(calls).map((r) => `${r.method}:${r.query.mode ?? 'live'}`);
+  assert.deepEqual(order, ['PUT:VALIDATION_PREVIEW', 'PUT:live', 'PATCH:VALIDATION_PREVIEW', 'PATCH:live']);
+  assert.deepEqual(requests[calls].body, { productType: 'INK_OR_TONER', requirements: 'LISTING_PRODUCT_ONLY', attributes: {
+    parentage_level: [{ marketplace_id: 'A1RKKUPIHCS9HS', value: 'parent' }],
+    variation_theme: [{ name: 'SET_NAME' }],
+    item_name: [{ language_tag: 'es_ES', value: 'Cyloral 67XL', marketplace_id: 'A1RKKUPIHCS9HS' }],
+    brand: [{ language_tag: 'es_ES', value: 'Cyloral', marketplace_id: 'A1RKKUPIHCS9HS' }],
+    item_type_keyword: [{ value: 'inkjet-printer-ink-cartridges', marketplace_id: 'A1RKKUPIHCS9HS' }],
+  } });
+  const withParent = (await call(`/listings/items?${q}`, owner)).data.items;
+  assert.equal(withParent.find((r) => r.sku === 'NEW-P').parentage, 'parent');
+  assert.equal(withParent.find((r) => r.sku === 'SKU-3').parent, 'NEW-P');
+  // 同名父体已经存在就不再新建
+  assert.equal((await merge({ theme: 'SET_NAME', newParent: { sku: 'NEW-P', itemName: 'x', brand: 'y' }, children: [{ sku: 'SKU-2' }] })).status, 400);
 
   // 服务器设了 LISTINGS_LIVE_SUBMIT=false:直接拒绝,不会发到亚马逊
   process.env.LISTINGS_LIVE_SUBMIT = 'false';
