@@ -140,6 +140,12 @@ export default function HomePage({ user, market, onNav, theme, onOpenChangelog }
           meta="US 站 · 周销量 · 每月数据"
           onClick={() => onNav('salesStats')}
         />}
+        {isPet && <EntryCard
+          tone="amber" icon="chart" title="退货分析"
+          desc="每个 SKU 近 30 天的退货率，按亚马逊退货原因和买家留言归纳退货原因，标出退货偏高的款式和尺码。"
+          meta="US 站 · FBA 退货报告 · 自动同步"
+          onClick={() => onNav('returns')}
+        />}
         <EntryCard
           tone="green" icon="box" title="小工具"
           desc="收纳日常办公中随开随用的轻量工具。首个工具可以把多个 Excel 文件中的表格快速汇总到一张工作表,全程只在本机浏览器中处理。"

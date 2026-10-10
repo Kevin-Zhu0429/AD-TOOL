@@ -20,6 +20,7 @@ export async function startPetTestServer({ changeDeps } = {}) {
   const { competitorRouter } = await import('../src/petCompetitors.js');
   const { createChangeRouter } = await import('../src/petChanges.js');
   const { createIntelRouter } = await import('../src/petIntelActions.js');
+  const { returnsRouter } = await import('../src/petReturns.js');
   for (const [username, role] of [['pet-owner', 'owner'], ['pet-user', 'operator']]) {
     db.prepare(`INSERT INTO users (username, display_name, password_hash, role, marketplace, manual_ads, ad_opt, product_intel, seen_version)
       VALUES (?, ?, ?, ?, ?, 0, 0, 0, '999.0.0')`).run(username, username, bcrypt.hashSync('pet-test-password', 4), role, role === 'owner' ? 'ALL' : 'US');
@@ -34,6 +35,7 @@ export async function startPetTestServer({ changeDeps } = {}) {
   app.use('/api/competitors', competitorRouter);
   app.use('/api/changes', createChangeRouter(changeDeps));
   app.use('/api/intel', createIntelRouter(changeDeps));
+  app.use('/api/returns', returnsRouter);
   app.use('/api/neg', (req, res) => res.status(404).json({ error: '宠物版未启用共享否定词库' }));
   const server = await new Promise((resolve) => { const listener = app.listen(0, '127.0.0.1', () => resolve(listener)); });
   return { db, directory, url: `http://127.0.0.1:${server.address().port}`, async close() {

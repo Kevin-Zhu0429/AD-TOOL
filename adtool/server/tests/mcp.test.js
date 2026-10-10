@@ -208,7 +208,7 @@ test('AI connectors: OAuth login, read tools, proposals and token lifecycle', as
     t.after(() => mcp.close());
     const tools = (await mcp.listTools()).tools;
     assert.deepEqual(tools.map((tool) => tool.name).sort(), ['get_catalog_items', 'get_change_impact', 'get_competitor_overview', 'get_listing', 'get_listing_health',
-      'get_product_images', 'get_sales_stats', 'get_sales_trend', 'get_search_terms', 'get_style_intel', 'get_traffic', 'list_change_proposals', 'list_skus',
+      'get_product_images', 'get_returns', 'get_sales_stats', 'get_sales_trend', 'get_search_terms', 'get_style_intel', 'get_traffic', 'list_change_proposals', 'list_skus',
       'propose_ad_changes', 'propose_listing_changes', 'store_overview']);
     // 只有两个提议工具会写东西(写进网站的待确认队列),其余都只读
     assert.deepEqual(tools.filter((tool) => !tool.annotations.readOnlyHint).map((tool) => tool.name).sort(), ['propose_ad_changes', 'propose_listing_changes']);
@@ -242,6 +242,9 @@ test('AI connectors: OAuth login, read tools, proposals and token lifecycle', as
     assert.deepEqual(list.rows[0].stockDetail, { available: 0, transshipment: 0, receiving: 6, working: 5, shipped: 15 });
     assert.match(list.notes[0], /在库 stock = 可用/);
 
+    const returnsReport = await call('get_returns', { sku: 'DOG-L' });
+    assert.deepEqual([returnsReport.total.returned, returnsReport.records.length], [0, 0]);
+    assert.match(returnsReport.notes[0], /还没有退货数据/);
     const traffic = await call('get_traffic', { sku: 'DOG-L', groupBy: 'total' });
     assert.deepEqual(traffic.rows, [{ from: '2026-08-24', to: '2026-09-20', sessions: 100, pageViews: 160, units: 7, orderItems: 0, sales: 279.93,
       conversion: 7, buyBox: 96, mobileShare: 0 }]);

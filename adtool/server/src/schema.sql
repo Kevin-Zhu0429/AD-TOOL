@@ -448,6 +448,28 @@ CREATE TABLE IF NOT EXISTS pet_traffic_days (
   fetched_at TEXT NOT NULL
 );
 
+-- FBA 买家退货报告(GET_FBA_FULFILLMENT_CUSTOMER_RETURNS_DATA):每件退货一行,按退货日期(太平洋时间)存。
+-- 每次同步把拉到的日期段整段重写;reason 是亚马逊的退货原因代码,comments 是买家留言(英文,可能为空)
+CREATE TABLE IF NOT EXISTS pet_returns (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  day TEXT NOT NULL,
+  returned_at TEXT,
+  order_id TEXT,
+  sku TEXT NOT NULL COLLATE NOCASE,
+  asin TEXT,
+  fnsku TEXT,
+  product_name TEXT,
+  quantity INTEGER NOT NULL DEFAULT 1,
+  fulfillment_center TEXT,
+  disposition TEXT,
+  reason TEXT,
+  status TEXT,
+  lpn TEXT,
+  comments TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_pet_returns_day ON pet_returns(day);
+CREATE INDEX IF NOT EXISTS idx_pet_returns_sku ON pet_returns(sku, day);
+
 -- 亚马逊 Listing 当前售价和状态,每次同步整表替换
 CREATE TABLE IF NOT EXISTS pet_listing_cache (
   sku TEXT PRIMARY KEY COLLATE NOCASE,
