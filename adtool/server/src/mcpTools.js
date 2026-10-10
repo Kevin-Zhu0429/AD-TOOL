@@ -14,6 +14,7 @@ import { competitorSyncStatus, listingHealth, ownStyles, recentChanges, styleDet
 import { AD_ACTIONS, AD_ENTITIES, listChanges, proposeAdChanges, proposeListingChanges, STATUS_LABEL, targetLabel } from './petChanges.js';
 import { TRAFFIC_GROUPS, trafficReport, trafficSyncStatus } from './petTraffic.js';
 import { changeImpact } from './petImpact.js';
+import { returnRecords, returnsAnalysis, returnsSyncStatus } from './petReturns.js';
 
 // 测试可以用 PET_TODAY 固定「今天」;正式环境始终是美国太平洋时间的今天
 const todayOf = () => (process.env.NODE_ENV === 'test' && process.env.PET_TODAY) || pacificDay(new Date());
@@ -67,11 +68,13 @@ function freshness() {
   const aba = abaSyncStatus();
   const competitors = competitorSyncStatus();
   const traffic = trafficSyncStatus();
+  const returns = returnsSyncStatus();
   return { today: todayOf(), timezone: 'America/Los_Angeles', spApiConfigured: price.configured,
     trafficCoverage: traffic.coverage, lastTrafficSync: traffic.lastSuccess?.completedAt ?? null, lastTrafficSyncError: traffic.lastError?.message ?? null,
     salesCoverage: price.coverage, lastSalesSync: price.lastSuccess?.completedAt ?? null, lastSalesSyncError: price.lastError?.message ?? null,
     lastAbaSync: aba.lastSuccess?.completedAt ?? null, lastCompetitorSync: competitors.daily.lastSuccess?.completedAt ?? null,
-    lastCompetitorSuggest: competitors.suggest.lastSuccess?.completedAt ?? null };
+    lastCompetitorSuggest: competitors.suggest.lastSuccess?.completedAt ?? null,
+    returnsCoverage: returns.coverage, lastReturnsSync: returns.lastSuccess?.completedAt ?? null, lastReturnsSyncError: returns.lastError?.message ?? null };
 }
 
 /** 销售统计页同款的每月数据:实际销量销售额来自订单;利润没手填时按成本和亚马逊费用自动算 */
@@ -500,6 +503,7 @@ propose_listing_changes、propose_ad_changes 只把改动放进网站的「待�
 日期都是美国太平洋时间。广告数据(花费、ACOS、搜索词报告)要等亚马逊广告 API 开通,目前网站里没有。
 分析某个产品的常用顺序:store_overview 看全店(含利润、断货补货、竞品变化提醒) → list_skus 找到 SKU/ASIN、看单件毛利和库存拆分 → get_sales_trend 看趋势 → get_traffic 看访问量和转化率(分清是没流量还是转化差) → get_search_terms 看流量词和份额 → get_style_intel 看这个款式的竞品、价格带和核心词覆盖 → get_listing_health 看文案体检 → get_listing 看实时文案 → get_catalog_items / get_product_images 对比竞品。
 改动执行后用 get_change_impact 看前后对比(销量、访问量、转化率、搜索份额),至少等执行后 7 天再下结论。
+看退货率、退货原因和买家退货留言用 get_returns(转化正常但差评多、或某个尺码卖得好却留不住时先看它)。
 看月度目标和利润用 get_sales_stats;看竞品最近的降价、改标题、换主图用 get_competitor_overview。
 提改动前:先用 get_listing 看现在的文案;尺寸、材质、填充物等产品规格只写有依据的,拿不准就先问用户,不要编;同一款的不同尺码、颜色是不同 SKU,要分别提;改五点要给出全部条目;reason 写清依据的数据(搜索词份额、竞品对比、体检问题、毛利)。改价前看 list_skus 的保本价;正在做促销价的 SKU 改原价前台不变,要改前台价提 sale_price(促销价,带结束日期)。广告改动需要广告活动、广告组、关键词等的数字编号,只有用户给了批量表或报告时才能提。提完把 confirmUrl 告诉用户去确认。
 用户是中文卖家,回答用中文;给优化建议时说明依据的数据。`;
@@ -569,6 +573,24 @@ export function createPetMcpServer(deps = {}) {
     },
     annotations: local,
   }, wrap((args) => trafficReport(args)));
+
+  server.registerTool('get_returns', {
+    title: '退货分析',
+    description: '亚马逊 FBA 买家退货报告:最近 N 天每个 SKU 的退货件数、退货率(退回件数/同期卖出件数)、退货原因(亚马逊原因代码和中文、归成尺寸/与描述不符/质量/运输损坏/买家原因等大类)、退回后是否可售、买家留言(英文)和按关键词归的留言主题(偏小、太薄、不防水、做工等);按款式汇总(含每个尺码嫌小/嫌大的件数),并给出规则归纳。填 sku 时附上这个 SKU 的全部退货明细。',
+    inputSchema: {
+      days: z.number().int().min(7).max(365).default(30).describe('看最近几天(按退货日期,太平洋时间)'),
+      sku: optionalText('只看这个 SKU,并返回全部退货明细'), style: optionalText('只看这个款式'),
+      commentLimit: z.number().int().min(0).max(50).default(10).describe('每个 SKU 带几条最新的买家留言'),
+      limit: z.number().int().min(1).max(500).default(100).describe('SKU 最多返回几行(按退货件数从多到少)'),
+    },
+    annotations: local,
+  }, wrap(({ days, sku, style, commentLimit, limit }) => {
+    const result = returnsAnalysis({ days, sku, style, commentLimit });
+    const { sync, labels, ...rest } = result;
+    return { ...rest, skus: result.skus.slice(0, limit), totalSkus: result.skus.length,
+      lastSync: sync.lastSuccess?.completedAt ?? null, lastSyncError: sync.lastError?.message ?? null,
+      ...(sku ? { records: returnRecords({ sku, days }) } : {}) };
+  }));
 
   server.registerTool('get_search_terms', {
     title: 'ABA 搜索词表现',

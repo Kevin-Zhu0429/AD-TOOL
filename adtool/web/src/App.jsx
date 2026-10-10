@@ -3,6 +3,7 @@ import PetIntelPage from './components/PetIntelPage.jsx';
 import PetChangesPage from './components/PetChangesPage.jsx';
 import PriceStrategyPage from './components/PriceStrategyPage.jsx';
 import SalesStatsPage from './components/SalesStatsPage.jsx';
+import ReturnsPage from './components/ReturnsPage.jsx';
 import { useEffect, useRef, useState } from 'react';
 import { api } from './api.js';
 import { useTheme } from './theme.js';
@@ -58,7 +59,7 @@ export default function App() {
     const labels = {
       home: '首页', builder: '自动广告', manual: '手动广告', optimizer: '广告优化',
       library: '否定词库', skus: 'SKU 库', portfolios: '广告组合库', aba: 'ABA 报告',
-      products: '产品情报', priceStrategy: '价格策略表', salesStats: '销售统计', changes: '待确认改动', tools: '小工具', admin: '账号管理', profile: '个人资料',
+      products: '产品情报', priceStrategy: '价格策略表', salesStats: '销售统计', returns: '退货分析', changes: '待确认改动', tools: '小工具', admin: '账号管理', profile: '个人资料',
     };
     document.title = `${labels[page] ?? '首页'} — 广告工作台`;
   }, [page]);
@@ -131,6 +132,8 @@ export default function App() {
       <PriceStrategyPage />
     ) : page === 'salesStats' && isPet ? (
       <SalesStatsPage />
+    ) : page === 'returns' && isPet ? (
+      <ReturnsPage />
     ) : page === 'changes' && isPet && user.role === 'owner' ? (
       <PetChangesPage />
     ) : page === 'tools' ? (
