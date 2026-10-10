@@ -48,11 +48,11 @@ test('owner pulls a whole store, validates edits, and live submit validates firs
         ? json({ numberOfResults: 3, items: [item('SKU-3', 3)], pagination: {} })
         : json({ numberOfResults: 3, items: [item('SKU-1', 1), item('SKU-2', 2)], pagination: { nextToken: 'p2' } });
     }
-    if (url.pathname === '/listings/2021-08-01/items/CCEU/SKU-1' && init.method === 'PATCH') {
-      const bad = JSON.parse(init.body).patches[0].value[0].value === 'BAD';
-      if (bad) return json({ sku: 'SKU-1', status: 'INVALID', submissionId: 's0', issues: [{ code: '1', message: '标题不合规', severity: 'ERROR' }] });
+    if (url.pathname.startsWith('/listings/2021-08-01/items/CCEU/') && init.method === 'PATCH') {
+      const sku = decodeURIComponent(url.pathname.split('/').pop());
+      if (init.body.includes('BAD')) return json({ sku, status: 'INVALID', submissionId: 's0', issues: [{ code: '1', message: '标题不合规', severity: 'ERROR' }] });
       const preview = url.searchParams.get('mode') === 'VALIDATION_PREVIEW';
-      return json({ sku: 'SKU-1', status: preview ? 'VALID' : 'ACCEPTED', submissionId: 's1', issues: [] });
+      return json({ sku, status: preview ? 'VALID' : 'ACCEPTED', submissionId: 's1', issues: [] });
     }
     throw new Error(`unexpected ${url.href}`);
   };
@@ -126,6 +126,38 @@ test('owner pulls a whole store, validates edits, and live submit validates firs
   const after = await call(`/listings/item?${q}&sku=SKU-1`, owner);
   assert.equal(after.data.item.attributes.item_name[0].value, 'Tinta nueva');
   assert.equal(after.data.row.itemName, 'Tinta nueva');
+
+  // 变体合并:SKU-2、SKU-3 挂到 SKU-1 下面
+  const merge = (body) => call('/listings/variation/merge', owner, 'POST', { brand: 'CC', country: 'ES', parentSku: 'SKU-1', theme: 'COLOR', ...body });
+  before = patches().length;
+  const mergeBlocked = await merge({ live: true, children: [{ sku: 'SKU-2', values: { color: 'Negro' } }, { sku: 'SKU-3', values: { color: 'BAD' } }] });
+  assert.equal(mergeBlocked.data.blocked, true);
+  // 有一个校验不通过,两个都只发了校验
+  assert.deepEqual(patches().slice(before).map((r) => r.query.mode), ['VALIDATION_PREVIEW', 'VALIDATION_PREVIEW']);
+  before = patches().length;
+  const merged = await merge({ live: true, children: [{ sku: 'SKU-2', values: { color: 'Negro' } }, { sku: 'SKU-3', values: { color: 'Tricolor' } }] });
+  assert.equal(merged.status, 200, merged.data.error);
+  assert.deepEqual(merged.data.results.map((r) => [r.sku, r.mode, r.status]), [['SKU-2', 'live', 'ACCEPTED'], ['SKU-3', 'live', 'ACCEPTED']]);
+  const sent = patches().slice(before);
+  assert.deepEqual(sent.map((r) => r.query.mode), ['VALIDATION_PREVIEW', 'VALIDATION_PREVIEW', undefined, undefined]);
+  assert.deepEqual(sent[2].body.patches, [
+    { op: 'replace', path: '/attributes/parentage_level', value: [{ marketplace_id: 'A1RKKUPIHCS9HS', value: 'child' }] },
+    { op: 'replace', path: '/attributes/child_parent_sku_relationship', value: [{ marketplace_id: 'A1RKKUPIHCS9HS', child_relationship_type: 'variation', parent_sku: 'SKU-1' }] },
+    { op: 'replace', path: '/attributes/variation_theme', value: [{ name: 'COLOR' }] },
+    { op: 'replace', path: '/attributes/color', value: [{ language_tag: 'es_ES', value: 'Negro', marketplace_id: 'A1RKKUPIHCS9HS' }] },
+  ]);
+  const familyRows = (await call(`/listings/items?${q}`, owner)).data.items;
+  assert.equal(familyRows.find((r) => r.sku === 'SKU-3').parent, 'SKU-1');
+  assert.equal((await merge({ children: [{ sku: 'SKU-1' }] })).status, 400);
+
+  // 移出变体
+  before = patches().length;
+  const detached = await call('/listings/variation/detach', owner, 'POST', { brand: 'CC', country: 'ES', sku: 'SKU-3', live: true });
+  assert.equal(detached.data.status, 'ACCEPTED');
+  assert.deepEqual(patches().slice(before)[1].body.patches.map((p) => [p.op, p.path]), [
+    ['delete', '/attributes/parentage_level'], ['delete', '/attributes/child_parent_sku_relationship'], ['delete', '/attributes/variation_theme'],
+  ]);
+  assert.equal((await call(`/listings/items?${q}`, owner)).data.items.find((r) => r.sku === 'SKU-3').parent, null);
 
   // 服务器设了 LISTINGS_LIVE_SUBMIT=false:直接拒绝,不会发到亚马逊
   process.env.LISTINGS_LIVE_SUBMIT = 'false';

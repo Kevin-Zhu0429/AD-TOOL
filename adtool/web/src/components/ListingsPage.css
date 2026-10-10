@@ -32,3 +32,11 @@
   .listings-page { padding: 16px 12px 24px; }
   .listings-drawer-head, .listings-drawer-body, .listings-drawer-foot { padding-left: 12px; padding-right: 12px; }
 }
+.variation-panel h3 { margin: 4px 0 6px; font-size: 13px; }
+.variation-panel .row > .inp, .variation-panel .row > select { flex: 1 1 260px; }
+.variation-panel .tbl td .inp { min-width: 110px; }
+.variation-candidates { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 8px; max-height: 280px; overflow: auto; }
+.variation-candidate { display: grid; grid-template-columns: minmax(120px, auto) minmax(160px, auto) 1fr; gap: 10px; align-items: baseline; text-align: left; padding: 7px 10px; background: transparent; border: 0; border-bottom: 1px solid var(--border); color: var(--text); cursor: pointer; font: inherit; font-size: 12px; }
+.variation-candidate:hover { background: var(--panel-2); }
+.variation-candidate-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 700px) { .variation-candidate { grid-template-columns: 1fr; gap: 2px; } }

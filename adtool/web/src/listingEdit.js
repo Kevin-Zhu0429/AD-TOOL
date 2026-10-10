@@ -152,3 +152,9 @@ export function diffAttributes(original = {}, edited = {}) {
   }
   return changes;
 }
+
+/** 变体主题名 → 子体要带的属性,如 SIZE_NAME/COLOR_NAME → ['size', 'color']。亚马逊返回了属性列表时以它为准 */
+export function themeAttributes(theme, fromAmazon = []) {
+  if (fromAmazon.length) return fromAmazon;
+  return String(theme ?? '').split('/').map((part) => part.trim().toLowerCase().replace(/_name$/, '')).filter(Boolean);
+}

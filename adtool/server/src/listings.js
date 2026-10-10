@@ -255,6 +255,7 @@ export function listRow(row, marketplaceId) {
   const relationships = (item.relationships ?? []).flatMap((r) => r.relationships ?? []);
   const parentSkus = relationships.flatMap((r) => r.parentSkus ?? []);
   const childSkus = relationships.flatMap((r) => r.childSkus ?? []);
+  const theme = relationships.find((r) => r.variationTheme)?.variationTheme;
   return {
     sku: row.sku,
     asin: row.asin,
@@ -271,8 +272,12 @@ export function listRow(row, marketplaceId) {
       error: issues.filter((i) => i.severity === 'ERROR').length,
       warning: issues.filter((i) => i.severity === 'WARNING').length,
     },
-    parent: parentSkus.length ? parentSkus[0] : null,
+    parent: parentSkus[0] ?? (clean(item.attributes?.child_parent_sku_relationship?.[0]?.parent_sku) || null),
     childCount: childSkus.length,
+    childSkus,
+    parentage: clean(item.attributes?.parentage_level?.[0]?.value) || (childSkus.length ? 'parent' : parentSkus.length ? 'child' : null),
+    variationTheme: clean(theme?.theme) || clean(item.attributes?.variation_theme?.[0]?.name) || null,
+    themeAttributes: Array.isArray(theme?.attributes) ? theme.attributes : [],
     createdDate: clean(summary.createdDate) || null,
     lastUpdatedDate: clean(summary.lastUpdatedDate) || null,
     fetchedAt: row.fetched_at,
@@ -389,6 +394,8 @@ function applyToCache(store, cached, patches) {
     else attributes[name] = value;
   }
   const item = { ...cached.item, attributes };
+  // 改了变体关系时,亚马逊返回的旧关系已经不准,先按提交的属性显示,刷新后再以亚马逊为准
+  if (patches.some((p) => p.path === '/attributes/child_parent_sku_relationship')) delete item.relationships;
   const title = attributes.item_name?.[0]?.value;
   db.prepare('UPDATE listing_items SET data_json = ?, item_name = COALESCE(?, item_name) WHERE seller_id = ? AND country = ? AND sku = ?')
     .run(JSON.stringify(item), title ? clean(title) : null, store.account.sellerId, store.country, cached.row.sku);
@@ -413,6 +420,36 @@ listingsRouter.get('/item', wrap(async (req, res) => {
   res.json({ item: cached.item, report: cached.report, row: listRow(cached.row, store.marketplaceId), marketplaceId: store.marketplaceId });
 }));
 
+function productTypeOf(store, cached) {
+  const productType = clean(summaryOf(cached.item, store.marketplaceId).productType)
+    || clean(cached.item.productTypes?.[0]?.productType);
+  if (!productType) throw httpError(400, `不知道 ${cached.row.sku} 的商品类型（productType），请先刷新这个 SKU`);
+  return productType;
+}
+
+function sendPatch(store, sku, productType, patches, preview) {
+  return listingCall(store, skuPath(store, sku), {
+    method: 'PATCH',
+    query: { includedData: 'issues,identifiers', ...(preview ? { mode: 'VALIDATION_PREVIEW' } : {}) },
+    body: { productType, patches },
+  });
+}
+
+const isBlocked = (result) => clean(result.status) !== 'VALID'
+  || (result.issues ?? []).some((issue) => issue?.severity === 'ERROR');
+
+const submissionOf = (result) => ({
+  status: clean(result.status),
+  submissionId: clean(result.submissionId) || null,
+  issues: Array.isArray(result.issues) ? result.issues : [],
+});
+
+function requireLive(live) {
+  if (live && !liveSubmitEnabled()) {
+    throw httpError(403, '服务器关闭了正式提交（.env 里 LISTINGS_LIVE_SUBMIT=false），这次只能校验');
+  }
+}
+
 /**
  * 上传改动。live 不为 true 时只让亚马逊校验(VALIDATION_PREVIEW),不改线上 Listing。
  * live 为 true 时先校验,校验不通过就停下把问题返回;通过了才正式提交,并把改动写进本地缓存。
@@ -424,33 +461,131 @@ listingsRouter.post('/item/submit', wrap(async (req, res) => {
   const cached = cachedItem(store, sku);
   if (!cached) throw httpError(404, '本地还没有这个 SKU，请先拉取');
   const live = req.body?.live === true;
-  if (live && !liveSubmitEnabled()) {
-    throw httpError(403, '服务器关闭了正式提交（.env 里 LISTINGS_LIVE_SUBMIT=false），这次只能校验');
-  }
-  const productType = clean(req.body?.productType) || clean(summaryOf(cached.item, store.marketplaceId).productType)
-    || clean(cached.item.productTypes?.[0]?.productType);
-  if (!productType) throw httpError(400, '不知道这个 SKU 的商品类型（productType），请先刷新这个 SKU');
+  requireLive(live);
+  const productType = productTypeOf(store, cached);
   const patches = buildPatches(req.body?.changes, cached.item.attributes ?? {});
-  const patch = (preview) => listingCall(store, skuPath(store, sku), {
-    method: 'PATCH',
-    query: { includedData: 'issues,identifiers', ...(preview ? { mode: 'VALIDATION_PREVIEW' } : {}) },
-    body: { productType, patches },
-  });
-  const reply = (mode, result, extra = {}) => res.json({
-    mode,
-    status: clean(result.status),
-    submissionId: clean(result.submissionId) || null,
-    issues: Array.isArray(result.issues) ? result.issues : [],
-    patches,
-    ...extra,
-  });
+  const reply = (mode, result, extra = {}) => res.json({ mode, ...submissionOf(result), patches, ...extra });
 
-  const preview = await patch(true);
-  const blocked = clean(preview.status) !== 'VALID'
-    || (preview.issues ?? []).some((issue) => issue?.severity === 'ERROR');
-  if (!live || blocked) return reply('preview', preview, live ? { blocked: true } : {});
+  const preview = await sendPatch(store, sku, productType, patches, true);
+  if (!live || isBlocked(preview)) return reply('preview', preview, live ? { blocked: true } : {});
 
-  const result = await patch(false);
+  const result = await sendPatch(store, sku, productType, patches, false);
   if (clean(result.status) === 'ACCEPTED') applyToCache(store, cached, patches);
   reply('live', result);
+}));
+
+// ---------- 变体合并(跨站借评) ----------
+// 把子体 SKU 挂到同一卖家账号、同一站点里已有的父体 SKU 下面,评论在整个变体家族里共享。
+// 每个子体要写 parentage_level=child、child_parent_sku_relationship 指向父体、variation_theme 和父体一致,
+// 还要带上变体主题对应的属性值(比如主题 COLOR 就要有 color),同一家族里这些值不能重复。
+
+const MAX_CHILDREN = 50;
+/** 子体可以随合并一起改的属性:变体主题会用到的那几个 */
+const THEME_ATTRIBUTE = /^[a-z][a-z0-9_]{0,59}$/;
+
+/** 合并一个子体的 patch:关系三件套 + 变体属性值(文字值带上原有或默认的 language_tag) */
+export function variationPatches({ parentSku, theme, marketplaceId, values = {}, attributes = {}, languageTag }) {
+  const patches = [
+    { op: 'replace', path: '/attributes/parentage_level', value: [{ marketplace_id: marketplaceId, value: 'child' }] },
+    { op: 'replace', path: '/attributes/child_parent_sku_relationship', value: [
+      { marketplace_id: marketplaceId, child_relationship_type: 'variation', parent_sku: parentSku },
+    ] },
+    { op: 'replace', path: '/attributes/variation_theme', value: [{ name: theme }] },
+  ];
+  for (const [name, raw] of Object.entries(values)) {
+    if (!THEME_ATTRIBUTE.test(name)) throw httpError(400, `变体属性名不对：${name}`);
+    const text = clean(raw);
+    if (!text) continue;
+    const base = attributes[name]?.[0] ?? {};
+    const tag = base.language_tag ?? languageTag;
+    patches.push({ op: 'replace', path: `/attributes/${name}`, value: [
+      { ...(tag ? { language_tag: tag } : {}), value: text, marketplace_id: base.marketplace_id ?? marketplaceId },
+    ] });
+  }
+  return patches;
+}
+
+/** 移出变体:删掉关系三件套,子体变回独立 Listing */
+export function detachPatches(marketplaceId) {
+  return ['parentage_level', 'child_parent_sku_relationship', 'variation_theme'].map((name) => (
+    { op: 'delete', path: `/attributes/${name}`, ...(name === 'variation_theme' ? {} : { value: [{ marketplace_id: marketplaceId }] }) }
+  ));
+}
+
+const languageOf = (item) => Object.values(item.attributes ?? {}).flat().find((entry) => entry?.language_tag)?.language_tag;
+
+/**
+ * 合并:children = [{ sku, values: { color: 'Black' } }]。
+ * 所有子体先逐个校验,有一个不通过就整批不提交;live 时全部通过才逐个正式提交。
+ */
+listingsRouter.post('/variation/merge', wrap(async (req, res) => {
+  const store = storeOf(req);
+  const live = req.body?.live === true;
+  requireLive(live);
+  const parentSku = clean(req.body?.parentSku);
+  const theme = clean(req.body?.theme);
+  const children = Array.isArray(req.body?.children) ? req.body.children : [];
+  if (!parentSku) throw httpError(400, '请选择父体 SKU');
+  if (!theme) throw httpError(400, '缺少变体主题（variation_theme）');
+  if (!children.length) throw httpError(400, '请选择要合并进来的子体 SKU');
+  if (children.length > MAX_CHILDREN) throw httpError(400, `一次最多合并 ${MAX_CHILDREN} 个子体`);
+  const parent = cachedItem(store, parentSku);
+  if (!parent) throw httpError(404, `本地没有父体 ${parentSku}，请先拉取`);
+  const parentType = productTypeOf(store, parent);
+
+  const plans = children.map((child) => {
+    const sku = clean(child?.sku);
+    if (!sku || sku === parentSku) throw httpError(400, '子体 SKU 不能为空，也不能是父体自己');
+    const cached = cachedItem(store, sku);
+    if (!cached) throw httpError(404, `本地没有 ${sku}，请先拉取`);
+    const productType = productTypeOf(store, cached);
+    // 同一个变体家族必须是同一个商品类型,不一样的先拦下,不发给亚马逊
+    if (productType !== parentType) {
+      throw httpError(400, `${sku} 的商品类型是 ${productType}，父体是 ${parentType}，不同类型不能合并成一个变体`);
+    }
+    const values = child?.values && typeof child.values === 'object' && !Array.isArray(child.values) ? child.values : {};
+    return { sku, cached, productType, patches: variationPatches({
+      parentSku, theme, marketplaceId: store.marketplaceId, values,
+      attributes: cached.item.attributes ?? {}, languageTag: languageOf(cached.item) ?? languageOf(parent.item),
+    }) };
+  });
+  const seen = new Set();
+  for (const plan of plans) {
+    if (seen.has(plan.sku)) throw httpError(400, `${plan.sku} 重复了`);
+    seen.add(plan.sku);
+  }
+
+  const results = [];
+  for (const plan of plans) {
+    const preview = await sendPatch(store, plan.sku, plan.productType, plan.patches, true);
+    results.push({ sku: plan.sku, mode: 'preview', ...submissionOf(preview), blocked: isBlocked(preview), patches: plan.patches });
+  }
+  const blocked = results.some((row) => row.blocked);
+  if (!live || blocked) return res.json({ mode: 'preview', blocked: live && blocked, results });
+
+  for (const [index, plan] of plans.entries()) {
+    const result = await sendPatch(store, plan.sku, plan.productType, plan.patches, false);
+    if (clean(result.status) === 'ACCEPTED') applyToCache(store, plan.cached, plan.patches);
+    results[index] = { sku: plan.sku, mode: 'live', ...submissionOf(result), patches: plan.patches };
+  }
+  res.json({ mode: 'live', results });
+}));
+
+/** 把一个子体移出变体家族,同样先校验再提交 */
+listingsRouter.post('/variation/detach', wrap(async (req, res) => {
+  const store = storeOf(req);
+  const live = req.body?.live === true;
+  requireLive(live);
+  const sku = clean(req.body?.sku);
+  const cached = sku ? cachedItem(store, sku) : null;
+  if (!cached) throw httpError(404, '本地没有这个 SKU，请先拉取');
+  const productType = productTypeOf(store, cached);
+  const patches = detachPatches(store.marketplaceId);
+  const preview = await sendPatch(store, sku, productType, patches, true);
+  if (!live || isBlocked(preview)) {
+    return res.json({ mode: 'preview', ...submissionOf(preview), blocked: live && isBlocked(preview), patches });
+  }
+  const result = await sendPatch(store, sku, productType, patches, false);
+  if (clean(result.status) === 'ACCEPTED') applyToCache(store, cached, patches);
+  res.json({ mode: 'live', ...submissionOf(result), patches });
 }));

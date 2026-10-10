@@ -3,6 +3,7 @@ import { api } from '../api.js';
 import {
   diffAttributes, localeOf, pageYieldOf, priceOf, salePriceOf, setPageYield, setPrice, setSalePrice, setTextValues, textValues,
 } from '../listingEdit.js';
+import VariationPanel from './VariationPanel.jsx';
 import './ListingsPage.css';
 
 const STATUS_LABEL = { BUYABLE: '可购买', DISCOVERABLE: '可搜索到' };
@@ -31,6 +32,7 @@ export default function ListingsPage() {
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('all');
   const [openSku, setOpenSku] = useState('');
+  const [view, setView] = useState('list');
   const abort = useRef(null);
 
   const store = useMemo(() => {
@@ -146,6 +148,18 @@ export default function ListingsPage() {
       {message && <div className={`note ${message.kind}`}>{message.text}</div>}
 
       {items.length > 0 && (
+        <div className="chips">
+          {[['list', '商品列表'], ['variation', '变体合并（借评）']].map(([id, label]) => (
+            <button key={id} className={`chip${view === id ? ' on' : ''}`} onClick={() => setView(id)}>{label}</button>
+          ))}
+        </div>
+      )}
+
+      {items.length > 0 && view === 'variation' && store && (
+        <VariationPanel key={selected} store={store} items={items} liveSubmit={config.liveSubmit} onChanged={() => loadItems().catch(() => {})} />
+      )}
+
+      {items.length > 0 && view === 'list' && (
         <div className="card">
           <div className="row wrap listings-filters">
             <input className="inp" placeholder="搜 SKU / ASIN / 标题 / 父 SKU" value={query} onChange={(e) => setQuery(e.target.value)} />

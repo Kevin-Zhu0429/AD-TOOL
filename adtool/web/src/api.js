@@ -158,6 +158,8 @@ export const api = {
   listingItem: (store, sku, refresh = false) =>
     request(`/listings/item?${new URLSearchParams({ ...store, sku, ...(refresh ? { refresh: '1' } : {}) })}`),
   submitListing: (body) => request('/listings/item/submit', { method: 'POST', body }),
+  mergeVariation: (body) => request('/listings/variation/merge', { method: 'POST', body }),
+  detachVariation: (body) => request('/listings/variation/detach', { method: 'POST', body }),
   // ---------- 亚马逊 SP-API 库存同步(接口路径沿用 captain) ----------
   captainStatus: () => request('/captain/status'),
   syncCaptainInventory: (options) => followSyncJob('/captain/sync', { ...options, start: true }),

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  diffAttributes, localeOf, pageYieldOf, priceOf, salePriceOf, setPageYield, setPrice, setSalePrice, setTextValues, textValues,
+  diffAttributes, localeOf, themeAttributes, pageYieldOf, priceOf, salePriceOf, setPageYield, setPrice, setSalePrice, setTextValues, textValues,
 } from './listingEdit.js';
 
 const M = 'A1RKKUPIHCS9HS';
@@ -64,4 +64,10 @@ test('打印页数可改，清空即删除', () => {
   assert.deepEqual(setPageYield(attributes, '600', locale).page_yield, [{ value: 600, marketplace_id: M }]);
   assert.equal(setPageYield(attributes, '', locale).page_yield, undefined);
   assert.deepEqual(setPageYield({}, '300', locale).page_yield, [{ value: 300, marketplace_id: M }]);
+});
+
+test('变体主题换算成子体要带的属性，亚马逊给了就用亚马逊的', () => {
+  assert.deepEqual(themeAttributes('SIZE_NAME/COLOR_NAME'), ['size', 'color']);
+  assert.deepEqual(themeAttributes('COLOR'), ['color']);
+  assert.deepEqual(themeAttributes('COLOR', ['color', 'item_package_quantity']), ['color', 'item_package_quantity']);
 });
