@@ -4,6 +4,25 @@ import { INK_THEMES, parentCategoryField, themeAttributes } from '../listingEdit
 
 const SEVERITY = { ERROR: '错误', WARNING: '警告', INFO: '提示' };
 
+const EU_SITES = ['ES', 'DE', 'FR', 'IT', 'UK'];
+/** 亚马逊常要的几个必填项,只写进还没有这个属性的父体 / 子体;值是接口枚举 */
+const FILL_FIELDS = [
+  { name: 'gdpr_risk', label: 'GDPR 风险', euOnly: true, options: [
+    ['no_electronic_information_stored', '没有存储电子信息'], ['user_setting_information_storage', '存储用户设置'],
+    ['manufacturer_website_registration', '需在厂商网站注册'], ['cloud_account_connectivity', '连接云账号'],
+    ['physical_or_cloud_data_storage', '本地或云端存数据'], ['pin_or_biometric_recognition_lock', '密码或生物识别锁'],
+  ] },
+  { name: 'supplier_declared_dg_hz_regulation', label: '危险品规管', options: [
+    ['not_applicable', '不适用'], ['ghs', 'GHS'], ['storage', '储存'], ['transportation', '运输'], ['disposal', '处置'], ['other', '其他'], ['unknown', '不清楚'],
+  ] },
+  { name: 'batteries_required', label: '需要电池吗', options: [['false', '否'], ['true', '是']] },
+  { name: 'country_of_origin', label: '原产国（两位代码，如 CN）', text: true },
+];
+const defaultFill = (country) => ({
+  ...(EU_SITES.includes(country) ? { gdpr_risk: 'no_electronic_information_stored' } : {}),
+  supplier_declared_dg_hz_regulation: 'not_applicable', batteries_required: 'false', country_of_origin: '',
+});
+
 const newParentDraft = (country) => ({ sku: '', itemName: '', brand: '', category: parentCategoryField(country).fallback });
 
 const matches = (item, needle) => !needle
@@ -22,6 +41,7 @@ export default function VariationPanel({ store, items, liveSubmit, onChanged }) 
   const [busy, setBusy] = useState('');
   const [message, setMessage] = useState(null);
   const [results, setResults] = useState(null);
+  const [fill, setFill] = useState(() => defaultFill(store.country));
   // 现有子体的变体属性值:{ sku: { color: 'Black' } },用来查新子体有没有撞值
   const [familyValues, setFamilyValues] = useState({});
 
@@ -146,6 +166,7 @@ export default function VariationPanel({ store, items, liveSubmit, onChanged }) 
           ? { newParent: { ...draft, sku: draft.sku.trim(), itemName: draft.itemName.trim(), brand: draft.brand.trim(), category: draft.category.trim() } }
           : { parentSku: parent.sku }),
         children: picked.map((row) => ({ sku: row.sku, values: row.values })),
+        fill,
       });
       setResults(res);
       if (res.mode === 'live' && !res.blocked) {
@@ -317,6 +338,25 @@ export default function VariationPanel({ store, items, liveSubmit, onChanged }) 
                 </tbody>
               </table>
             )}
+          </div>
+
+          <div className="stack">
+            <h3>缺了才补的必填项 <span className="hint">已经填过的父体、子体不会被改；不想补的选空</span></h3>
+            <div className="listings-grid">
+              {FILL_FIELDS.filter((field) => !field.euOnly || EU_SITES.includes(store.country)).map((field) => (
+                <label key={field.name} className="field">
+                  <span>{field.label}</span>
+                  {field.text
+                    ? <input className="inp mono" value={fill[field.name] ?? ''} maxLength={2} onChange={(e) => setFill({ ...fill, [field.name]: e.target.value.toUpperCase() })} />
+                    : (
+                      <select className="inp" value={fill[field.name] ?? ''} onChange={(e) => setFill({ ...fill, [field.name]: e.target.value })}>
+                        <option value="">不补</option>
+                        {field.options.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                      </select>
+                    )}
+                </label>
+              ))}
+            </div>
           </div>
 
           {message && <div className={`note ${message.kind}`}>{message.text}</div>}

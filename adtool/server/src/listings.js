@@ -524,9 +524,45 @@ export const categoryAttribute = (country) => (['ES', 'DE', 'FR', 'IT', 'UK'].in
  * 新建父体的属性,和卖家后台模板里父体那一行一致:父体标记、变体主题、标题、品牌、分类。
  * 父体不卖货,没有价格、库存和 UPC。
  */
-export function parentAttributes({ theme, itemName, brand, category, country, marketplaceId, languageTag }) {
+/**
+ * 欧洲站建父体时亚马逊要五点、描述、原产国、电池、危险品这些商品信息,所以父体先照抄第一个子体的商品属性,
+ * 再去掉只属于子体自己的东西(报价、库存、UPC/EAN、变体关系和变体值)。
+ */
+const CHILD_ONLY_ATTRIBUTES = new Set([
+  'purchasable_offer', 'fulfillment_availability', 'list_price', 'externally_assigned_product_identifier',
+  'merchant_suggested_asin', 'parentage_level', 'child_parent_sku_relationship', 'variation_theme',
+  'condition_type', 'condition_note', 'merchant_shipping_group', 'max_order_quantity', 'skip_offer', 'gift_options',
+  'product_tax_code', 'merchant_release_date', 'main_offer_image_locator', 'item_name', 'brand',
+  'item_type_keyword', 'recommended_browse_nodes',
+]);
+
+/**
+ * 「缺了才补」的必填项:页面上选的值,只写进还没有这个属性的父体或子体。
+ * 值是亚马逊接口里的枚举,不是模板里显示的中文 / 西语。
+ */
+export const FILL_ATTRIBUTES = {
+  gdpr_risk: (value, marketplaceId) => [{ value, marketplace_id: marketplaceId }],
+  supplier_declared_dg_hz_regulation: (value, marketplaceId) => [{ value, marketplace_id: marketplaceId }],
+  batteries_required: (value, marketplaceId) => [{ value: value === true || value === 'true', marketplace_id: marketplaceId }],
+  country_of_origin: (value, marketplaceId) => [{ value, marketplace_id: marketplaceId }],
+};
+
+export function fillMissing(attributes, fill = {}, marketplaceId) {
+  const added = {};
+  for (const [name, raw] of Object.entries(fill ?? {})) {
+    const build = FILL_ATTRIBUTES[name];
+    if (!build || raw === '' || raw === null || raw === undefined || attributes?.[name]?.length) continue;
+    added[name] = build(raw, marketplaceId);
+  }
+  return added;
+}
+
+export function parentAttributes({ theme, itemName, brand, category, country, marketplaceId, languageTag, base = {}, skip = [], fill }) {
   const text = (value) => [{ ...(languageTag ? { language_tag: languageTag } : {}), value, marketplace_id: marketplaceId }];
+  const copied = Object.fromEntries(Object.entries(base).filter(([name]) => !CHILD_ONLY_ATTRIBUTES.has(name) && !skip.includes(name)));
   return {
+    ...copied,
+    ...fillMissing(copied, fill, marketplaceId),
     parentage_level: [{ marketplace_id: marketplaceId, value: 'parent' }],
     variation_theme: [{ name: theme }],
     item_name: text(itemName),
@@ -557,6 +593,7 @@ listingsRouter.post('/variation/merge', wrap(async (req, res) => {
   const parentSku = clean(newParent ? newParent.sku : req.body?.parentSku);
   const theme = clean(req.body?.theme);
   const children = Array.isArray(req.body?.children) ? req.body.children : [];
+  const fill = req.body?.fill && typeof req.body.fill === 'object' && !Array.isArray(req.body.fill) ? req.body.fill : {};
   if (!parentSku) throw httpError(400, newParent ? '请填新父体的 SKU' : '请选择父体 SKU');
   if (!theme) throw httpError(400, '缺少变体主题（variation_theme）');
   if (!children.length) throw httpError(400, '请选择要合并进来的子体 SKU');
@@ -580,10 +617,14 @@ listingsRouter.post('/variation/merge', wrap(async (req, res) => {
       throw httpError(400, `${sku} 的商品类型是 ${productType}，${parent ? '父体' : `${cachedChildren[0].sku}`}是 ${parentType}，不同类型不能合并成一个变体`);
     }
     const values = child?.values && typeof child.values === 'object' && !Array.isArray(child.values) ? child.values : {};
-    return { sku, cached, productType, patches: variationPatches({
+    const patches = variationPatches({
       parentSku, theme, marketplaceId: store.marketplaceId, values,
       attributes: cached.item.attributes ?? {}, languageTag: languageOf(cached.item) ?? languageTag,
-    }) };
+    });
+    for (const [name, value] of Object.entries(fillMissing(cached.item.attributes ?? {}, fill, store.marketplaceId))) {
+      patches.push({ op: 'replace', path: `/attributes/${name}`, value });
+    }
+    return { sku, cached, productType, patches };
   });
   const seen = new Set();
   for (const plan of plans) {
@@ -599,7 +640,9 @@ listingsRouter.post('/variation/merge', wrap(async (req, res) => {
     if (!itemName || !brand) throw httpError(400, '新父体要填标题和品牌');
     parentAttrs = parentAttributes({
       theme, itemName, brand, category: clean(newParent.category), country: store.country,
-      marketplaceId: store.marketplaceId, languageTag,
+      marketplaceId: store.marketplaceId, languageTag, fill,
+      // 照抄第一个子体的商品属性,但变体值(如 set_name)每个子体不一样,父体不带
+      base: plans[0].cached.item.attributes ?? {}, skip: Object.keys(children[0]?.values ?? {}),
     });
     const preview = await sendPut(store, parentSku, parentType, parentAttrs, true);
     parentResult = { sku: parentSku, mode: 'preview', ...submissionOf(preview), blocked: isBlocked(preview), parent: true };

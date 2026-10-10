@@ -167,13 +167,17 @@ test('owner pulls a whole store, validates edits, and live submit validates firs
   const calls = requests.length;
   const created = await merge({ parentSku: undefined, theme: 'SET_NAME', live: true,
     newParent: { sku: 'NEW-P', itemName: 'Cyloral 67XL', brand: 'Cyloral', category: '34285014031' },
+    fill: { gdpr_risk: 'no_electronic_information_stored', country_of_origin: '' },
     children: [{ sku: 'SKU-3', values: { set_name: '67xl Black' } }] });
   assert.equal(created.status, 200, created.data.error);
   assert.equal(created.data.parent.status, 'ACCEPTED');
   assert.deepEqual(created.data.results.map((r) => [r.sku, r.status]), [['SKU-3', 'ACCEPTED']]);
   const order = requests.slice(calls).map((r) => `${r.method}:${r.query.mode ?? 'live'}`);
   assert.deepEqual(order, ['PUT:VALIDATION_PREVIEW', 'PUT:live', 'PATCH:VALIDATION_PREVIEW', 'PATCH:live']);
+  // 父体照抄子体的商品属性(这里是 color),缺的必填项按页面选的补上,空值不补
   assert.deepEqual(requests[calls].body, { productType: 'INK_OR_TONER', requirements: 'LISTING_PRODUCT_ONLY', attributes: {
+    color: [{ language_tag: 'es_ES', value: 'Tricolor', marketplace_id: 'A1RKKUPIHCS9HS' }],
+    gdpr_risk: [{ value: 'no_electronic_information_stored', marketplace_id: 'A1RKKUPIHCS9HS' }],
     parentage_level: [{ marketplace_id: 'A1RKKUPIHCS9HS', value: 'parent' }],
     variation_theme: [{ name: 'SET_NAME' }],
     item_name: [{ language_tag: 'es_ES', value: 'Cyloral 67XL', marketplace_id: 'A1RKKUPIHCS9HS' }],
@@ -181,6 +185,9 @@ test('owner pulls a whole store, validates edits, and live submit validates firs
     // 西班牙站用推荐浏览节点,不是美国站的 item_type_keyword
     recommended_browse_nodes: [{ value: '34285014031', marketplace_id: 'A1RKKUPIHCS9HS' }],
   } });
+  assert.deepEqual(requests[calls + 3].body.patches.at(-1), {
+    op: 'replace', path: '/attributes/gdpr_risk', value: [{ value: 'no_electronic_information_stored', marketplace_id: 'A1RKKUPIHCS9HS' }],
+  });
   const withParent = (await call(`/listings/items?${q}`, owner)).data.items;
   assert.equal(withParent.find((r) => r.sku === 'NEW-P').parentage, 'parent');
   assert.equal(withParent.find((r) => r.sku === 'SKU-3').parent, 'NEW-P');
