@@ -197,7 +197,8 @@ try {
   const exportedPrinterRows = exportedPrinters.filter((row) => row[2] === 'hp deskjet 2820e pack 0');
   assert.equal(exportedPrinterRows.length, 2);
   assert.deepEqual(new Set(exportedPrinterRows.map((row) => row[0])), new Set(['TEST-305-BK', 'TEST-305-BKC']));
-  assert.ok(exportedPrinterRows.every((row) => row[3] === 'B000000305' && row[4] === 2000));
+  assert.ok(exportedPrinterRows.every((row) => row[3] === 'B000000305' && row[4] === 1000));
+  assert.equal(exportedPrinterRows.reduce((sum, row) => sum + row[4], 0), 2000, 'market impressions are split across SKU export rows');
   await view.getByRole('button', { name: '展开 B000000305 HP DESKJET2820', exact: true }).click();
   const children = view.getByRole('region', { name: 'B000000305 HP DESKJET2820 下的搜索词', exact: true });
   await children.locator('.aba-table').waitFor();

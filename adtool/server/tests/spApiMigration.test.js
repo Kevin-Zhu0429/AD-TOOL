@@ -8,7 +8,6 @@ import path from 'node:path';
 
 test('switching to SP-API clears Captain-era bindings but keeps SKU stock and SP-API bindings', async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'adtool-spapi-migration-'));
-  t.after(() => rm(directory, { recursive: true, force: true }));
 
   // 升级前的库:一组船长绑定和一组已经是亚马逊的绑定
   const old = new Database(path.join(directory, 'adtool.db'));
@@ -40,7 +39,12 @@ test('switching to SP-API clears Captain-era bindings but keeps SKU stock and SP
 
   process.env.DATA_DIR = directory;
   const { db } = await import('../src/db.js');
-  t.after(() => db.close());
+  t.after(async () => {
+    db.close();
+    const resolved = path.resolve(directory);
+    if (!resolved.startsWith(path.resolve(os.tmpdir()) + path.sep) || !path.basename(resolved).startsWith('adtool-spapi-migration-')) throw new Error('Unexpected test directory');
+    await rm(resolved, { recursive: true, force: true });
+  });
 
   assert.equal(db.pragma('user_version', { simple: true }), 3);
   assert.deepEqual(db.prepare('SELECT open_channel_id FROM captain_channel_bindings').all(),

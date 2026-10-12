@@ -149,3 +149,20 @@ export function bumpOnWrite(req, res, next) {
 export function bumpDataGeneration() {
   generation++;
 }
+
+/** Close worker database connections before test cleanup or process shutdown. */
+export async function closeWorkerPool() {
+  const pending = [];
+  for (const slot of slots) {
+    const worker = slot.worker;
+    slot.worker = null;
+    for (const job of [slot.running, ...slot.queue].filter(Boolean)) {
+      clearTimeout(job.timer);
+      job.reject(Object.assign(new Error('后台线程池已关闭'), { status: 503 }));
+    }
+    slot.running = null;
+    slot.queue = [];
+    if (worker) pending.push(worker.terminate());
+  }
+  await Promise.all(pending);
+}

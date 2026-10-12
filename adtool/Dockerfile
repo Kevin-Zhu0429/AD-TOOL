@@ -55,6 +55,7 @@ WORKDIR /app/server
 COPY --from=deps /app/server/node_modules ./node_modules
 COPY server/package.json ./
 COPY server/src ./src
+COPY web/src/index.css /app/web/src/index.css
 COPY shared/ /app/shared/
 # index.js 里找的是 ../../web/dist,对应容器内 /app/web/dist
 COPY --from=web /app/web/dist /app/web/dist

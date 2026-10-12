@@ -432,3 +432,22 @@ CREATE TABLE IF NOT EXISTS aba_public_lanes (lane TEXT PRIMARY KEY, next_create 
 
 -- 公共视图按国家关联全部账号的 SKU，不经过 user_id 前缀索引。
 CREATE INDEX IF NOT EXISTS idx_sku_country_asin ON sku_items(country, asin);
+
+-- AI 连接器：授权码、令牌只保存 SHA-256 摘要。账号删除时自动撤销。
+CREATE TABLE IF NOT EXISTS mcp_oauth_clients (
+  client_id TEXT PRIMARY KEY, data_json TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS mcp_oauth_codes (
+  code_hash TEXT PRIMARY KEY, client_id TEXT NOT NULL,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  redirect_uri TEXT NOT NULL, code_challenge TEXT NOT NULL,
+  scopes TEXT NOT NULL, resource TEXT, expires_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS mcp_oauth_tokens (
+  token_hash TEXT PRIMARY KEY, kind TEXT NOT NULL CHECK(kind IN ('access','refresh')),
+  client_id TEXT NOT NULL, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  scopes TEXT NOT NULL, resource TEXT, expires_at INTEGER NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_mcp_tokens_expiry ON mcp_oauth_tokens(expires_at);

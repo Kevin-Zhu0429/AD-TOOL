@@ -5,6 +5,8 @@
 
 ## 目录
 
+墨盒版 AI 连接器提供 58 个 MCP 工具，支持 OAuth、账号权限隔离、数据维护及广告生成/优化。配置 `MCP_PUBLIC_URL` 后通过网站 `/mcp` 接入，工具清单与部署说明见 [MCP.md](MCP.md)。
+
     adtool/
       server/    后端 Node + Express + SQLite
       web/       前端 React + Vite

@@ -4,3 +4,5 @@
 .tmp/ES_Week_*.csv
 .tmp/asin-samples/
 .tmp/captain-*.png
+.tmp/mcp-*
+.tmp-server-tests.log

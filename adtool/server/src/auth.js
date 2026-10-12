@@ -62,7 +62,7 @@ export function visibleMarkets(row) {
   return isGoods(row) ? [...MARKETPLACES] : parseMarkets(row.marketplace);
 }
 
-function publicUser(row) {
+export function publicUser(row) {
   return {
     id: row.id,
     username: row.username,

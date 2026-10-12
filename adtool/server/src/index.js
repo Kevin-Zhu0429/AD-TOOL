@@ -18,6 +18,7 @@ import { abaPublicRouter, startPublicAbaScheduler } from './abaPublic.js';
 import { captainRouter } from './captain.js';
 import { agedFeesRouter } from './agedFees.js';
 import { bumpOnWrite } from './workers/pool.js';
+import { mountMcp } from './mcp.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -55,6 +56,7 @@ app.use(
   })
 );
 
+mountMcp(app);
 app.use('/api/auth', authRouter);
 app.use('/api/neg', negRouter);
 app.use('/api/sku', skuRouter);
@@ -85,7 +87,7 @@ if (fs.existsSync(DIST)) {
       if (file.endsWith('.html')) res.set('Cache-Control', 'no-cache');
     },
   }));
-  app.get(/^(?!\/api).*/, (req, res) => {
+  app.get(/^(?!\/(?:api|mcp|authorize|token|register|revoke|\.well-known)(?:\/|$)).*/, (req, res) => {
     res.set('Cache-Control', 'no-cache');
     res.sendFile(path.join(DIST, 'index.html'));
   });

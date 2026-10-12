@@ -132,6 +132,7 @@ try {
   await page.unroute('**/api/aba?**');
   await page.getByRole('button', { name: '重新加载', exact: true }).click();
   await idle();
+  await bodyRows().first().waitFor();
   assert.equal(await bodyRows().count(), 6);
   // Failed upload keeps preview and supports safe retry.
   await attach([firstFile]);

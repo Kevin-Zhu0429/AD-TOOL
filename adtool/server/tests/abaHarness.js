@@ -19,7 +19,7 @@ export async function startAbaTestServer() {
   const { captainRouter } = await import('../src/captain.js');
   const { agedFeesRouter } = await import('../src/agedFees.js');
   const { productRouter } = await import('../src/products.js');
-  const { bumpOnWrite } = await import('../src/workers/pool.js');
+  const { bumpOnWrite, closeWorkerPool } = await import('../src/workers/pool.js');
   const insertUser = db.prepare('INSERT INTO users (username, display_name, password_hash, role, marketplace, seen_version) VALUES (?, ?, ?, ?, ?, ?)');
   for (const [name, role, market] of [['aba-test', 'operator', 'ES'], ['aba-other', 'owner', 'ALL'], ['aba-de', 'operator', 'DE']]) {
     insertUser.run(name, name, bcrypt.hashSync('local-test-password', 4), role, market, '999.0.0');
@@ -42,6 +42,7 @@ export async function startAbaTestServer() {
   const server = await new Promise((resolve) => { const listener = app.listen(0, '127.0.0.1', () => resolve(listener)); });
   return { db, directory, url: `http://127.0.0.1:${server.address().port}`, async close() {
     await new Promise((resolve) => server.close(resolve));
+    await closeWorkerPool();
     db.close();
     const resolved = path.resolve(directory);
     if (!resolved.startsWith(path.resolve(os.tmpdir()) + path.sep) || !path.basename(resolved).startsWith('adtool-aba-test-')) throw new Error('Unexpected test directory');

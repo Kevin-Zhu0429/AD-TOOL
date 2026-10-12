@@ -8,9 +8,15 @@ test('a queued read task is dropped when its request is cancelled', async (t) =>
   const directory = await mkdtemp(path.join(os.tmpdir(), 'adtool-pool-test-'));
   process.env.DATA_DIR = directory;
   process.env.WORKER_POOL_SIZE = '1';
-  t.after(() => rm(directory, { recursive: true, force: true }));
-  await import('../src/db.js');
-  const { runTask } = await import('../src/workers/pool.js');
+  const { db } = await import('../src/db.js');
+  const { runTask, closeWorkerPool } = await import('../src/workers/pool.js');
+  t.after(async () => {
+    await closeWorkerPool();
+    db.close();
+    const resolved = path.resolve(directory);
+    if (!resolved.startsWith(path.resolve(os.tmpdir()) + path.sep) || !path.basename(resolved).startsWith('adtool-pool-test-')) throw new Error('Unexpected test directory');
+    await rm(resolved, { recursive: true, force: true });
+  });
 
   // 唯一的线程先被第一条任务占住,第二条只能排队
   const first = runTask('productsList', { marketplace: 'ES', requestedMonth: '' });
