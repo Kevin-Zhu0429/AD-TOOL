@@ -371,6 +371,32 @@ test('change queue: Claude proposes, the owner confirms, the site writes to Amaz
     assert.deepEqual(actions, ['proposed', 'approved', 'to_agent', 'claimed', 'applied']);
   });
 
+  await t.test('ad changes already executed in Claude are recorded as applied and enter review', async () => {
+    const result = changes.proposeAdChanges({ title: '已执行·仅记录', changes: [
+      { action: 'pause', entity: 'campaign', campaignId: '611', reason: '花费高零转化' },
+      { action: 'set_budget', campaignId: '612', budget: 6, current: 10, reason: '降预算' },
+    ] }, { userId: ownerId });
+    const [paused, budget] = result.created.map((item) => item.id);
+    // 只有店主能补记
+    assert.equal((await call('/changes/record-applied', staff, { ids: [paused] })).status, 403);
+    const day = new Date(Date.now() - 2 * 86400000).toLocaleDateString('sv-SE', { timeZone: 'America/Los_Angeles' });
+    const res = await call('/changes/record-applied', owner, { ids: [paused, budget], executedAt: day, detail: 'SellerSpace 已生效' });
+    assert.equal(res.status, 200);
+    assert.equal(status(paused), 'applied');
+    assert.equal(row(budget).channel, 'miguelpet');
+    assert.equal(row(budget).executed_at, row(budget).verified_at);
+    assert.equal(db.prepare("SELECT strftime('%Y-%m-%d', ?, 'utc') AS d").get(row(budget).executed_at).d, day);
+    assert.equal(JSON.parse(row(budget).result_json).recordedOnly, true);
+    const actions = db.prepare('SELECT action FROM pet_change_log WHERE proposal_id=? ORDER BY id').all(paused).map((item) => item.action);
+    assert.deepEqual(actions, ['proposed', 'recorded']);
+    // 已经生效的不能再补记;执行时间不能在将来
+    assert.equal((await call('/changes/record-applied', owner, { ids: [paused] })).status, 409);
+    const other = changes.proposeAdChanges({ title: 'x', changes: [{ action: 'pause', entity: 'campaign', campaignId: '613', reason: 'r' }] }, { userId: ownerId });
+    assert.throws(() => changes.recordExecutedAdChanges(other.created.map((item) => item.id), { executedAt: '2099-01-01' }), /晚于现在/);
+    assert.throws(() => changes.recordExecutedAdChanges(other.created.map((item) => item.id), { executedAt: 'yesterday' }), /看不懂/);
+    assert.equal(status(other.created[0].id), 'pending');
+  });
+
   await t.test('with Ads API credentials confirmed ad changes are sent straight to Amazon', async () => {
     const ads = fakeAds();
     const result = changes.proposeAdChanges({ title: '降竞价', changes: [

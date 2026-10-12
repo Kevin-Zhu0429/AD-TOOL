@@ -209,10 +209,10 @@ test('AI connectors: OAuth login, read tools, proposals and token lifecycle', as
     const tools = (await mcp.listTools()).tools;
     assert.deepEqual(tools.map((tool) => tool.name).sort(), ['claim_confirmed_ad_changes', 'get_agent_context', 'get_catalog_items', 'get_change_impact', 'get_competitor_overview', 'get_listing',
       'get_listing_health', 'get_product_images', 'get_returns', 'get_sales_stats', 'get_sales_trend', 'get_search_terms', 'get_style_intel', 'get_traffic',
-      'list_change_proposals', 'list_skus', 'propose_ad_changes', 'propose_listing_changes', 'report_ad_change_result', 'save_daily_report', 'save_lesson', 'store_overview']);
+      'list_change_proposals', 'list_skus', 'mark_ad_changes_applied', 'propose_ad_changes', 'propose_listing_changes', 'report_ad_change_result', 'save_daily_report', 'save_lesson', 'store_overview']);
     // 会写东西的只有:两个提议工具(写进网站的待确认队列)和日报、经验(写网站自己的表),都不碰亚马逊
     assert.deepEqual(tools.filter((tool) => !tool.annotations.readOnlyHint).map((tool) => tool.name).sort(),
-      ['claim_confirmed_ad_changes', 'propose_ad_changes', 'propose_listing_changes', 'report_ad_change_result', 'save_daily_report', 'save_lesson']);
+      ['claim_confirmed_ad_changes', 'mark_ad_changes_applied', 'propose_ad_changes', 'propose_listing_changes', 'report_ad_change_result', 'save_daily_report', 'save_lesson']);
     assert.ok(tools.every((tool) => tool.annotations.destructiveHint !== true));
     const call = async (name, args = {}) => {
       const result = await mcp.callTool({ name, arguments: args });
@@ -366,6 +366,25 @@ test('AI connectors: OAuth login, read tools, proposals and token lifecycle', as
     assert.deepEqual(progress.rows.map((row) => [row.change, row.target, row.statusLabel]),
       [['投放状态', '100 / dog toy', '待确认'], ['标题', 'DOG-L · 圆窝 L Grey', '待确认']]);
     assert.equal(progress.writeChannels.ads, '批量表（广告 API 未配置）');
+
+    // 已经在 Claude 里用 Miguelpet 执行过的:直接记成已生效,不进待确认
+    const done = await call('propose_ad_changes', { title: '已执行·仅记录', alreadyApplied: true, executionNote: 'plan 9', changes: [
+      { action: 'set_budget', campaignId: '100', budget: 12, current: 8, reason: '预算不够' }] });
+    assert.equal(done.recorded, 1);
+    const recorded = backend.db.prepare('SELECT * FROM pet_change_proposals WHERE id=?').get(done.created[0].id);
+    assert.deepEqual([recorded.status, recorded.channel, JSON.parse(recorded.result_json).detail], ['applied', 'miguelpet', 'plan 9']);
+    // 执行时间不对的整批不记,免得卡在待确认
+    const late = await mcp.callTool({ name: 'propose_ad_changes', arguments: { title: '错时间', alreadyApplied: true, executedAt: '2099-01-01', changes: [
+      { action: 'set_budget', campaignId: '101', budget: 12, current: 8, reason: '预算不够' }] } });
+    assert.ok(late.isError);
+    assert.equal(backend.db.prepare("SELECT COUNT(*) AS n FROM pet_change_proposals WHERE target_json LIKE '%\"101\"%'").get().n, 0);
+    // 以前记成待确认的,事后补记
+    const marked = await call('mark_ad_changes_applied', { ids: [ads.created[0].id], detail: '对话里已暂停' });
+    assert.equal(marked.updated, 1);
+    assert.equal(backend.db.prepare('SELECT status FROM pet_change_proposals WHERE id=?').get(ads.created[0].id).status, 'applied');
+    const wrong = await mcp.callTool({ name: 'mark_ad_changes_applied', arguments: { ids: [listing.created[0].id] } });
+    assert.ok(wrong.isError);
+    assert.match(wrong.content[0].text, /不是广告改动/);
   });
 
   await t.test('ChatGPT can authorize with issuer identification, read tools and queue proposals', async () => {
