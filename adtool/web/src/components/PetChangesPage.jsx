@@ -110,7 +110,8 @@ function Result({ item }) {
   if (item.status === 'queued') text = '排队中，马上提交。';
   if (item.status === 'agent') text = 'Claude 每小时领一次已确认的广告改动，用 Miguelpet 执行后把结果写回这里。想自己上传可以点「改用批量表」。';
   if (item.status === 'agent_running') text = 'Claude 正在用 Miguelpet 执行，执行完会更新状态。';
-  if (item.status === 'applied' && item.channel === 'miguelpet') text = `Claude 已用 Miguelpet 执行（${short(item.executedAt)}）${result.detail ? `：${result.detail}` : ''}。`;
+  if (item.status === 'applied' && item.channel === 'miguelpet' && result.recordedOnly) text = `在 Claude 里直接执行，补记为已生效（${short(item.executedAt)}）${result.detail ? `：${result.detail}` : ''}。`;
+  else if (item.status === 'applied' && item.channel === 'miguelpet') text = `Claude 已用 Miguelpet 执行（${short(item.executedAt)}）${result.detail ? `：${result.detail}` : ''}。`;
   if (!text && !issues.length) return null;
   return <div className="chg-result">{text && <p>{text}</p>}
     {issues.length > 0 && <ul>{issues.map((issue, index) => <li key={index}><span className={`tag ${issue.severity === 'ERROR' ? 'red' : 'amber'}`}>{issue.severity === 'ERROR' ? '错误' : '提醒'}</span> {issue.message}</li>)}</ul>}
@@ -143,6 +144,8 @@ function ChangeItem({ item, checked, onCheck, busy, onEdit, onAction, onRevert }
         {['pending', 'failed'].includes(item.status) && EDITABLE.has(item.kind) && <button className="btn sm" disabled={busy} onClick={() => onEdit(item)}>修改</button>}
         {item.status === 'pending' && <button className="btn sm danger" disabled={busy} onClick={() => onAction('reject', [item.id])}>拒绝</button>}
         {item.status === 'failed' && <button className="btn sm primary" disabled={busy} onClick={() => onAction('retry', [item.id])}>重试</button>}
+        {item.group === 'ad' && ['pending', 'failed'].includes(item.status) && <button className="btn sm" disabled={busy} onClick={() => onAction('record-applied', [item.id])}
+          title="已经在 Claude 里用 Miguelpet 改过了，这里只补记">已在 Claude 里执行</button>}
         {item.status === 'agent' && <button className="btn sm" disabled={busy} onClick={() => onAction('to-sheet', [item.id])}>改用批量表</button>}
         {['failed', 'export', 'agent'].includes(item.status) && <button className="btn sm" disabled={busy} onClick={() => onAction('drop', [item.id])}>放弃</button>}
         {canRevert && <button className="btn sm" disabled={busy} onClick={() => onRevert(item)}>撤回</button>}
@@ -270,9 +273,15 @@ export default function PetChangesPage() {
   async function onAction(action, ids) {
     if (action === 'reject') return reject(ids);
     if (action === 'retry') return act('retry', ids, () => '已重新排队。');
+    if (action === 'record-applied') return recordApplied(ids);
     if (action === 'to-sheet') return act('to-sheet', ids, () => '已改成批量表，在下面下载后到广告后台上传。');
     if (action === 'drop' && await ask('放弃这条改动？不会执行，记录留在历史里。', '放弃')) return act('drop', ids, () => '已放弃。');
     return null;
+  }
+
+  async function recordApplied(ids) {
+    if (!await ask(`这 ${ids.length} 条广告改动已经在 Claude 里用 Miguelpet 执行过了吗？会直接记成「已生效」，不再执行一遍；执行后第 7、14、28 天照常复盘。没执行过的请用「确认执行」。`, '记成已生效')) return null;
+    return act('record-applied', ids, (r) => `已把 ${r.updated} 条记成已生效。`);
   }
 
   async function revert(item) {
@@ -350,6 +359,8 @@ export default function PetChangesPage() {
         onChange={() => toggleMany(items)} />全选</label>
       <span>已选 {chosen.length} 条</span><div className="spacer" />
       <button className="btn danger" disabled={busy || !chosen.length} onClick={() => reject(chosen.map((item) => item.id))}>拒绝</button>
+      {chosen.length > 0 && chosen.every((item) => item.group === 'ad') && <button className="btn" disabled={busy}
+        onClick={() => recordApplied(chosen.map((item) => item.id))}>已在 Claude 里执行</button>}
       <button className="btn primary" disabled={busy || !chosen.length} onClick={approve}>确认执行</button>
     </div>}
 

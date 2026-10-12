@@ -39,7 +39,7 @@ const VIEWS = {
 export const ACTION_LABEL = {
   proposed: '提议', superseded: '被新提议替代', edited: '修改提议值', approved: '确认执行', rejected: '拒绝', stale: '亚马逊上的值变了，退回待确认',
   submitted: '已提交亚马逊', applied: '已生效', verified: '核对已生效', not_applied: '核对未生效', failed: '失败', retried: '重试',
-  to_agent: '交给 Claude 用 Miguelpet 执行', claimed: 'Claude 开始执行', to_export: '转为批量表', exported: '已导出批量表', uploaded: '标记已上传', reverted: '生成撤回改动',
+  to_agent: '交给 Claude 用 Miguelpet 执行', recorded: '已在 Claude 里执行，补记为已生效', claimed: 'Claude 开始执行', to_export: '转为批量表', exported: '已导出批量表', uploaded: '标记已上传', reverted: '生成撤回改动',
 };
 // 亚马逊的限制:标题 200 字符,后台搜索词 250 字节以内(超了整段不收录),五点最多 10 条
 export const LIMITS = { titleChars: 200, bulletChars: 500, bullets: 10, searchTermBytes: 249, batch: 40, reason: 1000 };
@@ -795,6 +795,45 @@ export function reportAdResult({ id, outcome, detail = '', current = null }) {
   return { id: row.id, status: db.prepare('SELECT status FROM pet_change_proposals WHERE id=?').get(row.id).status };
 }
 
+/** 早于这么多天的执行时间不收,免得填错年份 */
+const RECORD_MAX_DAYS = 60;
+
+/** 补记的执行时间:太平洋时间的日期(算当天中午)或带时区的完整时间,换成库里用的服务器本地时间;不填就是现在 */
+export function recordedTime(value) {
+  if (value == null || value === '') return nowLocal();
+  const text = clean(value);
+  const dayOnly = DAY_RE.test(text);
+  const time = dayOnly ? new Date(pacificMidnight(text).getTime() + 12 * 3600 * 1000) : new Date(text);
+  if (Number.isNaN(time.getTime())) throw Object.assign(new Error('执行时间看不懂，填太平洋时间的日期 YYYY-MM-DD 或带时区的完整时间'), { status: 400 });
+  // 只给日期且是今天时,中午可能还没到,按现在算
+  const at = dayOnly && text === todayPacific() ? Math.min(time.getTime(), Date.now()) : time.getTime();
+  if (at > Date.now() + 5 * 60 * 1000) throw Object.assign(new Error('执行时间不能晚于现在'), { status: 400 });
+  if (at < Date.now() - RECORD_MAX_DAYS * 86400 * 1000) throw Object.assign(new Error(`执行时间不能早于 ${RECORD_MAX_DAYS} 天前`), { status: 400 });
+  return db.prepare("SELECT datetime(?, 'unixepoch', 'localtime') AS t").get(Math.floor(at / 1000)).t;
+}
+
+/**
+ * 补记:广告改动已经在 Claude 里(Miguelpet / SellerSpace)直接执行了,网站这边只是记录,
+ * 把它们从待确认直接记成已生效,这样改动日志显示正确,执行后第 7、14、28 天照常复盘。
+ * 失败的也能补记(比如去广告后台核对后发现其实改成了)。
+ */
+export function recordExecutedAdChanges(ids, { actor = 'user', userId = null, detail = '', executedAt = null } = {}) {
+  const rows = pick(ids, ['pending', 'failed']);
+  const notAd = rows.filter((row) => KINDS[row.kind]?.group !== 'ad');
+  if (notAd.length) throw Object.assign(new Error(`只有广告改动能补记为已执行，第 ${notAd.map((row) => row.id).join('、')} 条不是广告改动`), { status: 400 });
+  const at = recordedTime(executedAt), now = nowLocal();
+  const note = clean(detail).slice(0, 1000);
+  db.transaction(() => {
+    for (const row of rows) {
+      update(row.id, { status: 'applied', channel: 'miguelpet', decided_by: row.decided_by ?? userId, decided_at: row.decided_at ?? now,
+        executed_at: at, verified_at: at, error: null, result_json: JSON.stringify({ channel: 'miguelpet', detail: note, recordedOnly: true }) });
+      log(row.id, row.batch_id, actor, userId, 'recorded', { note: note || null, executedAt: at });
+    }
+  })();
+  if (actor === 'user') audit(userId, 'US', 'recorded', 'pet_change_proposals', null, { ids: rows.map((row) => row.id) });
+  return { updated: rows.length, executedAt: at };
+}
+
 // ---------- 接口 ----------
 
 export function createChangeRouter(deps = defaultDeps) {
@@ -828,6 +867,8 @@ export function createChangeRouter(deps = defaultDeps) {
   // 等 Claude 执行的广告改动,店主想自己上传批量表
   router.post('/to-sheet', handle((req) => moveChanges(req.body?.ids, req.session.user.id, { from: ['agent'], to: 'export', action: 'to_export' })));
   router.post('/exported', handle((req) => moveChanges(req.body?.ids, req.session.user.id, { from: ['export', 'exported'], to: 'exported', action: 'exported' })));
+  router.post('/record-applied', handle((req) => recordExecutedAdChanges(req.body?.ids, { userId: req.session.user.id,
+    detail: req.body?.detail, executedAt: req.body?.executedAt })));
   router.post('/uploaded', handle((req) => moveChanges(req.body?.ids, req.session.user.id, { from: ['exported'], to: 'applied', action: 'uploaded' })));
   router.post('/:id/revert', handle((req) => revertChange(Number(req.params.id), req.session.user.id)));
   return router;

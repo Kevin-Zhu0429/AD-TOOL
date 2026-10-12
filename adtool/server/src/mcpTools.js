@@ -11,7 +11,8 @@ import { abaSyncStatus } from './petAbaSync.js';
 import { withProfit, yearGrossProfit } from './petCosts.js';
 import { latestSync } from './stockEvents.js';
 import { competitorSyncStatus, listingHealth, ownStyles, recentChanges, styleDetail } from './petCompetitors.js';
-import { AD_ACTIONS, AD_ENTITIES, claimAdChanges, listChanges, reportAdResult, proposeAdChanges, proposeListingChanges, STATUS_LABEL, targetLabel } from './petChanges.js';
+import { AD_ACTIONS, AD_ENTITIES, claimAdChanges, listChanges, proposeAdChanges, proposeListingChanges, recordedTime, recordExecutedAdChanges, reportAdResult,
+  STATUS_LABEL, targetLabel } from './petChanges.js';
 import { TRAFFIC_GROUPS, trafficReport, trafficSyncStatus } from './petTraffic.js';
 import { changeImpact } from './petImpact.js';
 import { returnRecords, returnsAnalysis, returnsSyncStatus } from './petReturns.js';
@@ -473,8 +474,25 @@ export async function proposeListing(input, { userId, source, gateway = amazonGa
   return { ...result, confirmUrl: confirmUrl(siteUrl), next: result.created.length ? NEXT_STEP : '没有改动进入待确认队列，原因见 rejected。' };
 }
 
+function sameAsTarget({ action, current, bid, budget } = {}) {
+  if (current == null || current === '') return false;
+  if (action === 'pause' || action === 'enable') return String(current).trim().toLowerCase() === (action === 'pause' ? 'paused' : 'enabled');
+  const target = action === 'set_bid' ? bid : action === 'set_budget' ? budget : null;
+  return target != null && Math.abs(Number(current) - Number(target)) < 0.005;
+}
+
 export function proposeAds(input, { userId, source, siteUrl } = {}) {
-  const result = proposeAdChanges(input, { userId, source });
+  // 已经在 Claude 里执行过的只是补个记录:先检查执行时间,免得记进队列后补记失败、又卡在待确认
+  if (input.alreadyApplied) recordedTime(input.executedAt);
+  // 已执行的改动,current 可能填的是执行后读回的值(就是新值);这时不知道执行前是多少,当成没填,免得被当成「和现在一样」拒掉
+  const changes = input.alreadyApplied ? input.changes.map((change) => (sameAsTarget(change) ? { ...change, current: undefined } : change)) : input.changes;
+  const result = proposeAdChanges({ ...input, changes }, { userId, source });
+  if (input.alreadyApplied && result.created.length) {
+    const recorded = recordExecutedAdChanges(result.created.map((item) => item.id), { actor: source ?? 'claude', userId,
+      detail: input.executionNote, executedAt: input.executedAt });
+    return { ...result, recorded: recorded.updated, executedAt: recorded.executedAt, confirmUrl: confirmUrl(siteUrl),
+      next: '已记成「已生效」,不用店主再确认;改动日志会在执行后第 7、14、28 天提醒复盘。' };
+  }
   return { ...result, confirmUrl: confirmUrl(siteUrl), next: result.created.length ? NEXT_STEP : '没有改动进入待确认队列，原因见 rejected。',
     notes: ['网站里还没有广告数据，编号和当前值按你给的记录，确认页会标成「未核实」。'] };
 }
@@ -508,6 +526,7 @@ propose_listing_changes、propose_ad_changes 只把改动放进网站的「待�
 看月度目标和利润用 get_sales_stats;看竞品最近的降价、改标题、换主图用 get_competitor_overview。
 提改动前:先用 get_listing 看现在的文案;尺寸、材质、填充物等产品规格只写有依据的,拿不准就先问用户,不要编;同一款的不同尺码、颜色是不同 SKU,要分别提;改五点要给出全部条目;reason 写清依据的数据(搜索词份额、竞品对比、体检问题、毛利)。改价前看 list_skus 的保本价;正在做促销价的 SKU 改原价前台不变,要改前台价提 sale_price(促销价,带结束日期)。广告改动需要广告活动、广告组、关键词等的数字编号,来自用户给的批量表/报告,或 Miguelpet 连接器 query_ads 查到的编号。提完把 confirmUrl 告诉用户去确认。
 店主确认的广告改动(没有广告 API 时)由 Claude 用 Miguelpet 执行:claim_confirmed_ad_changes 领取 → 在 Miguelpet 里核对当前值 → prepare_change_plan + apply_change_plan → report_ad_change_result 回报。只执行领到的这些,一条一条照着改,不加别的。
+用户在对话里直接让 Claude 用 Miguelpet 改了广告(没走网站确认)时,也要记到网站:propose_ad_changes 传 alreadyApplied(或事后用 mark_ad_changes_applied 补记),记成「已生效」才会进复盘;不要留在待确认。
 每日自动分析:先 get_agent_context(经验库、该复盘的改动、冷却期 SKU、前几天的结论),再查数据,最后 save_daily_report 写日报、save_lesson 记经验;日报显示在网站「AI 日报」页。
 用户是中文卖家,回答用中文;给优化建议时说明依据的数据。`;
 
@@ -679,7 +698,7 @@ export function createPetMcpServer(deps = {}) {
 
   server.registerTool('propose_ad_changes', {
     title: '提议修改广告',
-    description: '把广告改动放进网站「待确认改动」队列:暂停/启用广告活动、广告组、关键词、商品定向、商品广告,改竞价、广告组默认竞价、每日预算,加否定关键词或否定商品。店主确认后:配置了亚马逊广告 API 就直接执行,没配置就生成批量表让店主上传。需要广告后台的数字编号(批量表里的广告活动编号、广告组编号、关键词编号、商品投放 ID、广告编号)。',
+    description: '把广告改动放进网站「待确认改动」队列(已经在 Claude 里直接执行过的,传 alreadyApplied 直接记成已生效):暂停/启用广告活动、广告组、关键词、商品定向、商品广告,改竞价、广告组默认竞价、每日预算,加否定关键词或否定商品。店主确认后:配置了亚马逊广告 API 就直接执行,没配置就生成批量表让店主上传。需要广告后台的数字编号(批量表里的广告活动编号、广告组编号、关键词编号、商品投放 ID、广告编号)。',
     inputSchema: {
       title: z.string().trim().min(1).max(100).describe('这批改动的标题'),
       summary: z.string().trim().max(2000).optional().describe('整批的思路和依据'),
@@ -700,6 +719,9 @@ export function createPetMcpServer(deps = {}) {
         negativeText: z.string().trim().max(100).optional().describe('add_negative 的否定词或 ASIN'),
         reason,
       })).min(1).max(40),
+      alreadyApplied: z.boolean().optional().describe('这些改动已经在 Claude 里用 Miguelpet 直接执行过了(用户在对话里确认的),只是记到网站:直接记成「已生效」,不进待确认,之后照常复盘。current 填执行前的值;只知道执行后的值就不填'),
+      executedAt: z.string().trim().max(40).optional().describe('alreadyApplied 时的执行时间:太平洋时间日期 YYYY-MM-DD 或带时区的完整时间,不填就是现在'),
+      executionNote: z.string().trim().max(1000).optional().describe('alreadyApplied 时记一下怎么执行的,比如 Miguelpet 计划编号'),
     },
     annotations: propose,
   }, wrap((args, extra) => proposeAds(args, { ...deps, userId: userOf(extra), source: sourceOf(extra) })));
@@ -805,6 +827,17 @@ export function createPetMcpServer(deps = {}) {
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   }, wrap((args) => reportAdResult(args)));
+
+  server.registerTool('mark_ad_changes_applied', {
+    title: '把已在 Claude 里执行的广告改动记成已生效',
+    description: '补记用:广告改动已经在 Claude 对话里用 Miguelpet 直接执行了(用户在对话里确认的),但网站上还是「待确认」(或「失败」但其实改成了)。把这些编号记成「已生效」,改动日志显示正确,执行后第 7、14、28 天照常复盘。只用于确实已经执行的改动;没执行的不要用,让店主在网站确认。',
+    inputSchema: {
+      ids: z.array(z.number().int().min(1)).min(1).max(200).describe('改动编号,只能是待确认或失败的广告改动'),
+      executedAt: z.string().trim().max(40).optional().describe('执行时间:太平洋时间日期 YYYY-MM-DD 或带时区的完整时间,不填就是现在'),
+      detail: z.string().trim().max(1000).optional().describe('怎么执行的,比如 Miguelpet 计划编号'),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  }, wrap((args, extra) => recordExecutedAdChanges(args.ids, { actor: sourceOf(extra), userId: userOf(extra), executedAt: args.executedAt, detail: args.detail })));
 
   return server;
 }

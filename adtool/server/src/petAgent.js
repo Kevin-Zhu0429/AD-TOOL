@@ -231,7 +231,7 @@ export function changeSteps(row, reviews = []) {
     step('proposed', '提议', 'done', row.created_at, row.source === 'claude' ? 'Claude' : row.source),
     status === 'rejected' ? step('decided', '确认', 'fail', row.decided_at, '已拒绝')
       : status === 'superseded' ? step('decided', '确认', 'fail', row.updated_at, '被新提议替代')
-        : step('decided', '确认', decided ? 'done' : 'now', row.decided_at, decided ? null : '等你确认'),
+        : step('decided', '确认', decided ? 'done' : 'now', row.decided_at, !decided ? '等你确认' : parseJson(row.result_json)?.recordedOnly ? '在 Claude 里确认' : null),
     status === 'failed' ? step('executed', '执行', 'fail', row.updated_at, '失败')
       : step('executed', '执行', executed ? 'done' : ['queued', 'running', 'export', 'agent', 'agent_running'].includes(status) ? 'now' : 'todo', row.executed_at,
         status === 'export' ? '待导出批量表' : status === 'exported' ? '已导出待上传' : status === 'agent' ? '等 Claude 执行'
