@@ -146,6 +146,12 @@ export default function HomePage({ user, market, onNav, theme, onOpenChangelog }
           meta="US 站 · FBA 退货报告 · 自动同步"
           onClick={() => onNav('returns')}
         />}
+        {isPet && <EntryCard
+          tone="blue" icon="box" title="货件"
+          desc="FBA 入库货件的状态、每个 SKU 发了多少收了多少，和在库、可售天数放在一起看；标出少收、接收太久和快断货却没有在途的 SKU。"
+          meta="US 站 · FBA 入库货件 · 自动同步"
+          onClick={() => onNav('shipments')}
+        />}
         <EntryCard
           tone="green" icon="box" title="小工具"
           desc="收纳日常办公中随开随用的轻量工具。首个工具可以把多个 Excel 文件中的表格快速汇总到一张工作表,全程只在本机浏览器中处理。"

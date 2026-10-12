@@ -470,6 +470,40 @@ CREATE TABLE IF NOT EXISTS pet_returns (
 CREATE INDEX IF NOT EXISTS idx_pet_returns_day ON pet_returns(day);
 CREATE INDEX IF NOT EXISTS idx_pet_returns_sku ON pet_returns(sku, day);
 
+-- FBA 入库货件(Fulfillment Inbound API v0 getShipments):每个货件一行,每次同步按货件编号更新。
+-- 亚马逊不给创建、发货时间,shipped_at / receiving_at / closed_at 是网站第一次看到它进入这个状态的时间
+CREATE TABLE IF NOT EXISTS pet_inbound_shipments (
+  shipment_id TEXT PRIMARY KEY,
+  name TEXT,
+  status TEXT NOT NULL,
+  destination TEXT,
+  ship_from TEXT,
+  label_prep TEXT,
+  box_contents_source TEXT,
+  need_by_date TEXT,
+  created_day TEXT,
+  first_seen_at TEXT NOT NULL,
+  status_changed_at TEXT NOT NULL,
+  shipped_at TEXT,
+  receiving_at TEXT,
+  closed_at TEXT,
+  last_seen_at TEXT NOT NULL,
+  items_synced_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_pet_inbound_status ON pet_inbound_shipments(status);
+
+-- 货件里每个 SKU 的发货件数和已收件数(getShipmentItemsByShipmentId),每次拉某个货件就整货件替换
+CREATE TABLE IF NOT EXISTS pet_inbound_shipment_items (
+  shipment_id TEXT NOT NULL,
+  sku TEXT NOT NULL COLLATE NOCASE,
+  fnsku TEXT,
+  quantity_shipped INTEGER NOT NULL DEFAULT 0,
+  quantity_received INTEGER NOT NULL DEFAULT 0,
+  quantity_in_case INTEGER,
+  PRIMARY KEY (shipment_id, sku)
+);
+CREATE INDEX IF NOT EXISTS idx_pet_inbound_items_sku ON pet_inbound_shipment_items(sku);
+
 -- 亚马逊 Listing 当前售价和状态,每次同步整表替换
 CREATE TABLE IF NOT EXISTS pet_listing_cache (
   sku TEXT PRIMARY KEY COLLATE NOCASE,

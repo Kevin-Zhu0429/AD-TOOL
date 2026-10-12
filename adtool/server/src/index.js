@@ -22,6 +22,7 @@ import { competitorRouter, startCompetitorScheduler } from './petCompetitors.js'
 import { createChangeRouter, startChangeScheduler } from './petChanges.js';
 import { startTrafficSyncScheduler } from './petTraffic.js';
 import { returnsRouter, startReturnsSyncScheduler } from './petReturns.js';
+import { shipmentsRouter, startShipmentsSyncScheduler } from './petShipments.js';
 import { createIntelRouter } from './petIntelActions.js';
 import { mountMcp } from './mcp.js';
 
@@ -65,6 +66,7 @@ app.use('/api/competitors', competitorRouter);
 app.use('/api/changes', createChangeRouter());
 app.use('/api/intel', createIntelRouter());
 app.use('/api/returns', returnsRouter);
+app.use('/api/shipments', shipmentsRouter);
 
 app.get('/api/health', (req, res) => {
   res.json({ ok: true, time: new Date().toISOString() });
@@ -92,4 +94,5 @@ app.listen(PORT, '0.0.0.0', () => {
   startChangeScheduler();
   startTrafficSyncScheduler();
   startReturnsSyncScheduler();
+  startShipmentsSyncScheduler();
 });

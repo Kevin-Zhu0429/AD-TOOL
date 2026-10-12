@@ -282,7 +282,7 @@ function StockTags({ it }) {
 
 const val = (it, key) => (it[key] === null || it[key] === undefined || it[key] === '' ? '' : it[key]);
 
-export default function SkuPage({ market }) {
+export default function SkuPage({ market, onOpenShipments }) {
   const [confirmAction, confirmation] = useConfirm();
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(100);
@@ -825,7 +825,9 @@ export default function SkuPage({ market }) {
                             />
                           ) : (
                             <>
-                              {val(it, c.key) === '' ? '—' : val(it, c.key)}
+                              {isPet && c.key === 'transit' && Number(it.transit) > 0 && onOpenShipments ? (
+                                <button type="button" className="inv-link" title="看装着这个 SKU 的货件" onClick={() => onOpenShipments(it.sku)}>{it.transit}</button>
+                              ) : val(it, c.key) === '' ? '—' : val(it, c.key)}
                               {c.key === 'stock' && <StockTags it={it} />}
                             </>
                           )}

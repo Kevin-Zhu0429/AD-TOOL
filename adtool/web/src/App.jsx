@@ -4,6 +4,7 @@ import PetChangesPage from './components/PetChangesPage.jsx';
 import PriceStrategyPage from './components/PriceStrategyPage.jsx';
 import SalesStatsPage from './components/SalesStatsPage.jsx';
 import ReturnsPage from './components/ReturnsPage.jsx';
+import ShipmentsPage from './components/ShipmentsPage.jsx';
 import { useEffect, useRef, useState } from 'react';
 import { api } from './api.js';
 import { useTheme } from './theme.js';
@@ -33,6 +34,8 @@ export default function App() {
   const [page, setPage] = useState(() => (isPet && window.location.hash === '#changes' ? 'changes' : 'home'));
   // 广告优化工作台首次打开后保持挂载，避免切到其他页面时原生工作台被卸载、改动丢失。
   const [optimizerOpened, setOptimizerOpened] = useState(false);
+  // 从 SKU 库、价格策略表点「在途」跳到货件页时带上的 SKU
+  const [shipmentSku, setShipmentSku] = useState('');
   const [market, setMarket] = useState(profile.defaultMarket);
   // 更新日志:有没看过的版本就登录后自动弹一次,关掉记成看过
   const [logOpen, setLogOpen] = useState(false);
@@ -59,7 +62,7 @@ export default function App() {
     const labels = {
       home: '首页', builder: '自动广告', manual: '手动广告', optimizer: '广告优化',
       library: '否定词库', skus: 'SKU 库', portfolios: '广告组合库', aba: 'ABA 报告',
-      products: '产品情报', priceStrategy: '价格策略表', salesStats: '销售统计', returns: '退货分析', changes: '待确认改动', tools: '小工具', admin: '账号管理', profile: '个人资料',
+      products: '产品情报', priceStrategy: '价格策略表', salesStats: '销售统计', returns: '退货分析', shipments: '货件', changes: '待确认改动', tools: '小工具', admin: '账号管理', profile: '个人资料',
     };
     document.title = `${labels[page] ?? '首页'} — 广告工作台`;
   }, [page]);
@@ -71,7 +74,8 @@ export default function App() {
     autoShown.current = false;   // 换个人登录,该弹的还要再弹
   }
 
-  function navigate(nextPage) {
+  function navigate(nextPage, { sku = '' } = {}) {
+    if (nextPage === 'shipments') setShipmentSku(sku);
     if (nextPage === 'optimizer') setOptimizerOpened(true);
     if (window.location.hash) window.history.replaceState(null, '', window.location.pathname + window.location.search);
     if (nextPage !== page) {
@@ -119,7 +123,7 @@ export default function App() {
     ) : page === 'optimizer' && user.adOpt ? (
       null
     ) : page === 'skus' ? (
-      <SkuPage key={market} market={market} />
+      <SkuPage key={market} market={market} onOpenShipments={(sku) => navigate('shipments', { sku })} />
     ) : page === 'portfolios' ? (
       <PortfolioPage key={market} market={market} />
     ) : page === 'aba' ? (
@@ -129,11 +133,13 @@ export default function App() {
     ) : page === 'products' && user.productIntel ? (
       isPet ? <PetIntelPage key={market} market={market} owner={user.role === 'owner'} /> : <ProductPage key={market} market={market} />
     ) : page === 'priceStrategy' && isPet ? (
-      <PriceStrategyPage />
+      <PriceStrategyPage onOpenShipments={(sku) => navigate('shipments', { sku })} />
     ) : page === 'salesStats' && isPet ? (
       <SalesStatsPage />
     ) : page === 'returns' && isPet ? (
       <ReturnsPage />
+    ) : page === 'shipments' && isPet ? (
+      <ShipmentsPage key={shipmentSku} focusSku={shipmentSku} />
     ) : page === 'changes' && isPet && user.role === 'owner' ? (
       <PetChangesPage />
     ) : page === 'tools' ? (

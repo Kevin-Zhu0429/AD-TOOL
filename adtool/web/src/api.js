@@ -40,6 +40,8 @@ export const api = {
   returns: ({ days, style }) => request(`/returns?days=${encodeURIComponent(days)}&style=${encodeURIComponent(style ?? '')}`),
   returnRecords: (sku, days) => request(`/returns/records?sku=${encodeURIComponent(sku)}&days=${encodeURIComponent(days)}`),
   syncReturns: () => request('/returns/sync', { method: 'POST', body: {} }),
+  shipments: (days) => request(`/shipments?days=${encodeURIComponent(days)}`),
+  syncShipments: () => request('/shipments/sync', { method: 'POST', body: {} }),
   syncPriceStrategy: () => request('/price-strategy/sync', { method: 'POST', body: {} }),
   abaAsin: (params, signal) => request(`/aba/asin?${new URLSearchParams(Object.entries(params).filter(([, value]) => value !== undefined))}`, { signal }),
   abaAmazonStatus: (marketplace) => request(`/aba/asin/amazon/status?marketplace=${encodeURIComponent(marketplace)}`),

@@ -37,7 +37,7 @@ function exportRows(data, rows) {
   XLSX.writeFile(book, `价格策略_${data.today}.xlsx`);
 }
 
-export default function PriceStrategyPage() {
+export default function PriceStrategyPage({ onOpenShipments }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true), [busy, setBusy] = useState(false);
   const [error, setError] = useState(''), [message, setMessage] = useState('');
@@ -137,7 +137,9 @@ export default function PriceStrategyPage() {
               <td className="col-sku"><b>{row.sku}</b>{(row.style || row.size || row.color) && <small title={[row.style, row.size, row.color].filter(Boolean).join(' · ')}>{[row.style, row.size, row.color].filter(Boolean).join(' · ')}</small>}</td>
               <td className="mono">{row.asin ?? ''}</td>
               <td className={`num${row.soldOut ? ' danger' : ''}`}>{row.stock == null ? '' : fmt(row.stock)}</td>
-              <td className="num">{row.transit ? fmt(row.transit) : ''}</td>
+              <td className="num">{row.transit ? (onOpenShipments
+                ? <button type="button" className="inv-link" title="看装着这个 SKU 的货件" onClick={() => onOpenShipments(row.sku)}>{fmt(row.transit)}</button>
+                : fmt(row.transit)) : ''}</td>
               <td className={`num ${level}`}>{row.soldOut ? '断货' : fmt(row.stockDays)}</td>
               <td className={`num ${urgency(row.stockTransitDays)}`}>{fmt(row.stockTransitDays)}</td>
               {row.daily.map((units, index) => <td key={index} className={`num day ${heat(units)}`}>{units || ''}</td>)}
@@ -154,7 +156,7 @@ export default function PriceStrategyPage() {
             <td /><td className="num">{fmt(totals.sales7d / 7, 2)}</td><td className="num">{fmt(totals.monthUnits)}</td><td /><td /><td />
             <td className="num" title="近 7 天按销量加权">{totals.margin7d == null ? '' : `${fmt(totals.margin7d, 1)}%`}</td></tr></tfoot>
         </table></div>}
-      <p className="hint price-legend">近3日动销＝最近 3 天销量÷3；近7天动销速度＝近 7 天销量÷7；可售天数＝库存÷近7天动销速度；预估售罄日＝今天＋在库可售天数。
+      <p className="hint price-legend">近3日动销＝最近 3 天销量÷3；近7天动销速度＝近 7 天销量÷7；可售天数＝库存÷近7天动销速度；预估售罄日＝今天＋在库可售天数。点「在途」数字看装着这个 SKU 的货件。
         <span className="danger">红色</span>为 30 天内卖完，<span className="warn">黄色</span>为 60 天内。月销量含今天已同步的订单。
         单件毛利＝售价－落地成本－FBA 配送费－佣金（成本在 SKU 库维护，FBA 费和佣金每天从亚马逊读取），未扣广告费和仓储费；毛利率亏钱标红、低于 15% 标黄，合计行是近 7 天按销量加权的毛利率；空白表示缺成本或费用。广告数据等亚马逊广告 API 开通后再加。</p>
     </section>
