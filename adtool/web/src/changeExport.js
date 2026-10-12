@@ -79,3 +79,25 @@ export function termChanges(before, after) {
 }
 
 export const byteLength = (text) => new TextEncoder().encode(String(text ?? '')).length;
+
+/** 改动日志里一步操作的详情,一行文字 */
+export function detailText(event) {
+  const detail = event.detail;
+  if (!detail) return '';
+  const show = (value) => {
+    if (value == null) return '（空）';
+    if (Array.isArray(value)) return value.join(' / ');
+    if (typeof value === 'object') return Object.values(value).join(' ');
+    return String(value);
+  };
+  let text = '';
+  if (detail.error) text = detail.error;
+  else if (detail.submissionId) text = `提交编号 ${detail.submissionId}`;
+  else if ('from' in detail) text = `${show(detail.from)} → ${show(detail.to)}`;
+  else if ('found' in detail) text = `亚马逊上现在是：${show(detail.found)}`;
+  else if (detail.revertId) text = `生成撤回改动 #${detail.revertId}`;
+  else if ('after' in detail) text = show(detail.after);
+  else if ('current' in detail) text = `亚马逊上仍是：${show(detail.current)}`;
+  else if (detail.batchId) text = `被第 ${detail.batchId} 批的新提议替代`;
+  return text.length > 160 ? `${text.slice(0, 160)}…` : text;
+}
