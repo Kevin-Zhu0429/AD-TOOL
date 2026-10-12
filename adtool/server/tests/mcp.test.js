@@ -369,8 +369,11 @@ test('AI connectors: OAuth login, read tools, proposals and token lifecycle', as
 
     // 已经在 Claude 里用 Miguelpet 执行过的:直接记成已生效,不进待确认
     const done = await call('propose_ad_changes', { title: '已执行·仅记录', alreadyApplied: true, executionNote: 'plan 9', changes: [
-      { action: 'set_budget', campaignId: '100', budget: 12, current: 8, reason: '预算不够' }] });
-    assert.equal(done.recorded, 1);
+      { action: 'set_budget', campaignId: '100', budget: 12, current: 8, reason: '预算不够' },
+      // current 填的是执行后读回的值,也要记下来,只是不知道执行前是多少
+      { action: 'pause', entity: 'campaign', campaignId: '102', current: 'paused', reason: '零转化' }] });
+    assert.equal(done.recorded, 2);
+    assert.equal(backend.db.prepare('SELECT before_json FROM pet_change_proposals WHERE id=?').get(done.created[1].id).before_json, 'null');
     const recorded = backend.db.prepare('SELECT * FROM pet_change_proposals WHERE id=?').get(done.created[0].id);
     assert.deepEqual([recorded.status, recorded.channel, JSON.parse(recorded.result_json).detail], ['applied', 'miguelpet', 'plan 9']);
     // 执行时间不对的整批不记,免得卡在待确认

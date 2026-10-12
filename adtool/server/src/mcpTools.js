@@ -474,10 +474,19 @@ export async function proposeListing(input, { userId, source, gateway = amazonGa
   return { ...result, confirmUrl: confirmUrl(siteUrl), next: result.created.length ? NEXT_STEP : '没有改动进入待确认队列，原因见 rejected。' };
 }
 
+function sameAsTarget({ action, current, bid, budget } = {}) {
+  if (current == null || current === '') return false;
+  if (action === 'pause' || action === 'enable') return String(current).trim().toLowerCase() === (action === 'pause' ? 'paused' : 'enabled');
+  const target = action === 'set_bid' ? bid : action === 'set_budget' ? budget : null;
+  return target != null && Math.abs(Number(current) - Number(target)) < 0.005;
+}
+
 export function proposeAds(input, { userId, source, siteUrl } = {}) {
   // 已经在 Claude 里执行过的只是补个记录:先检查执行时间,免得记进队列后补记失败、又卡在待确认
   if (input.alreadyApplied) recordedTime(input.executedAt);
-  const result = proposeAdChanges(input, { userId, source });
+  // 已执行的改动,current 可能填的是执行后读回的值(就是新值);这时不知道执行前是多少,当成没填,免得被当成「和现在一样」拒掉
+  const changes = input.alreadyApplied ? input.changes.map((change) => (sameAsTarget(change) ? { ...change, current: undefined } : change)) : input.changes;
+  const result = proposeAdChanges({ ...input, changes }, { userId, source });
   if (input.alreadyApplied && result.created.length) {
     const recorded = recordExecutedAdChanges(result.created.map((item) => item.id), { actor: source ?? 'claude', userId,
       detail: input.executionNote, executedAt: input.executedAt });
@@ -710,7 +719,7 @@ export function createPetMcpServer(deps = {}) {
         negativeText: z.string().trim().max(100).optional().describe('add_negative 的否定词或 ASIN'),
         reason,
       })).min(1).max(40),
-      alreadyApplied: z.boolean().optional().describe('这些改动已经在 Claude 里用 Miguelpet 直接执行过了(用户在对话里确认的),只是记到网站:直接记成「已生效」,不进待确认,之后照常复盘'),
+      alreadyApplied: z.boolean().optional().describe('这些改动已经在 Claude 里用 Miguelpet 直接执行过了(用户在对话里确认的),只是记到网站:直接记成「已生效」,不进待确认,之后照常复盘。current 填执行前的值;只知道执行后的值就不填'),
       executedAt: z.string().trim().max(40).optional().describe('alreadyApplied 时的执行时间:太平洋时间日期 YYYY-MM-DD 或带时区的完整时间,不填就是现在'),
       executionNote: z.string().trim().max(1000).optional().describe('alreadyApplied 时记一下怎么执行的,比如 Miguelpet 计划编号'),
     },
