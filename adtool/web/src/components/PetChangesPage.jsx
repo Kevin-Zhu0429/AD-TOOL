@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import * as XLSX from 'xlsx';
 import { api, CHANGES_EVENT } from '../api.js';
 import AppDialog, { useConfirm } from './AppDialog.jsx';
-import { byteLength, changeSheetRows, SHEET, termChanges, wordDiff } from '../changeExport.js';
+import { byteLength, changeSheetRows, detailText, SHEET, termChanges, wordDiff } from '../changeExport.js';
 import './LibraryPage.css';
 import './PetChangesPage.css';
 
@@ -50,7 +50,7 @@ function AdBody({ item }) {
   </div>;
 }
 
-function ChangeBody({ item }) {
+export function ChangeBody({ item }) {
   const { kind, before, after, target } = item;
   if (kind === 'listing_title') {
     const parts = wordDiff(before ?? '', after);
@@ -175,27 +175,6 @@ function EditDialog({ item, onClose, onSaved }) {
     <footer className="row"><div className="spacer" /><button className="btn" disabled={busy} onClick={onClose}>取消</button>
       <button className="btn primary" disabled={busy} onClick={save}>{busy ? '保存中…' : '保存'}</button></footer>
   </AppDialog>;
-}
-
-function detailText(event) {
-  const detail = event.detail;
-  if (!detail) return '';
-  const show = (value) => {
-    if (value == null) return '（空）';
-    if (Array.isArray(value)) return value.join(' / ');
-    if (typeof value === 'object') return Object.values(value).join(' ');
-    return String(value);
-  };
-  let text = '';
-  if (detail.error) text = detail.error;
-  else if (detail.submissionId) text = `提交编号 ${detail.submissionId}`;
-  else if ('from' in detail) text = `${show(detail.from)} → ${show(detail.to)}`;
-  else if ('found' in detail) text = `亚马逊上现在是：${show(detail.found)}`;
-  else if (detail.revertId) text = `生成撤回改动 #${detail.revertId}`;
-  else if ('after' in detail) text = show(detail.after);
-  else if ('current' in detail) text = `亚马逊上仍是：${show(detail.current)}`;
-  else if (detail.batchId) text = `被第 ${detail.batchId} 批的新提议替代`;
-  return text.length > 160 ? `${text.slice(0, 160)}…` : text;
 }
 
 function LogTable({ events }) {

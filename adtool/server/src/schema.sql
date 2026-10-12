@@ -735,3 +735,56 @@ CREATE TABLE IF NOT EXISTS pet_change_log (
   at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
 CREATE INDEX IF NOT EXISTS idx_pet_change_log_at ON pet_change_log(id DESC);
+
+-- ---------- AI 每日分析 ----------
+-- Claude 每天美国太平洋时间凌晨 2 点分析前一天,通过连接器把结论写进来,网站「AI 日报」页展示。
+-- day 是被分析的那一天(太平洋时间);同一天再跑一次会覆盖。
+CREATE TABLE IF NOT EXISTS pet_agent_reports (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  day TEXT NOT NULL UNIQUE,
+  status TEXT NOT NULL DEFAULT 'done',
+  headline TEXT NOT NULL,
+  report_json TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'claude',
+  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+
+-- 经验库:从改动复盘里总结出的经验和店主定的规则,每次分析前先读;店主可以停用错的
+-- verdict:works 有效 / no_effect 没效果 / hurts 有害 / rule 规则;confidence:low / medium / high
+CREATE TABLE IF NOT EXISTS pet_agent_lessons (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  area TEXT NOT NULL DEFAULT 'other',
+  change_kind TEXT,
+  style TEXT,
+  verdict TEXT NOT NULL DEFAULT 'works',
+  confidence TEXT NOT NULL DEFAULT 'low',
+  evidence TEXT,
+  change_ids_json TEXT,
+  status TEXT NOT NULL DEFAULT 'active',
+  retired_reason TEXT,
+  times_used INTEGER NOT NULL DEFAULT 0,
+  from_day TEXT,
+  source TEXT NOT NULL DEFAULT 'claude',
+  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+
+-- 改动复盘:每次分析时对执行过的改动下的结论,改动日志页按改动显示
+-- verdict:works 有效 / no_effect 没变化 / hurts 变差 / too_early 数据还不够 / unclear 受其它因素干扰
+CREATE TABLE IF NOT EXISTS pet_change_reviews (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  proposal_id INTEGER NOT NULL REFERENCES pet_change_proposals(id) ON DELETE CASCADE,
+  day TEXT NOT NULL,
+  days_after INTEGER,
+  verdict TEXT NOT NULL,
+  text TEXT NOT NULL DEFAULT '',
+  metrics_json TEXT,
+  lesson_id INTEGER REFERENCES pet_agent_lessons(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  UNIQUE (proposal_id, day)
+);
+CREATE INDEX IF NOT EXISTS idx_pet_change_reviews ON pet_change_reviews(proposal_id, day);
