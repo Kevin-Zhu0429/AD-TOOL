@@ -5,8 +5,6 @@ import PriceStrategyPage from './components/PriceStrategyPage.jsx';
 import SalesStatsPage from './components/SalesStatsPage.jsx';
 import ReturnsPage from './components/ReturnsPage.jsx';
 import ShipmentsPage from './components/ShipmentsPage.jsx';
-import AgentReportPage from './components/AgentReportPage.jsx';
-import ChangeLogPage from './components/ChangeLogPage.jsx';
 import { useEffect, useRef, useState } from 'react';
 import { api } from './api.js';
 import { useTheme } from './theme.js';
@@ -27,16 +25,13 @@ import ProductPage from './components/ProductPage.jsx';
 import ToolsPage from './components/ToolsPage.jsx';
 import AbaPage from './components/AbaPage.jsx';
 
-const HASH_PAGES = { '#changes': 'changes', '#agent': 'agent', '#changelog': 'changelog' };
-const hashPage = () => (isPet && HASH_PAGES[window.location.hash]) || 'home';
-
 export default function App() {
   const [theme, toggleTheme] = useTheme();
   const [user, setUser] = useState(null);
   const [markets, setMarkets] = useState([]);
   const [checking, setChecking] = useState(true);
-  // Claude 提议完改动会给出「网站地址/#changes」,写完日报给出「#agent」,打开就直接到对应页
-  const [page, setPage] = useState(hashPage);
+  // Claude 提议完改动会给出「网站地址/#changes」,打开就直接到待确认改动页
+  const [page, setPage] = useState(() => (isPet && window.location.hash === '#changes' ? 'changes' : 'home'));
   // 广告优化工作台首次打开后保持挂载，避免切到其他页面时原生工作台被卸载、改动丢失。
   const [optimizerOpened, setOptimizerOpened] = useState(false);
   // 从 SKU 库、价格策略表点「在途」跳到货件页时带上的 SKU
@@ -67,7 +62,7 @@ export default function App() {
     const labels = {
       home: '首页', builder: '自动广告', manual: '手动广告', optimizer: '广告优化',
       library: '否定词库', skus: 'SKU 库', portfolios: '广告组合库', aba: 'ABA 报告',
-      products: '产品情报', priceStrategy: '价格策略表', salesStats: '销售统计', returns: '退货分析', shipments: '货件', changes: '待确认改动', agent: 'AI 日报', changelog: '改动日志', tools: '小工具', admin: '账号管理', profile: '个人资料',
+      products: '产品情报', priceStrategy: '价格策略表', salesStats: '销售统计', returns: '退货分析', shipments: '货件', changes: '待确认改动', tools: '小工具', admin: '账号管理', profile: '个人资料',
     };
     document.title = `${labels[page] ?? '首页'} — 广告工作台`;
   }, [page]);
@@ -75,7 +70,7 @@ export default function App() {
   function onLoggedIn(u) {
     setUser(u);
     setMarket(u.markets[0]);
-    setPage(hashPage());
+    setPage(isPet && window.location.hash === '#changes' ? 'changes' : 'home');
     autoShown.current = false;   // 换个人登录,该弹的还要再弹
   }
 
@@ -145,10 +140,6 @@ export default function App() {
       <ReturnsPage />
     ) : page === 'shipments' && isPet ? (
       <ShipmentsPage key={shipmentSku} focusSku={shipmentSku} />
-    ) : page === 'agent' && isPet ? (
-      <AgentReportPage owner={user.role === 'owner'} onNav={navigate} />
-    ) : page === 'changelog' && isPet && user.role === 'owner' ? (
-      <ChangeLogPage onNav={navigate} />
     ) : page === 'changes' && isPet && user.role === 'owner' ? (
       <PetChangesPage />
     ) : page === 'tools' ? (

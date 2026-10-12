@@ -40,8 +40,6 @@ export default function AppShell({
     { id: 'home', label: '首页', icon: 'home' },
     // Claude 提议的改动在这里确认;导航栏放不下时后面的会被挤出去,所以放在前面
     ...(reviewsChanges ? [{ id: 'changes', label: '待确认', icon: 'check', badge: changeCount }] : []),
-    ...(isPet ? [{ id: 'agent', label: 'AI 日报', icon: 'chart' }] : []),
-    ...(reviewsChanges ? [{ id: 'changelog', label: '改动日志', icon: 'file' }] : []),
     { id: 'builder', label: '自动广告', icon: 'layers' },
     ...(user.manualAds ? [{ id: 'manual', label: '手动广告', icon: 'sliders' }] : []),
     ...(user.adOpt ? [{ id: 'optimizer', label: '广告优化', icon: 'chart' }] : []),

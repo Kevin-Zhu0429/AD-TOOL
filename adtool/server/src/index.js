@@ -24,7 +24,6 @@ import { startTrafficSyncScheduler } from './petTraffic.js';
 import { returnsRouter, startReturnsSyncScheduler } from './petReturns.js';
 import { shipmentsRouter, startShipmentsSyncScheduler } from './petShipments.js';
 import { createIntelRouter } from './petIntelActions.js';
-import { createAgentRouter } from './petAgent.js';
 import { mountMcp } from './mcp.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -68,7 +67,6 @@ app.use('/api/changes', createChangeRouter());
 app.use('/api/intel', createIntelRouter());
 app.use('/api/returns', returnsRouter);
 app.use('/api/shipments', shipmentsRouter);
-app.use('/api/agent', createAgentRouter());
 
 app.get('/api/health', (req, res) => {
   res.json({ ok: true, time: new Date().toISOString() });

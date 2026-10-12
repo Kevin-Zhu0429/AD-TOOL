@@ -129,18 +129,6 @@ export default function HomePage({ user, market, onNav, theme, onOpenChangelog }
           />
         )}
         {isPet && <EntryCard
-          tone="blue" icon="chart" title="AI 日报"
-          desc="Claude 每天美国时间凌晨 2 点分析前一天的全店销量、库存、Listing、搜索词和广告，写出结论和要做的事，复盘执行过的改动，把有效的做法记进经验库。"
-          meta="US 站 · 每天自动 · 改动要你确认"
-          onClick={() => onNav('agent')}
-        />}
-        {isPet && user.role === 'owner' && <EntryCard
-          tone="blue" icon="file" title="改动日志"
-          desc="每一条 Listing 和广告改动从提议、确认、执行、生效到 7/14/28 天效果复盘串成一条线，看哪些改动真的有用。"
-          meta="US 站 · 超级管理员"
-          onClick={() => onNav('changelog')}
-        />}
-        {isPet && <EntryCard
           tone="amber" icon="chart" title="价格策略表"
           desc="一页看全部 SKU：在库、在途、近 7 天每日销量、月销量和预估售罄日，日期每天自动滚动。"
           meta="US 站 · 店铺共享 · 亚马逊自动同步"
