@@ -187,6 +187,7 @@ function validDate(s) {
  *   places: { TOS, ROS, PP },
  *   skus, mode: 'kw' | 'tgt', splitGroup,
  *   kw:  { 精准: {on, bid, text}, 词组: {...}, 广泛: {...} },
+ *   kwTriple, kwShared —— 三合一:勾上后三种匹配都读 kwShared 这一个粘贴框,kw[*].text 不用
  *   tgt: { asin: {on, bid, text}, 'asin-expanded': {...}, category: {...} },
  *   ...词库联动字段(libUse / adType / seriesModels / seriesScope / extraNeg)
  * }
@@ -288,10 +289,12 @@ export function buildManualPlan(task, negData) {
 
   if (mode === 'kw') {
     const seen = new Set();
+    // 三合一:精准 / 词组 / 广泛共用一个粘贴框,每种匹配只单独给开关和出价
+    const shared = task.kwTriple ? parseKeywordLines(task.kwShared) : null;
     for (const mt of MATCH_TYPES) {
       const cfg = task.kw?.[mt.id];
       if (!cfg?.on) continue;
-      const words = parseKeywordLines(cfg.text);
+      const words = shared ?? parseKeywordLines(cfg.text);
       if (!words.length) continue;
       anyInput = true;
       const bid = bidOf(cfg.bid, mt.label);
@@ -315,7 +318,9 @@ export function buildManualPlan(task, negData) {
       }
       if (items.length) units.push({ key: mt.id, label: mt.label, bid, items });
     }
-    if (!units.length && !anyInput) problems.push('至少勾一种匹配类型,并粘贴关键词');
+    if (!units.length && !anyInput) {
+      problems.push(task.kwTriple ? '三合一要粘贴关键词,并至少勾一种匹配类型' : '至少勾一种匹配类型,并粘贴关键词');
+    }
   } else {
     const seen = new Map();
     for (const tt of TARGET_TYPES) {

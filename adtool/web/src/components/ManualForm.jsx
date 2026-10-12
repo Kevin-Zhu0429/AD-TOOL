@@ -40,6 +40,45 @@ function Unit({ on, label, hint, bid, text, count, placeholder, bidPlaceholder, 
   );
 }
 
+/** 三合一:一个粘贴框,精准 / 词组 / 广泛各自只有开关和出价 */
+function TripleUnit({ kw, text, count, bidPlaceholder, noteOf, onUnit, onText }) {
+  const onCount = MATCH_TYPES.filter((mt) => kw[mt.id]?.on).length;
+  return (
+    <div className="unitbox triplebox on">
+      <div className="unitbox-head">
+        <b className="unitbox-name">三合一关键词</b>
+        <span className="hint">粘一次,勾上的匹配类型各写一遍</span>
+        <div className="spacer" />
+        <span className="stat"><b>{count}</b> 词 × {onCount} = <b>{count * onCount}</b> 条</span>
+      </div>
+      <div className="triple-matches">
+        {MATCH_TYPES.map((mt) => {
+          const cfg = kw[mt.id];
+          return (
+            <div key={mt.id} className={`triple-match${cfg.on ? ' on' : ''}`}>
+              <label className="unitbox-name">
+                <input type="checkbox" checked={cfg.on} onChange={() => onUnit(mt.id, { on: !cfg.on })} />
+                <b>{mt.label}</b>
+              </label>
+              <input
+                className="inp bidmini" type="number" step="0.01" placeholder={bidPlaceholder}
+                aria-label={`${mt.label}匹配出价`} disabled={!cfg.on}
+                value={cfg.bid} onChange={(e) => onUnit(mt.id, { bid: e.target.value })}
+              />
+              <span className="hint triple-note">{cfg.on ? noteOf(cfg) : '不写入'}</span>
+            </div>
+          );
+        })}
+      </div>
+      <textarea
+        className="inp resize-none" rows={12} aria-label="三合一投放词"
+        placeholder={'从表格里直接粘贴,每行一个词\n同一批词会同时写成精准 [词]、词组 "词"、广泛 词'}
+        value={text} onChange={(e) => onText(e.target.value)}
+      />
+    </div>
+  );
+}
+
 export default function ManualForm({ task, plan, libCount, lib, market, skuItems, portfolios, portfolioError, onChange }) {
   const set = (patch) => onChange(patch);
   const [pick, setPick] = useState(false);
@@ -49,15 +88,35 @@ export default function ManualForm({ task, plan, libCount, lib, market, skuItems
     if (bucket === 'kw' && 'text' in patch) setClearedKeywords(null);
     onChange({ [bucket]: { ...task[bucket], [key]: { ...task[bucket][key], ...patch } } });
   };
-  const hasKeywords = MATCH_TYPES.some(({ id }) => task.kw[id]?.text);
+  const triple = task.mode === 'kw' && !!task.kwTriple;
+  const hasKeywords = triple ? !!task.kwShared : MATCH_TYPES.some(({ id }) => task.kw[id]?.text);
   function clearKeywords() {
+    if (triple) {
+      setClearedKeywords({ shared: task.kwShared });
+      set({ kwShared: '' });
+      return;
+    }
     setClearedKeywords(Object.fromEntries(MATCH_TYPES.map(({ id }) => [id, task.kw[id]?.text ?? ''])));
     set({ kw: Object.fromEntries(MATCH_TYPES.map(({ id }) => [id, { ...task.kw[id], text: '' }])) });
   }
   function undoClearKeywords() {
-    set({ kw: Object.fromEntries(MATCH_TYPES.map(({ id }) => [id, { ...task.kw[id], text: clearedKeywords[id] }])) });
+    if ('shared' in clearedKeywords) set({ kwShared: clearedKeywords.shared });
+    else set({ kw: Object.fromEntries(MATCH_TYPES.map(({ id }) => [id, { ...task.kw[id], text: clearedKeywords[id] }])) });
     setClearedKeywords(null);
   }
+
+  /** 切投放方式。进三合一时三种匹配全开;共用框还空着就先拿分开填的第一份词垫上 */
+  function pickMode(id) {
+    setClearedKeywords(null);
+    if (id === 'tgt') return set({ mode: 'tgt' });
+    if (id === 'kw') return set({ mode: 'kw', kwTriple: false });
+    const seed = task.kwShared || MATCH_TYPES.map((mt) => task.kw[mt.id]?.text).find(Boolean) || '';
+    set({
+      mode: 'kw', kwTriple: true, kwShared: seed,
+      kw: task.kwTriple ? task.kw : Object.fromEntries(MATCH_TYPES.map(({ id: k }) => [k, { ...task.kw[k], on: true }])),
+    });
+  }
+  const modeId = task.mode === 'tgt' ? 'tgt' : triple ? 'kw3' : 'kw';
 
   const skuCount = parseLines(task.skus).length;
   const negCount = (plan?.campNegs?.length ?? 0) + (plan?.groupNegs?.length ?? 0);
@@ -299,15 +358,18 @@ export default function ManualForm({ task, plan, libCount, lib, market, skuItems
           n="4" title="投放方式" tone="violet"
           meta={<span className="stat"><b>{plan?.targets ?? 0}</b> 条</span>}
         >
-          <div className="seg">
+          <div className="seg seg3">
             {[
-              ['kw', '关键词投放', '自己粘贴关键词,按精准 / 词组 / 广泛分别给出价'],
-              ['tgt', '商品投放', '自己粘贴 ASIN 或品类 ID,写成商品定向行'],
+              ['kw', '关键词投放', '三种匹配各粘各的词'],
+              ['kw3', '关键词三合一', '只粘一次词,三种匹配同时开'],
+              ['tgt', '商品投放', '粘 ASIN 或品类 ID'],
             ].map(([id, label, desc]) => (
               <button
                 key={id}
-                className={`seg-item${task.mode === id ? ' on' : ''}`}
-                onClick={() => set({ mode: id })}
+                type="button"
+                aria-pressed={modeId === id}
+                className={`seg-item${modeId === id ? ' on' : ''}${id === 'kw3' ? ' seg-new' : ''}`}
+                onClick={() => pickMode(id)}
               >
                 <b>{label}</b>
                 <span>{desc}</span>
@@ -325,14 +387,27 @@ export default function ManualForm({ task, plan, libCount, lib, market, skuItems
           {task.mode === 'kw' && (
             <div className="manual-keyword-actions">
               <button type="button" className="btn sm" disabled={!hasKeywords} onClick={clearKeywords}>
-                清空三种匹配投放词
+                {triple ? '清空三合一投放词' : '清空三种匹配投放词'}
               </button>
-              <span className="hint" role="status">{clearedKeywords ? '已清空当前活动的精准、词组、广泛投放词' : ''}</span>
+              <span className="hint" role="status">
+                {clearedKeywords ? `已清空当前活动的${triple ? '三合一' : '精准、词组、广泛'}投放词` : ''}
+              </span>
               {clearedKeywords && <button type="button" className="btn sm ghost" onClick={undoClearKeywords}>撤销清空</button>}
             </div>
           )}
 
-          {task.mode === 'kw'
+          {triple && (
+            <TripleUnit
+              kw={task.kw} text={task.kwShared ?? ''}
+              count={parseKeywordLines(task.kwShared).length}
+              bidPlaceholder={cpcMode ? '目标CPC' : '出价'}
+              noteOf={unitNote}
+              onUnit={(id, patch) => setUnit('kw', id, patch)}
+              onText={(text) => { setClearedKeywords(null); set({ kwShared: text }); }}
+            />
+          )}
+
+          {triple ? null : task.mode === 'kw'
             ? MATCH_TYPES.map((mt) => {
               const cfg = task.kw[mt.id];
               return (

@@ -31,7 +31,7 @@ const skuRow = z.object({ country: market, sku: z.string().min(1).max(120), bran
   setGroup: text.optional(), asin: z.string().optional(), stock: z.union([z.number(), z.string()]).optional(), transit: z.union([z.number(), z.string()]).optional() });
 const reportFiles = z.array(z.object({ name: z.string().max(255), text: z.string().optional(),
   sheets: z.array(z.object({ name: z.string().optional(), rows: z.array(z.array(z.unknown())) })).optional() })).min(1).max(10);
-const units = z.object({ on: z.boolean(), bid: z.union([z.number(), z.string()]).optional(), text: z.string().max(200000) });
+const units = z.object({ on: z.boolean(), bid: z.union([z.number(), z.string()]).optional(), text: z.string().max(200000).default('') });
 const negatives = { libUse: z.object({ A: z.boolean(), B: z.boolean(), C: z.boolean(), D: z.boolean(), E: z.boolean() }).optional(),
   adType: z.enum(['mixed', 'series']).optional(), seriesModels: z.array(z.string()).max(100).optional(), seriesScope: z.enum(['both', 'models', 'printers']).optional(),
   extraNeg: z.object({ negExact: text.optional(), negPhrase: text.optional(), cnegExact: text.optional(), cnegPhrase: text.optional(), negAsin: text.optional() }).optional() };
@@ -48,6 +48,7 @@ const manualTask = z.object({ ...taskBase, camp: z.string().min(1).max(128), gro
   splitGroup: z.boolean().optional(), strategy: z.enum(manual.MANUAL_STRATEGIES.map((x) => x.id)).optional(), bidMode: z.enum(['bid', 'cpc']).optional(),
   places: z.object({ TOS: z.number().min(0).max(900).optional(), ROS: z.number().min(0).max(900).optional(), PP: z.number().min(0).max(900).optional() }).optional(),
   kw: z.object(Object.fromEntries(manual.MATCH_TYPES.map((x) => [x.id, units.optional()]))).optional(),
+  kwTriple: z.boolean().optional(), kwShared: z.string().max(200000).optional(),
   tgt: z.object(Object.fromEntries(manual.TARGET_TYPES.map((x) => [x.id, units.optional()]))).optional() });
 
 function page(data, args, key = 'items') {

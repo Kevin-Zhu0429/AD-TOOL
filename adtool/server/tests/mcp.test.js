@@ -179,6 +179,9 @@ test('ink MCP: OAuth, permissions, business tools and exports', async (t) => {
     const wb = XLSX.read(Buffer.from(file.base64, 'base64'), { type: 'buffer' });
     const table = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1 });
     assert.deepEqual(table[0], HEADERS); assert.ok(table.some((r) => r[C.KWTEXT] === '[hp 305]'));
+    const triple = await call(staff, 'generate_manual_ads', { ...manualArgs, tasks: [{ ...manualArgs.tasks[0],
+      kwTriple: true, kwShared: 'hp 305', kw: { 精准: { on: true }, 词组: { on: true }, 广泛: { on: true } } }] });
+    assert.deepEqual(triple.rows.filter((r) => r[C.KWTEXT]).map((r) => r[C.KWTEXT]), ['[hp 305]', '"hp 305"', 'hp 305']);
     await fail(staff, 'generate_manual_ads', { ...manualArgs, tasks: [{ ...manualArgs.tasks[0], date: '20260230' }] }, /日期/);
   });
   await t.test('optimization exports include headers, only changed rows and valid entity fields', async () => {

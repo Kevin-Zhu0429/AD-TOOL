@@ -19,6 +19,7 @@ const ToolsPage = lazy(() => import('./components/ToolsPage.jsx'));
 const AgedStorageFeePage = lazy(() => import('./components/AgedStorageFeePage.jsx'));
 const AbaPage = lazy(() => import('./components/AbaPage.jsx'));
 const AbaPublicPage = lazy(() => import('./components/AbaPublicPage.jsx'));
+const ListingsPage = lazy(() => import('./components/ListingsPage.jsx'));
 
 export default function App() {
   const [theme, toggleTheme] = useTheme();
@@ -54,7 +55,7 @@ export default function App() {
     const labels = {
       home: '首页', builder: '自动广告', manual: '手动广告', optimizer: '广告优化',
       library: '否定词库', skus: 'SKU 库', portfolios: '广告组合库', aba: 'ABA 报告',
-      abaPublic: 'ABA报告（公共）', products: '产品情报', tools: '小工具', agedFees: '超龄仓储费', admin: '账号管理', profile: '个人资料',
+      abaPublic: 'ABA报告（公共）', products: '产品情报', tools: '小工具', agedFees: '超龄仓储费', listings: 'Listing 管理', admin: '账号管理', profile: '个人资料',
     };
     document.title = `${labels[page] ?? '首页'} — 广告工作台`;
   }, [page]);
@@ -128,6 +129,8 @@ export default function App() {
       <ToolsPage />
     ) : page === 'agedFees' ? (
       <AgedStorageFeePage />
+    ) : page === 'listings' && user.role === 'owner' ? (
+      <ListingsPage />
     ) : page === 'admin' && user.role === 'owner' ? (
       <AdminPage user={user} markets={markets} />
     ) : page === 'profile' ? (

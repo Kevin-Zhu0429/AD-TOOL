@@ -17,6 +17,10 @@ let seq = 1;
 const emptyKw = () => Object.fromEntries(
   MATCH_TYPES.map((mt, i) => [mt.id, { on: i === 0, bid: '', text: '' }])
 );
+/** 三合一默认三种匹配全开 */
+const tripleKw = () => Object.fromEntries(
+  MATCH_TYPES.map((mt) => [mt.id, { on: true, bid: '', text: '' }])
+);
 const emptyTgt = () => Object.fromEntries(
   TARGET_TYPES.map((tt, i) => [tt.id, { on: i === 0, bid: '', text: '' }])
 );
@@ -42,6 +46,8 @@ function newManualTask(overrides = {}) {
     mode: 'kw',                // kw = 关键词投放;tgt = 商品投放(ASIN / 品类)
     splitGroup: false,
     kw: emptyKw(),
+    kwTriple: false,           // 三合一:精准 / 词组 / 广泛共用一个粘贴框
+    kwShared: '',
     tgt: emptyTgt(),
     // 下面这几个字段和自动广告页共用一套否定逻辑(adEngine.buildNegatives)
     extraNeg: { negExact: '', negPhrase: '', cnegExact: '', cnegPhrase: '', negAsin: '' },
@@ -124,7 +130,7 @@ export default function ManualPage({ market }) {
     const t = last
       ? newManualTask({
         ...last, id: `m${seq++}`, camp: '', group: '',
-        kw: emptyKw(), tgt: emptyTgt(),
+        kw: last.kwTriple ? tripleKw() : emptyKw(), kwShared: '', tgt: emptyTgt(),
       })
       : newManualTask();
     setTasks((prev) => [...prev, t]);

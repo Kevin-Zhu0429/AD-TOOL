@@ -39,7 +39,8 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   padding: 30px 28px 22px;
-  box-shadow: var(--shadow);
+  box-shadow: var(--shadow), var(--hairline);
+  animation: fadeUp .5s var(--ease) backwards;
 }
 
 .login-brand { display: flex; align-items: center; gap: 11px; margin-bottom: 24px; }
@@ -47,8 +48,9 @@
 .login-glyph {
   display: inline-flex; align-items: center; justify-content: center;
   width: 36px; height: 36px; border-radius: 10px;
-  background: linear-gradient(140deg, var(--accent), var(--violet));
+  background: var(--grad-brand);
   color: #fff; font-size: 13px; font-weight: 700; letter-spacing: .02em;
+  box-shadow: 0 6px 18px -6px var(--accent), inset 0 1px 0 rgba(255, 255, 255, .25);
 }
 
 .login-name { font-size: 15.5px; font-weight: 600; }
