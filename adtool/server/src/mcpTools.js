@@ -11,7 +11,7 @@ import { abaSyncStatus } from './petAbaSync.js';
 import { withProfit, yearGrossProfit } from './petCosts.js';
 import { latestSync } from './stockEvents.js';
 import { competitorSyncStatus, listingHealth, ownStyles, recentChanges, styleDetail } from './petCompetitors.js';
-import { AD_ACTIONS, AD_ENTITIES, listChanges, proposeAdChanges, proposeListingChanges, STATUS_LABEL, targetLabel } from './petChanges.js';
+import { AD_ACTIONS, AD_ENTITIES, claimAdChanges, listChanges, reportAdResult, proposeAdChanges, proposeListingChanges, STATUS_LABEL, targetLabel } from './petChanges.js';
 import { TRAFFIC_GROUPS, trafficReport, trafficSyncStatus } from './petTraffic.js';
 import { changeImpact } from './petImpact.js';
 import { returnRecords, returnsAnalysis, returnsSyncStatus } from './petReturns.js';
@@ -480,7 +480,7 @@ export function proposeAds(input, { userId, source, siteUrl } = {}) {
 }
 
 const ALL_STATUSES = Object.keys(STATUS_LABEL);
-const PROPOSAL_VIEWS = { pending: ['pending'], active: ['queued', 'running', 'submitted', 'export', 'exported', 'failed'],
+const PROPOSAL_VIEWS = { pending: ['pending'], active: ['queued', 'running', 'submitted', 'agent', 'agent_running', 'export', 'exported', 'failed'],
   done: ['applied', 'not_applied'], closed: ['rejected', 'superseded'], all: ALL_STATUSES };
 
 export function changeProposals({ status = 'all', limit = 50 } = {}, { env = process.env } = {}) {
@@ -507,6 +507,7 @@ propose_listing_changes、propose_ad_changes 只把改动放进网站的「待�
 看退货率、退货原因和买家退货留言用 get_returns(转化正常但差评多、或某个尺码卖得好却留不住时先看它)。
 看月度目标和利润用 get_sales_stats;看竞品最近的降价、改标题、换主图用 get_competitor_overview。
 提改动前:先用 get_listing 看现在的文案;尺寸、材质、填充物等产品规格只写有依据的,拿不准就先问用户,不要编;同一款的不同尺码、颜色是不同 SKU,要分别提;改五点要给出全部条目;reason 写清依据的数据(搜索词份额、竞品对比、体检问题、毛利)。改价前看 list_skus 的保本价;正在做促销价的 SKU 改原价前台不变,要改前台价提 sale_price(促销价,带结束日期)。广告改动需要广告活动、广告组、关键词等的数字编号,来自用户给的批量表/报告,或 Miguelpet 连接器 query_ads 查到的编号。提完把 confirmUrl 告诉用户去确认。
+店主确认的广告改动(没有广告 API 时)由 Claude 用 Miguelpet 执行:claim_confirmed_ad_changes 领取 → 在 Miguelpet 里核对当前值 → prepare_change_plan + apply_change_plan → report_ad_change_result 回报。只执行领到的这些,一条一条照着改,不加别的。
 每日自动分析:先 get_agent_context(经验库、该复盘的改动、冷却期 SKU、前几天的结论),再查数据,最后 save_daily_report 写日报、save_lesson 记经验;日报显示在网站「AI 日报」页。
 用户是中文卖家,回答用中文;给优化建议时说明依据的数据。`;
 
@@ -785,6 +786,25 @@ export function createPetMcpServer(deps = {}) {
     // 不填 id 是新增,重试会多一条
     annotations: { ...agentWrite, idempotentHint: false },
   }, wrap((args, extra) => saveLesson(args, { source: sourceOf(extra), today: todayOf() })));
+
+  server.registerTool('claim_confirmed_ad_changes', {
+    title: '领取店主已确认的广告改动',
+    description: '执行任务用:领取店主在网站上确认过、等 Claude 用 Miguelpet 执行的广告改动,领到的状态变成「Claude 执行中」,不会再被领第二次。只执行这里返回的改动,严格按 after 改,不顺手改别的。执行前先在 Miguelpet 查当前值,和 before 不一样就不要改,用 report_ad_change_result 回报 skipped。每条执行完都要回报结果。',
+    inputSchema: { limit: z.number().int().min(1).max(40).default(20) },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  }, wrap((args) => claimAdChanges(args)));
+
+  server.registerTool('report_ad_change_result', {
+    title: '回报广告改动的执行结果',
+    description: '用 Miguelpet 执行完一条领到的广告改动后回报:applied 已生效(执行后在 Miguelpet 读回的新值填 current) / failed 失败(detail 写原因) / skipped 没执行(当前值和提议时不一样,改动退回待确认让店主重新看)。结果同步到网站的待确认改动和改动日志。',
+    inputSchema: {
+      id: z.number().int().min(1).describe('改动编号'),
+      outcome: z.enum(['applied', 'failed', 'skipped']),
+      detail: z.string().trim().max(1000).optional().describe('Miguelpet 的计划编号、返回信息或失败原因'),
+      current: z.union([z.number(), z.string()]).optional().describe('执行后(或没执行时)Miguelpet 里读到的当前值:竞价、预算或 enabled/paused'),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  }, wrap((args) => reportAdResult(args)));
 
   return server;
 }

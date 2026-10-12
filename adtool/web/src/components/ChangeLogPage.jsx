@@ -9,12 +9,12 @@ import './ShipmentsPage.css';
 import './AgentPages.css';
 
 const STATUS_TONE = { pending: 'blue', queued: 'gray', running: 'blue', submitted: 'amber', applied: 'green', not_applied: 'red',
-  export: 'amber', exported: 'amber', failed: 'red', rejected: 'gray', superseded: 'gray' };
+  agent: 'blue', agent_running: 'blue', export: 'amber', exported: 'amber', failed: 'red', rejected: 'gray', superseded: 'gray' };
 const VERDICT_TONE = { works: 'green', no_effect: 'gray', hurts: 'red', too_early: 'blue', unclear: 'amber' };
 const STATE_FILTERS = {
   all: ['全部', () => true],
   pending: ['待确认', (item) => item.status === 'pending'],
-  flight: ['执行中', (item) => ['queued', 'running', 'submitted', 'export', 'exported'].includes(item.status)],
+  flight: ['执行中', (item) => ['queued', 'running', 'submitted', 'agent', 'agent_running', 'export', 'exported'].includes(item.status)],
   applied: ['已生效', (item) => item.status === 'applied'],
   review: ['待复盘', (item) => item.status === 'applied' && (!item.verdict || item.verdict === 'too_early')],
   failed: ['失败 / 未生效', (item) => ['failed', 'not_applied'].includes(item.status)],
@@ -118,7 +118,7 @@ export default function ChangeLogPage({ onNav }) {
       <div className="price-kpis cl-kpis">
         <button type="button" className="price-kpi" onClick={() => setState('all')}><span>提议</span><b>{stats.proposed}</b><small>最近 {data.days} 天</small></button>
         <button type="button" className="price-kpi" onClick={() => setState('pending')}><span>等你确认</span><b className={stats.pending ? 'agt-wait' : ''}>{stats.pending}</b><small>确认后才会改</small></button>
-        <button type="button" className="price-kpi" onClick={() => setState('flight')}><span>执行中</span><b>{stats.inFlight}</b><small>已提交等生效 / 待上传批量表</small></button>
+        <button type="button" className="price-kpi" onClick={() => setState('flight')}><span>执行中</span><b>{stats.inFlight}</b><small>等亚马逊生效 / 等 Claude 执行</small></button>
         <button type="button" className="price-kpi" onClick={() => setState('applied')}><span>已生效</span><b>{stats.applied}</b><small>{stats.failed ? <span className="danger">{stats.failed} 条失败或未生效</span> : '没有失败'}</small></button>
         <button type="button" className="price-kpi" onClick={() => setState('review')}><span>复盘结论</span>
           <b><span className="agt-up">{stats.works}</span> <small className="agt-sub">有效</small> {stats.hurts > 0 && <><span className="agt-down">{stats.hurts}</span> <small className="agt-sub">变差</small></>}</b>

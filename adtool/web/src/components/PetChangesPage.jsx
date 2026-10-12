@@ -11,7 +11,7 @@ const amazon = (asin) => `https://www.amazon.com/dp/${asin}`;
 const short = (time) => (time ? time.slice(5, 16) : '');
 const norm = (text) => String(text ?? '').replace(/\s+/g, ' ').trim();
 const STATUS_TONE = { pending: 'blue', queued: 'gray', running: 'blue', submitted: 'amber', applied: 'green', not_applied: 'red',
-  export: 'amber', exported: 'amber', failed: 'red', rejected: 'gray', superseded: 'gray' };
+  agent: 'blue', agent_running: 'blue', export: 'amber', exported: 'amber', failed: 'red', rejected: 'gray', superseded: 'gray' };
 const ENTITY_LABEL = { campaign: '广告活动', adGroup: '广告组', keyword: '关键词', productTarget: '商品定向', productAd: '商品广告' };
 const MATCH_LABEL = { exact: '否定精准', phrase: '否定词组', asin: '否定商品' };
 const STATE_LABEL = { enabled: '启用', paused: '暂停' };
@@ -108,6 +108,9 @@ function Result({ item }) {
   }
   if (item.status === 'running') text = '正在提交亚马逊…';
   if (item.status === 'queued') text = '排队中，马上提交。';
+  if (item.status === 'agent') text = 'Claude 每小时领一次已确认的广告改动，用 Miguelpet 执行后把结果写回这里。想自己上传可以点「改用批量表」。';
+  if (item.status === 'agent_running') text = 'Claude 正在用 Miguelpet 执行，执行完会更新状态。';
+  if (item.status === 'applied' && item.channel === 'miguelpet') text = `Claude 已用 Miguelpet 执行（${short(item.executedAt)}）${result.detail ? `：${result.detail}` : ''}。`;
   if (!text && !issues.length) return null;
   return <div className="chg-result">{text && <p>{text}</p>}
     {issues.length > 0 && <ul>{issues.map((issue, index) => <li key={index}><span className={`tag ${issue.severity === 'ERROR' ? 'red' : 'amber'}`}>{issue.severity === 'ERROR' ? '错误' : '提醒'}</span> {issue.message}</li>)}</ul>}
@@ -140,7 +143,8 @@ function ChangeItem({ item, checked, onCheck, busy, onEdit, onAction, onRevert }
         {['pending', 'failed'].includes(item.status) && EDITABLE.has(item.kind) && <button className="btn sm" disabled={busy} onClick={() => onEdit(item)}>修改</button>}
         {item.status === 'pending' && <button className="btn sm danger" disabled={busy} onClick={() => onAction('reject', [item.id])}>拒绝</button>}
         {item.status === 'failed' && <button className="btn sm primary" disabled={busy} onClick={() => onAction('retry', [item.id])}>重试</button>}
-        {['failed', 'export'].includes(item.status) && <button className="btn sm" disabled={busy} onClick={() => onAction('drop', [item.id])}>放弃</button>}
+        {item.status === 'agent' && <button className="btn sm" disabled={busy} onClick={() => onAction('to-sheet', [item.id])}>改用批量表</button>}
+        {['failed', 'export', 'agent'].includes(item.status) && <button className="btn sm" disabled={busy} onClick={() => onAction('drop', [item.id])}>放弃</button>}
         {canRevert && <button className="btn sm" disabled={busy} onClick={() => onRevert(item)}>撤回</button>}
       </footer>
     </div>
@@ -253,9 +257,9 @@ export default function PetChangesPage() {
   async function approve() {
     const listing = chosen.filter((item) => item.group === 'listing').length, ads = chosen.length - listing;
     const parts = [listing && `${listing} 条 Listing 改动会马上提交到亚马逊（先让亚马逊预检，不通过就不提交）`,
-      ads && (config?.adsApi ? `${ads} 条广告改动会通过广告 API 直接执行` : `${ads} 条广告改动会转成批量表，要下载后到广告后台上传`)].filter(Boolean);
+      ads && (config?.adsApi ? `${ads} 条广告改动会通过广告 API 直接执行` : `${ads} 条广告改动交给 Claude 用 Miguelpet 执行（每小时一次）`)].filter(Boolean);
     if (!await ask(`确认执行这 ${chosen.length} 条改动？${parts.join('；')}。`, '确认执行')) return;
-    const result = await act('approve', chosen.map((item) => item.id), (r) => `已确认 ${chosen.length} 条：${[r.queued && `${r.queued} 条正在提交亚马逊`, r.export && `${r.export} 条待导出批量表`].filter(Boolean).join('，')}。`);
+    const result = await act('approve', chosen.map((item) => item.id), (r) => `已确认 ${chosen.length} 条：${[r.queued && `${r.queued} 条正在提交亚马逊`, r.agent && `${r.agent} 条广告改动等 Claude 执行`].filter(Boolean).join('，')}。`);
     if (result) setView('active');
   }
 
@@ -266,6 +270,7 @@ export default function PetChangesPage() {
   async function onAction(action, ids) {
     if (action === 'reject') return reject(ids);
     if (action === 'retry') return act('retry', ids, () => '已重新排队。');
+    if (action === 'to-sheet') return act('to-sheet', ids, () => '已改成批量表，在下面下载后到广告后台上传。');
     if (action === 'drop' && await ask('放弃这条改动？不会执行，记录留在历史里。', '放弃')) return act('drop', ids, () => '已放弃。');
     return null;
   }

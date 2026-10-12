@@ -233,8 +233,9 @@ export function changeSteps(row, reviews = []) {
       : status === 'superseded' ? step('decided', '确认', 'fail', row.updated_at, '被新提议替代')
         : step('decided', '确认', decided ? 'done' : 'now', row.decided_at, decided ? null : '等你确认'),
     status === 'failed' ? step('executed', '执行', 'fail', row.updated_at, '失败')
-      : step('executed', '执行', executed ? 'done' : ['queued', 'running', 'export'].includes(status) ? 'now' : 'todo', row.executed_at,
-        status === 'export' ? '待导出批量表' : status === 'exported' ? '已导出待上传' : ad && executed ? '批量表' : null),
+      : step('executed', '执行', executed ? 'done' : ['queued', 'running', 'export', 'agent', 'agent_running'].includes(status) ? 'now' : 'todo', row.executed_at,
+        status === 'export' ? '待导出批量表' : status === 'exported' ? '已导出待上传' : status === 'agent' ? '等 Claude 执行'
+          : status === 'agent_running' ? 'Claude 执行中' : ad && executed ? (row.channel === 'miguelpet' ? 'Miguelpet' : row.channel === 'ads_api' ? '广告 API' : '批量表') : null),
     status === 'not_applied' ? step('applied', '生效', 'fail', row.verified_at ?? row.updated_at, '未生效')
       : step('applied', '生效', status === 'applied' ? 'done' : ['submitted', 'exported'].includes(status) ? 'now' : 'todo', row.verified_at,
         status === 'submitted' ? '等亚马逊生效' : status === 'exported' ? '等上传' : null),
@@ -278,7 +279,7 @@ export function changeTimeline({ days = 60, today = todayOf() } = {}) {
   const reviewed = items.filter((item) => item.verdict && item.verdict !== 'too_early');
   const stats = {
     proposed: items.length, pending: count((item) => item.status === 'pending'),
-    inFlight: count((item) => ['queued', 'running', 'submitted', 'export', 'exported'].includes(item.status)),
+    inFlight: count((item) => ['queued', 'running', 'submitted', 'agent', 'agent_running', 'export', 'exported'].includes(item.status)),
     applied: count((item) => item.status === 'applied'), failed: count((item) => ['failed', 'not_applied'].includes(item.status)),
     rejected: count((item) => item.status === 'rejected'),
     reviewed: reviewed.length, works: count((item) => item.verdict === 'works'), hurts: count((item) => item.verdict === 'hurts'),
@@ -330,6 +331,7 @@ export function agentContext({ today = todayOf() } = {}) {
     }
   }
   const pending = db.prepare("SELECT COUNT(*) AS n FROM pet_change_proposals WHERE status='pending'").get().n;
+  const adsToExecute = db.prepare("SELECT COUNT(*) AS n FROM pet_change_proposals WHERE status='agent'").get().n;
   const sales = parseJson(db.prepare("SELECT value FROM pet_price_sync_state WHERE key='sales_coverage'").get()?.value);
   return {
     today, reportDay: day, schedule: SCHEDULE.label,
@@ -337,7 +339,7 @@ export function agentContext({ today = todayOf() } = {}) {
     recentReports: recent,
     lessons: listLessons({ status: 'active' }).map(({ id, title, body, areaLabel, changeKindLabel, style, verdictLabel, confidence, evidence, changeIds, timesUsed }) =>
       ({ id, title, body, area: areaLabel, changeKind: changeKindLabel, style, verdict: verdictLabel, confidence, evidence, changeIds, timesUsed })),
-    changesToReview: toReview, cooldownSkus: [...cooldown.values()], pendingProposals: pending,
+    changesToReview: toReview, cooldownSkus: [...cooldown.values()], pendingProposals: pending, confirmedAdChangesWaiting: adsToExecute,
     dataFreshness: { salesCoverage: sales, trafficCoverage: trafficCoverage() },
     rules: [
       `先读 lessons:和当前情况相符的经验要遵守,用到的把 id 写进 save_daily_report 的 lessonsUsed。`,
@@ -346,6 +348,7 @@ export function agentContext({ today = todayOf() } = {}) {
       'pendingProposals 很多时先别加新的,在日报里提醒店主先处理待确认。',
       '同一个结论在 2 条以上改动上得到验证才把 confidence 提到 medium,3 条以上且没有反例才 high;和已有经验矛盾时更新那条(带 id),不要新开一条。',
       '业务报告(访问量、转化率)一般晚 2 天,ABA 按周;单天波动不下结论,看 7 天。',
+      '广告改动只提议(propose_ad_changes,编号来自 Miguelpet query_ads),不要在分析时直接改;店主确认后由执行任务用 claim_confirmed_ad_changes 领取再执行。',
     ],
   };
 }

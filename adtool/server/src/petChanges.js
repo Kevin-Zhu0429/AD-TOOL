@@ -28,17 +28,18 @@ export const AD_ENTITIES = ['campaign', 'adGroup', 'keyword', 'productTarget', '
 export const AD_ACTIONS = ['pause', 'enable', 'set_bid', 'set_budget', 'add_negative'];
 export const STATUS_LABEL = {
   pending: '待确认', queued: '排队中', running: '执行中', submitted: '已提交，等亚马逊生效', applied: '已生效', not_applied: '未生效',
+  agent: '已确认，等 Claude 用 Miguelpet 执行', agent_running: 'Claude 正在用 Miguelpet 执行',
   export: '待导出批量表', exported: '已导出，待上传', failed: '失败', rejected: '已拒绝', superseded: '已被新提议替代',
 };
 const VIEWS = {
   pending: ['pending'],
-  active: ['queued', 'running', 'submitted', 'export', 'exported', 'failed'],
+  active: ['queued', 'running', 'submitted', 'agent', 'agent_running', 'export', 'exported', 'failed'],
   history: ['applied', 'not_applied', 'rejected', 'superseded'],
 };
 export const ACTION_LABEL = {
   proposed: '提议', superseded: '被新提议替代', edited: '修改提议值', approved: '确认执行', rejected: '拒绝', stale: '亚马逊上的值变了，退回待确认',
   submitted: '已提交亚马逊', applied: '已生效', verified: '核对已生效', not_applied: '核对未生效', failed: '失败', retried: '重试',
-  to_export: '转为批量表', exported: '已导出批量表', uploaded: '标记已上传', reverted: '生成撤回改动',
+  to_agent: '交给 Claude 用 Miguelpet 执行', claimed: 'Claude 开始执行', to_export: '转为批量表', exported: '已导出批量表', uploaded: '标记已上传', reverted: '生成撤回改动',
 };
 // 亚马逊的限制:标题 200 字符,后台搜索词 250 字节以内(超了整段不收录),五点最多 10 条
 export const LIMITS = { titleChars: 200, bulletChars: 500, bullets: 10, searchTermBytes: 249, batch: 40, reason: 1000 };
@@ -515,8 +516,10 @@ async function executeListing(row, target, before, after, deps) {
 async function executeAd(row, target, after, deps) {
   const { account } = petAdsConfig(deps.env);
   if (!account) {
-    update(row.id, { status: 'export', channel: 'bulk_sheet' });
-    log(row.id, row.batch_id, 'system', null, 'to_export');
+    // 交给 Claude 执行的(失败后重试)还回到等 Claude 执行,其余转批量表
+    const toAgent = row.channel === 'miguelpet';
+    update(row.id, { status: toAgent ? 'agent' : 'export', channel: toAgent ? 'miguelpet' : 'bulk_sheet' });
+    log(row.id, row.batch_id, 'system', null, toAgent ? 'to_agent' : 'to_export');
     return;
   }
   const result = await executeAdChange(account, { kind: row.kind, target, after }, deps.adsGateway);
@@ -654,19 +657,22 @@ function pick(ids, statuses) {
   return rows;
 }
 
-/** 确认执行:Listing 排队提交;广告有 API 就排队调用,没有就转成待导出批量表 */
+/**
+ * 确认执行:Listing 排队提交;广告有 API 就排队调用,没有就等 Claude 用 Miguelpet 执行(每小时一次的执行任务来领),
+ * 店主也可以在页面上把它改成批量表自己上传
+ */
 export function approveChanges(ids, userId, env = process.env) {
   const rows = pick(ids, ['pending']);
   const adsReady = !!petAdsConfig(env).account;
-  const result = { queued: 0, export: 0 };
+  const result = { queued: 0, agent: 0 };
   db.transaction(() => {
     for (const row of rows) {
-      const toExport = KINDS[row.kind]?.group === 'ad' && !adsReady;
-      update(row.id, { status: toExport ? 'export' : 'queued', channel: toExport ? 'bulk_sheet' : null, decided_by: userId,
+      const toAgent = KINDS[row.kind]?.group === 'ad' && !adsReady;
+      update(row.id, { status: toAgent ? 'agent' : 'queued', channel: toAgent ? 'miguelpet' : null, decided_by: userId,
         decided_at: nowLocal(), error: null });
       log(row.id, row.batch_id, 'user', userId, 'approved');
-      if (toExport) log(row.id, row.batch_id, 'system', null, 'to_export');
-      result[toExport ? 'export' : 'queued'] += 1;
+      if (toAgent) log(row.id, row.batch_id, 'system', null, 'to_agent');
+      result[toAgent ? 'agent' : 'queued'] += 1;
     }
   })();
   audit(userId, 'US', 'approve', 'pet_change_proposals', null, { ids: rows.map((row) => row.id) });
@@ -680,6 +686,7 @@ export function moveChanges(ids, userId, { from, to, action }) {
       const fields = { status: to };
       if (to === 'rejected') Object.assign(fields, { decided_by: userId, decided_at: nowLocal() });
       if (to === 'queued') fields.error = null;
+      if (to === 'export') fields.channel = 'bulk_sheet';
       if (to === 'applied') Object.assign(fields, { executed_at: nowLocal(),
         verified_at: nowLocal(), result_json: JSON.stringify({ manual: '在广告后台上传批量表后人工标记' }) });
       update(row.id, fields);
@@ -734,6 +741,60 @@ export function revertChange(id, userId) {
   return { id: saved.ids[0] };
 }
 
+// ---------- Claude 用 Miguelpet 执行广告改动 ----------
+
+// 领走后这么久还没回报结果,当作失败,让店主去广告后台核对(不自动重来,免得改两次)
+const AGENT_STALE_HOURS = 3;
+
+function adChangeForAgent(row) {
+  const target = parseJson(row.target_json, {});
+  return { id: row.id, kind: row.kind, change: KINDS[row.kind]?.label ?? row.kind, entity: target.entity ?? null, campaignId: target.campaignId,
+    campaignName: target.campaignName ?? null, adGroupId: target.adGroupId ?? null, adGroupName: target.adGroupName ?? null, entityId: target.entityId ?? null,
+    label: target.label ?? null, level: target.level ?? null, before: parseJson(row.before_json), after: parseJson(row.after_json), reason: row.reason,
+    confirmedAt: row.decided_at };
+}
+
+/** 执行任务领走店主已确认的广告改动(状态改成执行中),同一条不会被领两次 */
+export function claimAdChanges({ limit = 20 } = {}) {
+  return db.transaction(() => {
+    const stale = db.prepare(`SELECT * FROM pet_change_proposals WHERE status='agent_running' AND updated_at < datetime('now','localtime', ?)`)
+      .all(`-${AGENT_STALE_HOURS} hours`);
+    for (const row of stale) {
+      const error = `Claude 领走 ${AGENT_STALE_HOURS} 小时还没回报结果，不知道改没改成，请到广告后台核对后点「重试」或「放弃」`;
+      update(row.id, { status: 'failed', error });
+      log(row.id, row.batch_id, 'system', null, 'failed', { error });
+    }
+    const rows = db.prepare("SELECT * FROM pet_change_proposals WHERE status='agent' ORDER BY decided_at, id LIMIT ?").all(Math.max(1, Math.min(40, limit)));
+    for (const row of rows) {
+      update(row.id, { status: 'agent_running' });
+      log(row.id, row.batch_id, 'claude', null, 'claimed');
+    }
+    return { changes: rows.map(adChangeForAgent), staleMarkedFailed: stale.map((row) => row.id) };
+  })();
+}
+
+/** 执行任务回报一条广告改动的结果:applied 已生效 / failed 失败(带原因) / skipped 没执行(比如广告后台的值已经变了),退回待确认 */
+export function reportAdResult({ id, outcome, detail = '', current = null }) {
+  const row = db.prepare('SELECT * FROM pet_change_proposals WHERE id=?').get(Number(id));
+  if (!row) throw Object.assign(new Error(`没有第 ${id} 条改动`), { status: 404 });
+  if (row.status !== 'agent_running') throw Object.assign(new Error(`第 ${id} 条改动现在是「${STATUS_LABEL[row.status] ?? row.status}」，不是执行中，不能回报结果`), { status: 409 });
+  const now = nowLocal();
+  const result = { channel: 'miguelpet', detail: String(detail).slice(0, 1000), current };
+  if (outcome === 'applied') {
+    update(row.id, { status: 'applied', channel: 'miguelpet', executed_at: now, verified_at: now, error: null, result_json: JSON.stringify(result) });
+    log(row.id, row.batch_id, 'claude', null, 'applied', { note: result.detail, current });
+  } else if (outcome === 'skipped') {
+    const error = `没有执行：${result.detail || '广告后台的当前值和提议时不一样'}，退回待确认`;
+    update(row.id, { status: 'pending', decided_by: null, decided_at: null, error: null, result_json: JSON.stringify(result) });
+    log(row.id, row.batch_id, 'claude', null, 'stale', { error, found: current });
+  } else {
+    const error = result.detail || 'Miguelpet 执行失败';
+    update(row.id, { status: 'failed', error, result_json: JSON.stringify(result) });
+    log(row.id, row.batch_id, 'claude', null, 'failed', { error });
+  }
+  return { id: row.id, status: db.prepare('SELECT status FROM pet_change_proposals WHERE id=?').get(row.id).status };
+}
+
 // ---------- 接口 ----------
 
 export function createChangeRouter(deps = defaultDeps) {
@@ -763,7 +824,9 @@ export function createChangeRouter(deps = defaultDeps) {
     void kickQueue(deps);
     return result;
   }));
-  router.post('/drop', handle((req) => moveChanges(req.body?.ids, req.session.user.id, { from: ['failed', 'export'], to: 'rejected', action: 'rejected' })));
+  router.post('/drop', handle((req) => moveChanges(req.body?.ids, req.session.user.id, { from: ['failed', 'export', 'agent'], to: 'rejected', action: 'rejected' })));
+  // 等 Claude 执行的广告改动,店主想自己上传批量表
+  router.post('/to-sheet', handle((req) => moveChanges(req.body?.ids, req.session.user.id, { from: ['agent'], to: 'export', action: 'to_export' })));
   router.post('/exported', handle((req) => moveChanges(req.body?.ids, req.session.user.id, { from: ['export', 'exported'], to: 'exported', action: 'exported' })));
   router.post('/uploaded', handle((req) => moveChanges(req.body?.ids, req.session.user.id, { from: ['exported'], to: 'applied', action: 'uploaded' })));
   router.post('/:id/revert', handle((req) => revertChange(Number(req.params.id), req.session.user.id)));

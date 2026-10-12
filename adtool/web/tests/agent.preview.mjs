@@ -72,7 +72,7 @@ const changes = [
   [105, 'listing_price', { ...target('CM22001GRY36'), priceImpact: { profitBefore: 6.12, profitAfter: 7.92, marginAfter: 25.5, breakEven: 23.87 } }, 29.99, 31.99,
     '36 寸垫子毛利只有 20%，竞品同尺码 $30–34，试涨 $2', 'applied', '2026-09-29', '2026-09-30', '2026-10-01', '2026-10-01'],
   [106, 'ad_bid', ad({ entity: 'keyword', entityId: '401928374651', label: 'waterproof dog bed（精准）' }), { bid: 1.2 }, { bid: 0.95 },
-    'Miguelpet：近 14 天花费 $96、订单 4、ACOS 48%，高于全店 29%；降竞价到 0.95 看排名', 'exported', '2026-10-10', '2026-10-10', '2026-10-10', null],
+    'Miguelpet：近 14 天花费 $96、订单 4、ACOS 48%，高于全店 29%；降竞价到 0.95 看排名', 'agent', '2026-10-10', '2026-10-11', null, null],
   [107, 'ad_negative', ad({ level: 'adGroup' }), null, { matchType: 'phrase', text: 'carhartt' },
     'Miguelpet 搜索词报告：含 carhartt 的词 30 天花费 $41、0 订单', 'applied', '2026-10-05', '2026-10-05', '2026-10-06', '2026-10-06'],
   [108, 'listing_title', target('RR22002BKS'), 'MIGUELPET Waterproof Dog Bed Small, Oxford Pet Bed with Bolster',
@@ -96,7 +96,7 @@ const owner = db.prepare("SELECT id FROM users WHERE username='pet-owner'").get(
 for (const [id, kind, tgt, before, after, reason, status, proposed, decided, executed, verified, source = 'claude'] of changes) {
   const isAd = kind.startsWith('ad_');
   insertChange.run(id, kind, `${kind}|${id}`, JSON.stringify(tgt), JSON.stringify(before), JSON.stringify(after), reason, status,
-    isAd ? 'bulk_sheet' : 'sp_api', status === 'failed' ? '亚马逊预检没通过：标题里不能有 "!!" 这类重复标点' : null, source,
+    isAd ? 'miguelpet' : 'sp_api', status === 'failed' ? '亚马逊预检没通过：标题里不能有 "!!" 这类重复标点' : null, source,
     at(proposed, '17:20:00'), at(verified ?? executed ?? decided ?? proposed, '19:00:00'), decided ? at(decided, '01:30:00') : null,
     executed ? at(executed, '02:10:00') : null, verified ? at(verified, '05:30:00') : null, decided ? owner : null);
   insertLog.run(id, 'claude', owner, 'proposed', JSON.stringify({ after }), at(proposed, '17:20:00'));
@@ -104,9 +104,10 @@ for (const [id, kind, tgt, before, after, reason, status, proposed, decided, exe
   if (decided && status !== 'rejected') insertLog.run(id, 'user', owner, 'approved', null, at(decided, '01:30:00'));
   if (status === 'failed') insertLog.run(id, 'system', null, 'failed', JSON.stringify({ error: '亚马逊预检没通过：标题里不能有 "!!" 这类重复标点' }), at(decided, '01:31:00'));
   if (executed && !isAd) insertLog.run(id, 'system', null, 'submitted', JSON.stringify({ submissionId: `a1b2c3${id}` }), at(executed, '02:10:00'));
-  if (executed && isAd) { insertLog.run(id, 'system', null, 'to_export', null, at(executed, '02:10:00')); insertLog.run(id, 'user', owner, 'exported', null, at(executed, '02:40:00')); }
+  if (decided && isAd && status !== 'rejected') insertLog.run(id, 'system', null, 'to_agent', null, at(decided, '01:30:00'));
+  if (executed && isAd) insertLog.run(id, 'claude', owner, 'claimed', null, at(executed, '02:05:00'));
   if (verified && !isAd) insertLog.run(id, 'system', null, 'verified', null, at(verified, '05:30:00'));
-  if (verified && isAd) insertLog.run(id, 'user', owner, 'uploaded', null, at(verified, '05:30:00'));
+  if (verified && isAd) insertLog.run(id, 'claude', owner, 'applied', JSON.stringify({ note: 'Miguelpet 计划 #8812 已执行' }), at(verified, '02:06:00'));
 }
 
 // 经验库(示例)
@@ -160,7 +161,7 @@ report('2026-10-11', {
       findings: [{ level: 'low', text: '"waterproof cat bed" 曝光份额只有 0.4%，S 码新标题生效后重点看这个词' }] },
     { area: 'rank', status: 'watch', summary: '方窝牛津小类排名 7 天均值 #48 → #41；36 寸垫子 #120 → #165，和涨价时间吻合。', findings: [] },
     { area: 'ads', status: 'watch', summary: '全店 ACOS 27.5%，比前 7 天低；精准组"waterproof dog bed"仍然偏贵，词组组"outdoor dog bed"预算不够用。',
-      findings: [{ level: 'medium', text: '"waterproof dog bed" 14 天 ACOS 48%，降竞价的批量表已导出，还没上传' },
+      findings: [{ level: 'medium', text: '"waterproof dog bed" 14 天 ACOS 48%，降竞价已确认，等执行任务用 Miguelpet 改' },
         { level: 'medium', text: '"outdoor dog bed" 7 天 ACOS 18%，预算每天 18 点前用完，提议 $15 → $25' }] },
     { area: 'returns', status: 'good', summary: '近 30 天退货率 3.1%，没有异常尺码；方窝牛津 L "嫌小"从 4 件降到 1 件。', findings: [] },
     { area: 'competitors', status: 'watch', summary: '竞品 Furhaven 36 寸垫子 10/05 降到 $24.99，是我们 36 寸掉量的另一个原因。', findings: [] },
@@ -170,7 +171,7 @@ report('2026-10-11', {
     { type: 'todo', priority: 'high', text: '方窝牛津 M 黑色 9 天后断货，货件 FBA18Z3K9QWM 还在处理中，尽快发出；来不及就先补一小批空运' },
     { type: 'proposal', priority: 'medium', text: '方窝牛津 M 五点改写，第一条讲防水内胆，第四条写尺寸和体重范围', proposalIds: [109] },
     { type: 'proposal', priority: 'medium', text: '"outdoor dog bed" 词组活动预算 $15 → $25', proposalIds: [111] },
-    { type: 'todo', priority: 'medium', text: '上传 10/10 导出的批量表（"waterproof dog bed" 竞价 1.20 → 0.95）', proposalIds: [106] },
+    { type: 'watch', priority: 'medium', text: '"waterproof dog bed" 竞价 1.20 → 0.95 你已确认，下一次执行任务会用 Miguelpet 改', proposalIds: [106] },
     { type: 'watch', priority: 'low', text: '方窝牛津 S 新标题生效后，看"waterproof cat bed"曝光份额' },
   ],
   reviews: [
@@ -213,6 +214,12 @@ try {
   await page.setViewportSize({ width: 1600, height: 2400 });
   await page.screenshot({ path: `${output}/改动日志.png`, fullPage: true });
   await page.locator('.cl-list > li.open').screenshot({ path: `${output}/改动日志-展开.png` });
+  // 待确认改动「处理中」:确认过的广告改动等 Claude 用 Miguelpet 执行
+  await page.setViewportSize({ width: 1600, height: 1100 });
+  await page.locator('.topnav').getByRole('button', { name: /待确认/ }).click();
+  await page.getByRole('tab', { name: /处理中/ }).click();
+  await page.getByText('改用批量表').first().waitFor();
+  await page.locator('article.chg-item').filter({ hasText: '改用批量表' }).first().screenshot({ path: `${output}/待确认-等Claude执行.png` });
   if (errors.length) console.error('page errors', errors);
   console.log('done', output);
 } finally {

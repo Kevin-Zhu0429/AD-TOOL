@@ -157,7 +157,7 @@ test('change queue: Claude proposes, the owner confirms, the site writes to Amaz
   await t.test('confirmed listing changes are pre-checked by Amazon, then submitted', async () => {
     gateway.calls.length = 0;
     const approved = await call('/changes/approve', owner, { ids: [ids.title, ids.priceS] });
-    assert.deepEqual(approved.data, { queued: 2, export: 0 });
+    assert.deepEqual(approved.data, { queued: 2, agent: 0 });
     await changes.waitForQueue();
     assert.equal(status(ids.title), 'submitted');
     assert.equal(status(ids.priceS), 'submitted');
@@ -305,7 +305,7 @@ test('change queue: Claude proposes, the owner confirms, the site writes to Amaz
     assert.equal((await call('/changes/reject', owner, { ids: [priceAgain.created[0].id] })).data.updated, 1);
   });
 
-  await t.test('without Ads API credentials confirmed ad changes become a bulk sheet to upload', async () => {
+  await t.test('without Ads API credentials confirmed ad changes wait for Claude, or become a bulk sheet to upload', async () => {
     const result = changes.proposeAdChanges({ title: '暂停烂词', changes: [
       { action: 'pause', entity: 'keyword', campaignId: '111', adGroupId: '222', entityId: '333', label: 'cheap dog bed', current: 'enabled', reason: 'ACOS 80%' },
       { action: 'add_negative', level: 'campaign', matchType: 'phrase', campaignId: '111', negativeText: 'cat tree', reason: '不相关' },
@@ -316,8 +316,13 @@ test('change queue: Claude proposes, the owner confirms, the site writes to Amaz
     assert.match(result.rejected[0].error, /广告组编号/);
     assert.match(result.rejected[1].error, /广告组/);
     const [pause, negative] = result.created.map((item) => item.id);
-    assert.deepEqual((await call('/changes/approve', owner, { ids: [pause, negative] })).data, { queued: 0, export: 2 });
+    assert.deepEqual((await call('/changes/approve', owner, { ids: [pause, negative] })).data, { queued: 0, agent: 2 });
+    assert.equal(status(pause), 'agent');
+    assert.equal(row(pause).channel, 'miguelpet');
+    // 店主改主意自己上传批量表
+    assert.equal((await call('/changes/to-sheet', owner, { ids: [pause, negative] })).data.updated, 2);
     assert.equal(status(pause), 'export');
+    assert.equal(row(pause).channel, 'bulk_sheet');
     const active = await call('/changes?view=active', owner);
     assert.deepEqual(active.data.items.filter((item) => item.status === 'export').map((item) => item.id), [pause, negative]);
     assert.equal((await call('/changes/uploaded', owner, { ids: [pause] })).status, 409);
@@ -326,8 +331,44 @@ test('change queue: Claude proposes, the owner confirms, the site writes to Amaz
     assert.equal(status(pause), 'applied');
     const log = await call('/changes/log', owner);
     const actions = log.data.events.filter((event) => event.proposalId === pause).map((event) => event.action).reverse();
-    assert.deepEqual(actions, ['proposed', 'approved', 'to_export', 'exported', 'uploaded']);
+    assert.deepEqual(actions, ['proposed', 'approved', 'to_agent', 'to_export', 'exported', 'uploaded']);
     assert.equal(log.data.events.find((event) => event.action === 'uploaded').userName, 'owner');
+  });
+
+  await t.test('Claude claims confirmed ad changes once and reports results back', async () => {
+    const result = changes.proposeAdChanges({ title: 'Miguelpet 改竞价', changes: [
+      { action: 'set_bid', entity: 'keyword', campaignId: '511', adGroupId: '522', entityId: '533', bid: 0.95, current: 1.2, reason: 'ACOS 48%' },
+      { action: 'set_budget', campaignId: '511', budget: 25, current: 15, reason: '预算不够' },
+      { action: 'set_bid', entity: 'keyword', campaignId: '511', adGroupId: '522', entityId: '534', bid: 0.4, current: 0.6, reason: '降' },
+    ] }, { userId: ownerId });
+    const [bid, budget, other] = result.created.map((item) => item.id);
+    // 没确认的领不到
+    assert.deepEqual(changes.claimAdChanges().changes.map((item) => item.id).filter((id) => [bid, budget, other].includes(id)), []);
+    changes.approveChanges([bid, budget, other], ownerId, {});
+    const claimed = changes.claimAdChanges();
+    assert.deepEqual(claimed.changes.map((item) => item.id), [bid, budget, other]);
+    assert.equal(claimed.changes[0].entityId, '533');
+    assert.deepEqual(claimed.changes[0].after, { bid: 0.95 });
+    assert.equal(changes.claimAdChanges().changes.length, 0);
+    assert.equal(status(bid), 'agent_running');
+    assert.equal(changes.reportAdResult({ id: bid, outcome: 'applied', detail: 'plan 77', current: 0.95 }).status, 'applied');
+    assert.equal(row(bid).channel, 'miguelpet');
+    assert.ok(row(bid).executed_at);
+    assert.throws(() => changes.reportAdResult({ id: bid, outcome: 'applied' }), /不是执行中/);
+    assert.equal(changes.reportAdResult({ id: budget, outcome: 'failed', detail: '预算超上限' }).status, 'failed');
+    assert.equal(row(budget).error, '预算超上限');
+    assert.equal(changes.reportAdResult({ id: other, outcome: 'skipped', detail: '当前竞价已经是 0.45', current: 0.45 }).status, 'pending');
+    // 失败后重试:还是等 Claude 执行,不会变成批量表
+    await call('/changes/retry', owner, { ids: [budget] });
+    await changes.waitForQueue();
+    assert.equal(status(budget), 'agent');
+    // 领走后一直不回报:3 小时后标失败,让店主去核对
+    changes.claimAdChanges();
+    db.prepare("UPDATE pet_change_proposals SET updated_at=datetime('now','localtime','-4 hours') WHERE id=?").run(budget);
+    assert.deepEqual(changes.claimAdChanges().staleMarkedFailed, [budget]);
+    assert.equal(status(budget), 'failed');
+    const actions = db.prepare('SELECT action FROM pet_change_log WHERE proposal_id=? ORDER BY id').all(bid).map((item) => item.action);
+    assert.deepEqual(actions, ['proposed', 'approved', 'to_agent', 'claimed', 'applied']);
   });
 
   await t.test('with Ads API credentials confirmed ad changes are sent straight to Amazon', async () => {
@@ -337,7 +378,7 @@ test('change queue: Claude proposes, the owner confirms, the site writes to Amaz
       { action: 'set_budget', campaignId: '111', budget: 30, current: 20, reason: '加预算' },
     ] }, { userId: ownerId });
     const [bid, budget] = result.created.map((item) => item.id);
-    assert.deepEqual(changes.approveChanges([bid], ownerId, ADS_ENV), { queued: 1, export: 0 });
+    assert.deepEqual(changes.approveChanges([bid], ownerId, ADS_ENV), { queued: 1, agent: 0 });
     await changes.kickQueue({ gateway, adsGateway: ads, env: ADS_ENV });
     assert.equal(status(bid), 'applied');
     assert.equal(row(bid).channel, 'ads_api');
