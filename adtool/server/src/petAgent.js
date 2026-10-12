@@ -55,9 +55,9 @@ export function salesKpis(day) {
 
 /** 业务报告一般晚 2 天出数:取不晚于 day 的最近一天的访问量和转化率,和它前 7 天比 */
 export function trafficKpis(day) {
-  const coverage = trafficCoverage();
-  if (!coverage) return null;
-  const latest = [day, coverage.to].sort()[0];
+  // 中间某天没拉到时不能拿它当最近一天,取实际拉到过的最近一天
+  const latest = db.prepare('SELECT MAX(day) AS day FROM pet_traffic_days WHERE day<=?').get(day)?.day;
+  if (!latest) return null;
   const one = trafficTotals(db.prepare('SELECT * FROM pet_traffic_daily WHERE day=?').all(latest));
   const prior = db.prepare('SELECT * FROM pet_traffic_daily WHERE day>=? AND day<=?').all(shiftDay(latest, -7), shiftDay(latest, -1));
   const week = trafficTotals(prior);
@@ -97,6 +97,13 @@ export function saveDailyReport(input, { userId = null, source = 'claude', today
     sections: input.sections ?? [], actions: input.actions ?? [], reviews, lessonsUsed, dataGaps: input.dataGaps ?? [], proposalIds,
   };
   const save = db.transaction(() => {
+    // 同一天重跑:先撤掉上一版的复盘和经验使用次数,再写新的,重试也不会重复计数
+    const previous = parseJson(db.prepare('SELECT report_json FROM pet_agent_reports WHERE day=?').get(day)?.report_json, null);
+    const previousUsed = previous?.lessonsUsed ?? [];
+    if (previousUsed.length) {
+      db.prepare(`UPDATE pet_agent_lessons SET times_used=MAX(0, times_used-1) WHERE id IN (${previousUsed.map(() => '?').join(',')})`).run(...previousUsed);
+    }
+    db.prepare('DELETE FROM pet_change_reviews WHERE day=?').run(day);
     db.prepare(`INSERT INTO pet_agent_reports (day, status, headline, report_json, source, created_by) VALUES (?, ?, ?, ?, ?, ?)
       ON CONFLICT(day) DO UPDATE SET status=excluded.status, headline=excluded.headline, report_json=excluded.report_json,
       source=excluded.source, updated_at=datetime('now','localtime')`).run(day, input.status === 'partial' ? 'partial' : 'done', headline,

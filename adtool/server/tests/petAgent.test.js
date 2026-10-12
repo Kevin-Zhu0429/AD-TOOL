@@ -20,6 +20,16 @@ test('daily agent report, lessons, reviews and change timeline', async (t) => {
   const pending = proposal.run('listing_bullets', 'listing_bullets|dog-s', target, '["a"]', '["b"]', '五点', 'pending',
     '2026-10-11 10:00:00', null, null, null).lastInsertRowid;
 
+  await t.test('traffic KPIs skip days that were not fetched', () => {
+    const day = db.prepare("INSERT INTO pet_traffic_days (day, fetched_at) VALUES (?, '2026-10-12 01:00:00')");
+    const row = db.prepare('INSERT INTO pet_traffic_daily (day, asin, sessions, units) VALUES (?, ?, ?, ?)');
+    day.run('2026-10-08'); row.run('2026-10-08', 'B000000001', 100, 8);
+    day.run('2026-10-10'); row.run('2026-10-10', 'B000000001', 120, 9); // 10/09 没拉到
+    assert.equal(agent.trafficKpis('2026-10-09').day, '2026-10-08');
+    assert.equal(agent.trafficKpis('2026-10-09').sessions.value, 100);
+    assert.equal(agent.trafficKpis('2026-10-11').day, '2026-10-10');
+  });
+
   await t.test('context lists due reviews and cooldown', () => {
     const context = agent.agentContext({ today: '2026-10-12' });
     assert.equal(context.reportDay, '2026-10-11');
@@ -51,10 +61,15 @@ test('daily agent report, lessons, reviews and change timeline', async (t) => {
     assert.equal(report.changes[pending].statusLabel, '待确认');
     assert.equal(report.lessons[0].id, lesson.id);
     assert.equal(agent.listLessons()[0].timesUsed, 1);
-    // 同一天再写覆盖
-    agent.saveDailyReport({ headline: '重跑', reviews: [{ changeId: Number(applied), verdict: 'works', text: '再看一次' }] }, { today: '2026-10-12' });
+    // 同一天再写覆盖:重试不重复计经验使用次数,去掉的复盘也跟着删
+    agent.saveDailyReport({ headline: '重跑', reviews: [{ changeId: Number(applied), verdict: 'works', text: '再看一次' }], lessonsUsed: [lesson.id] }, { today: '2026-10-12' });
     assert.equal(db.prepare('SELECT COUNT(*) AS n FROM pet_agent_reports').get().n, 1);
     assert.equal(db.prepare('SELECT COUNT(*) AS n FROM pet_change_reviews').get().n, 1);
+    assert.equal(agent.listLessons()[0].timesUsed, 1);
+    agent.saveDailyReport({ headline: '再跑', reviews: [] }, { today: '2026-10-12' });
+    assert.equal(db.prepare('SELECT COUNT(*) AS n FROM pet_change_reviews').get().n, 0);
+    assert.equal(agent.listLessons()[0].timesUsed, 0);
+    agent.saveDailyReport({ headline: '重跑', reviews: [{ changeId: Number(applied), verdict: 'works', text: '再看一次' }], lessonsUsed: [lesson.id] }, { today: '2026-10-12' });
     assert.equal(agent.runCalendar({ days: 3, today: '2026-10-12' }).map((item) => item.status).join(), 'done,missing,missing');
 
     const timeline = agent.changeTimeline({ days: 30, today: '2026-10-12' });

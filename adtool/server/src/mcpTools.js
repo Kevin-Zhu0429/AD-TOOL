@@ -724,7 +724,7 @@ export function createPetMcpServer(deps = {}) {
     annotations: local,
   }, wrap((args) => changeImpact(args, { today: todayOf() })));
 
-  // 每日自动分析:读上下文、写日报和经验(只写网站自己的表)
+  // 每日自动分析:读上下文、写日报和经验(只写网站自己的表);同一天的日报重写是覆盖,可以安全重试
   const agentWrite = { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false };
   const finding = z.object({ level: z.enum(['high', 'medium', 'low']).default('medium').describe('high 要处理 / medium 留意 / low 参考'),
     text: z.string().trim().min(1).max(500), sku: z.string().trim().max(100).optional(), asin: z.string().trim().max(20).optional() });
@@ -782,7 +782,8 @@ export function createPetMcpServer(deps = {}) {
       changeIds: z.array(z.number().int()).max(50).optional().describe('支持这条经验的改动编号'),
       status: z.enum(['active', 'retired']).optional(), retiredReason: z.string().trim().max(300).optional(),
     },
-    annotations: agentWrite,
+    // 不填 id 是新增,重试会多一条
+    annotations: { ...agentWrite, idempotentHint: false },
   }, wrap((args, extra) => saveLesson(args, { source: sourceOf(extra), today: todayOf() })));
 
   return server;
