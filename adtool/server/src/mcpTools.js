@@ -11,10 +11,11 @@ import { abaSyncStatus } from './petAbaSync.js';
 import { withProfit, yearGrossProfit } from './petCosts.js';
 import { latestSync } from './stockEvents.js';
 import { competitorSyncStatus, listingHealth, ownStyles, recentChanges, styleDetail } from './petCompetitors.js';
-import { AD_ACTIONS, AD_ENTITIES, listChanges, proposeAdChanges, proposeListingChanges, STATUS_LABEL, targetLabel } from './petChanges.js';
+import { AD_ACTIONS, AD_ENTITIES, claimAdChanges, listChanges, reportAdResult, proposeAdChanges, proposeListingChanges, STATUS_LABEL, targetLabel } from './petChanges.js';
 import { TRAFFIC_GROUPS, trafficReport, trafficSyncStatus } from './petTraffic.js';
 import { changeImpact } from './petImpact.js';
 import { returnRecords, returnsAnalysis, returnsSyncStatus } from './petReturns.js';
+import { ACTION_TYPES, agentContext, AREAS, LESSON_VERDICTS, REVIEW_VERDICTS, saveDailyReport, saveLesson, SECTION_STATUS } from './petAgent.js';
 
 // 测试可以用 PET_TODAY 固定「今天」;正式环境始终是美国太平洋时间的今天
 const todayOf = () => (process.env.NODE_ENV === 'test' && process.env.PET_TODAY) || pacificDay(new Date());
@@ -479,7 +480,7 @@ export function proposeAds(input, { userId, source, siteUrl } = {}) {
 }
 
 const ALL_STATUSES = Object.keys(STATUS_LABEL);
-const PROPOSAL_VIEWS = { pending: ['pending'], active: ['queued', 'running', 'submitted', 'export', 'exported', 'failed'],
+const PROPOSAL_VIEWS = { pending: ['pending'], active: ['queued', 'running', 'submitted', 'agent', 'agent_running', 'export', 'exported', 'failed'],
   done: ['applied', 'not_applied'], closed: ['rejected', 'superseded'], all: ALL_STATUSES };
 
 export function changeProposals({ status = 'all', limit = 50 } = {}, { env = process.env } = {}) {
@@ -505,7 +506,9 @@ propose_listing_changes、propose_ad_changes 只把改动放进网站的「待�
 改动执行后用 get_change_impact 看前后对比(销量、访问量、转化率、搜索份额),至少等执行后 7 天再下结论。
 看退货率、退货原因和买家退货留言用 get_returns(转化正常但差评多、或某个尺码卖得好却留不住时先看它)。
 看月度目标和利润用 get_sales_stats;看竞品最近的降价、改标题、换主图用 get_competitor_overview。
-提改动前:先用 get_listing 看现在的文案;尺寸、材质、填充物等产品规格只写有依据的,拿不准就先问用户,不要编;同一款的不同尺码、颜色是不同 SKU,要分别提;改五点要给出全部条目;reason 写清依据的数据(搜索词份额、竞品对比、体检问题、毛利)。改价前看 list_skus 的保本价;正在做促销价的 SKU 改原价前台不变,要改前台价提 sale_price(促销价,带结束日期)。广告改动需要广告活动、广告组、关键词等的数字编号,只有用户给了批量表或报告时才能提。提完把 confirmUrl 告诉用户去确认。
+提改动前:先用 get_listing 看现在的文案;尺寸、材质、填充物等产品规格只写有依据的,拿不准就先问用户,不要编;同一款的不同尺码、颜色是不同 SKU,要分别提;改五点要给出全部条目;reason 写清依据的数据(搜索词份额、竞品对比、体检问题、毛利)。改价前看 list_skus 的保本价;正在做促销价的 SKU 改原价前台不变,要改前台价提 sale_price(促销价,带结束日期)。广告改动需要广告活动、广告组、关键词等的数字编号,来自用户给的批量表/报告,或 Miguelpet 连接器 query_ads 查到的编号。提完把 confirmUrl 告诉用户去确认。
+店主确认的广告改动(没有广告 API 时)由 Claude 用 Miguelpet 执行:claim_confirmed_ad_changes 领取 → 在 Miguelpet 里核对当前值 → prepare_change_plan + apply_change_plan → report_ad_change_result 回报。只执行领到的这些,一条一条照着改,不加别的。
+每日自动分析:先 get_agent_context(经验库、该复盘的改动、冷却期 SKU、前几天的结论),再查数据,最后 save_daily_report 写日报、save_lesson 记经验;日报显示在网站「AI 日报」页。
 用户是中文卖家,回答用中文;给优化建议时说明依据的数据。`;
 
 export function createPetMcpServer(deps = {}) {
@@ -721,6 +724,87 @@ export function createPetMcpServer(deps = {}) {
     },
     annotations: local,
   }, wrap((args) => changeImpact(args, { today: todayOf() })));
+
+  // 每日自动分析:读上下文、写日报和经验(只写网站自己的表);同一天的日报重写是覆盖,可以安全重试
+  const agentWrite = { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false };
+  const finding = z.object({ level: z.enum(['high', 'medium', 'low']).default('medium').describe('high 要处理 / medium 留意 / low 参考'),
+    text: z.string().trim().min(1).max(500), sku: z.string().trim().max(100).optional(), asin: z.string().trim().max(20).optional() });
+  const metric = z.object({ value: z.number().nullable(), avg7: z.number().nullable().optional(), changePct: z.number().nullable().optional() });
+
+  server.registerTool('get_agent_context', {
+    title: '每日分析的上下文',
+    description: '每日自动分析的第一步:经验库(生效中的经验和规则,要遵守)、前 3 天日报的结论和行动、执行后到了 7/14/28 天该复盘的改动、冷却期内不要再改 Listing 的 SKU、待确认改动数、数据新鲜度和分析规则。',
+    inputSchema: {},
+    annotations: local,
+  }, wrap(() => agentContext({ today: todayOf() })));
+
+  server.registerTool('save_daily_report', {
+    title: '写入每日分析',
+    description: '把一天的分析结论写进网站「AI 日报」页(同一天再写会覆盖)。全店销量、订单、销售额、访问量、转化率网站自己算,不用填;广告指标(来自 Miguelpet)填在 ads。reviews 是对执行过的改动的复盘,会显示在「改动日志」页;lessonsUsed 填这次用到的经验 id。',
+    inputSchema: {
+      day: z.string().regex(DAY).optional().describe('分析的是哪一天(太平洋时间),默认昨天'),
+      status: z.enum(['done', 'partial']).default('done').describe('partial:有数据没拿到(写进 dataGaps)'),
+      headline: z.string().trim().min(1).max(300).describe('一句话结论'),
+      ads: z.object({ spend: metric.optional(), sales: metric.optional(), orders: metric.optional(), clicks: metric.optional(), impressions: metric.optional(),
+        acos: metric.optional(), tacos: metric.optional(), source: z.string().trim().max(100).default('Miguelpet') }).optional()
+        .describe('广告指标:value 当天,avg7 前 7 天日均,changePct 变化百分比;acos、tacos 用百分数'),
+      sections: z.array(z.object({ area: z.enum(Object.keys(AREAS)).describe(Object.entries(AREAS).map(([key, label]) => `${key} ${label}`).join(' / ')),
+        status: z.enum(Object.keys(SECTION_STATUS)).describe('good 正常 / watch 留意 / bad 有问题'),
+        summary: z.string().trim().min(1).max(500), findings: z.array(finding).max(12).default([]) })).max(10).default([]),
+      actions: z.array(z.object({ priority: z.enum(['high', 'medium', 'low']).default('medium'),
+        type: z.enum(Object.keys(ACTION_TYPES)).describe('proposal 已放进待确认队列 / todo 要店主自己去做(补货、改图) / watch 继续观察'),
+        text: z.string().trim().min(1).max(500), proposalIds: z.array(z.number().int()).max(40).optional().describe('type=proposal 时填提议出来的改动编号') }))
+        .max(20).default([]),
+      reviews: z.array(z.object({ changeId: z.number().int().describe('改动编号'), verdict: z.enum(Object.keys(REVIEW_VERDICTS))
+        .describe(Object.entries(REVIEW_VERDICTS).map(([key, label]) => `${key} ${label}`).join(' / ')),
+      text: z.string().trim().min(1).max(600).describe('依据:前后对比的数和排除了哪些干扰'),
+      metrics: z.object({ unitsPerDayPct: z.number().nullable().optional(), sessionsPct: z.number().nullable().optional(),
+        conversionPoints: z.number().nullable().optional(), purchaseSharePoints: z.number().nullable().optional() }).optional(),
+      lessonId: z.number().int().optional().describe('由这条复盘得出或印证的经验 id') })).max(40).default([]),
+      lessonsUsed: z.array(z.number().int()).max(50).default([]),
+      dataGaps: z.array(z.string().trim().min(1).max(300)).max(10).default([]).describe('没拿到或不新鲜的数据'),
+    },
+    annotations: agentWrite,
+  }, wrap((args, extra) => saveDailyReport(args, { userId: userOf(extra), source: sourceOf(extra), today: todayOf() })));
+
+  server.registerTool('save_lesson', {
+    title: '记录经验',
+    description: '往经验库里加一条经验,或更新已有的一条(填 id,比如新证据让可信度变高、结论变了、要停用)。经验要具体可执行,写清适用范围(款式、改动类型)和证据(改动编号、前后数字)。',
+    inputSchema: {
+      id: z.number().int().optional().describe('更新已有经验时填'),
+      title: z.string().trim().min(1).max(120).optional().describe('一句话经验,新增必填'),
+      body: z.string().trim().min(1).max(1500).optional().describe('具体做法、适用条件、例外,新增必填'),
+      area: z.enum(Object.keys(AREAS)).optional(),
+      changeKind: z.enum(['listing_title', 'listing_bullets', 'listing_search_terms', 'listing_price', 'listing_sale_price', 'ad_state', 'ad_bid', 'ad_budget', 'ad_negative']).optional(),
+      style: z.string().trim().max(100).optional().describe('只适用于某个款式时填'),
+      verdict: z.enum(Object.keys(LESSON_VERDICTS)).optional().describe('works 有效做法 / no_effect 没用 / hurts 要避免 / rule 店主定的规则'),
+      confidence: z.enum(['low', 'medium', 'high']).optional(),
+      evidence: z.string().trim().max(1500).optional(),
+      changeIds: z.array(z.number().int()).max(50).optional().describe('支持这条经验的改动编号'),
+      status: z.enum(['active', 'retired']).optional(), retiredReason: z.string().trim().max(300).optional(),
+    },
+    // 不填 id 是新增,重试会多一条
+    annotations: { ...agentWrite, idempotentHint: false },
+  }, wrap((args, extra) => saveLesson(args, { source: sourceOf(extra), today: todayOf() })));
+
+  server.registerTool('claim_confirmed_ad_changes', {
+    title: '领取店主已确认的广告改动',
+    description: '执行任务用:领取店主在网站上确认过、等 Claude 用 Miguelpet 执行的广告改动,领到的状态变成「Claude 执行中」,不会再被领第二次。只执行这里返回的改动,严格按 after 改,不顺手改别的。执行前先在 Miguelpet 查当前值,和 before 不一样就不要改,用 report_ad_change_result 回报 skipped。每条执行完都要回报结果。',
+    inputSchema: { limit: z.number().int().min(1).max(40).default(20) },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  }, wrap((args) => claimAdChanges(args)));
+
+  server.registerTool('report_ad_change_result', {
+    title: '回报广告改动的执行结果',
+    description: '用 Miguelpet 执行完一条领到的广告改动后回报:applied 已生效(执行后在 Miguelpet 读回的新值填 current) / failed 失败(detail 写原因) / skipped 没执行(当前值和提议时不一样,改动退回待确认让店主重新看)。结果同步到网站的待确认改动和改动日志。',
+    inputSchema: {
+      id: z.number().int().min(1).describe('改动编号'),
+      outcome: z.enum(['applied', 'failed', 'skipped']),
+      detail: z.string().trim().max(1000).optional().describe('Miguelpet 的计划编号、返回信息或失败原因'),
+      current: z.union([z.number(), z.string()]).optional().describe('执行后(或没执行时)Miguelpet 里读到的当前值:竞价、预算或 enabled/paused'),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  }, wrap((args) => reportAdResult(args)));
 
   return server;
 }
