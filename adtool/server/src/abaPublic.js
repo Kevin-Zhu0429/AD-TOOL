@@ -12,6 +12,7 @@ export const publicAbaSync = createPublicSync({
 export const abaPublicRouter = express.Router();
 abaPublicRouter.use(requireLogin);
 abaPublicRouter.get('/status', (_req, res) => res.json(publicAbaSync.status()));
+abaPublicRouter.get('/attention', requireRole('owner'), (_req, res) => res.json(publicAbaSync.attention()));
 abaPublicRouter.post('/sync', requireRole('owner'), (req, res) => {
   const result = publicAbaSync.start(req.session.user.id);
   if (!result.alreadyRunning) audit(req.session.user.id, null, 'sync', 'aba_public_reports', result.jobId, { initialWeeks: 4 });

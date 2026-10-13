@@ -94,6 +94,7 @@ export const api = {
   updateAgedFeeRow: (id, correction) => request(`/aged-fees/rows/${id}`, { method: 'PATCH', body: correction }),
   abaAsin: (params, signal) => request(`${params.publicReport === '1' ? '/aba-public/asin' : '/aba/asin'}?${new URLSearchParams(Object.entries(params).filter(([, value]) => value !== undefined))}`, { signal }),
   abaPublicStatus: (signal) => request('/aba-public/status', { signal }),
+  adminAttention: (signal) => request('/aba-public/attention', { signal }),
   syncPublicAba: (signal) => request('/aba-public/sync', { method: 'POST', signal }),
   importAbaAsin: (marketplace, files) => request('/aba/asin/import', { method: 'POST', body: { marketplace, files } }),
   aba: (params, signal) => request(`/aba?${new URLSearchParams(Object.entries(params).filter(([, value]) => value !== undefined))}`, { signal }),

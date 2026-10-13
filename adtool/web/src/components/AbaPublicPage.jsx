@@ -81,8 +81,10 @@ export default function AbaPublicPage({ user }) {
     </nav>
     <p className="hint aba-public-catalog">{counts.length ? counts.map((t) => t.brand + ' ' + t.count + ' 个 ASIN').join(' · ') : '正在读取国家与品牌清单…'}</p>
     <section className="aba-public-sync" aria-label="公共报告同步进度">
-      <div className="aba-public-sync-head"><h2>{job ? STATES[job.state] : status ? '尚未同步公共报告' : '正在读取同步状态…'}</h2><span className="hint">每周二 12:00（北京时间）自动同步 · 下次 {time(status?.nextDue)}</span></div>
+      <div className="aba-public-sync-head"><h2>{job ? job.trigger_kind === 'retry' && job.state === 'running' ? '自动补拉进行中' : STATES[job.state] : status ? '尚未同步公共报告' : '正在读取同步状态…'}</h2><span className="hint">每周二 12:00（北京时间）自动同步 · 下次 {time(status?.nextDue)}</span></div>
       <p className="hint">首次拉取前四个完整周，此后拉取上一完整周；失败或遗漏的历史报告会补拉。亚马逊报告按周日到周六统计。</p>
+      <p className="hint">周二定时拉取失败的报告将在周三 12:00（北京时间）自动补拉一次，仍失败则列入超级管理员待处理事项；手动同步失败后在启动时间的 24 小时后补拉。</p>
+      {status?.retry?.state === 'pending' && <p className="note warn" role="status">已安排自动补拉：{time(status.retry.dueAt)}（北京时间），仅重试尚未同步成功的报告。</p>}
       {summary?.total > 0 && <><p role="status">已处理 {summary.completed + summary.failed} / {summary.total} 批 · 已保存 {summary.asinCompleted} / {summary.asinTotal} 份 ASIN 周报 · {summary.rows.toLocaleString('zh-CN')} 条搜索词记录 · 失败 {summary.failed} 批</p>
         <progress aria-label="报告批次处理进度" max={summary.total} value={summary.completed + summary.failed} />
         <p className="hint">开始 {time(job.created_at)} · 最近进展 {time(job.updated_at)} · 同步期间可继续筛选和导出已保存的数据。等待生成和限流排队时间由亚马逊决定。</p></>}

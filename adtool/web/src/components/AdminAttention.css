@@ -1,0 +1,23 @@
+.admin-attention {
+  margin: 16px 28px 0;
+  padding: 14px 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+.admin-attention.needs-action { border-color: var(--amber); border-left-width: 4px; background: linear-gradient(var(--amber-soft), var(--amber-soft)), var(--panel); }
+.admin-attention-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.admin-attention h2 { font-size: 15px; margin: 0 0 6px; }
+.admin-attention h2 span { color: var(--text-dim); font-weight: 500; }
+.admin-attention .hint { margin: 6px 0 0; color: var(--text-dim); }
+.admin-attention .btn:not(.primary) { color: var(--text); }
+.admin-attention-buttons { display: flex; flex-wrap: wrap; gap: 8px; flex-shrink: 0; }
+.admin-attention-list { list-style: none; padding: 0; margin: 12px 0; }
+.admin-attention-list li { display: grid; grid-template-columns: minmax(130px, .7fr) minmax(230px, 1fr) minmax(0, 2fr); gap: 8px 16px; border-top: 1px solid var(--border); padding: 10px 0; font-size: 12px; }
+.admin-attention-reason { overflow-wrap: anywhere; color: var(--amber-text); }
+@media (max-width: 780px) {
+  .admin-attention { margin: 12px 12px 0; padding: 12px; }
+  .admin-attention-heading { align-items: stretch; flex-direction: column; }
+  .admin-attention-list li { grid-template-columns: minmax(0, 1fr); }
+  .admin-attention-buttons .btn { flex: 1; }
+}

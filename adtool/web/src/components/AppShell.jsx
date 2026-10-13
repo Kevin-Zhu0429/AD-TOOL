@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
 import Icon from './Icon.jsx';
+import AdminAttention from './AdminAttention.jsx';
 import './AppShell.css';
 
 const ROLE = {
@@ -140,7 +141,10 @@ export default function AppShell({
         </div>
       </header>
 
-      <main className="shell-main">{children}</main>
+      <main className="shell-main">
+        {user.role === 'owner' && <AdminAttention key={user.id} refreshKey={page} onOpen={() => onNav('abaPublic')} />}
+        {children}
+      </main>
     </div>
   );
 }

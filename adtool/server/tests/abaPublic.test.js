@@ -17,6 +17,124 @@ function memoryDb() {
   return db;
 }
 
+function delayedSync(db, { manual = false } = {}) {
+  let clock = Date.parse(manual ? '2026-10-05T06:30:00Z' : '2026-10-06T04:00:00Z');
+  let unavailable = true, serial = 0;
+  const created = new Map();
+  const latestWeek = reportWeeks(clock, 1)[0].week_end;
+  const options = { db, now: () => clock, createInterval: 0, pollInterval: 0,
+    targets: ['CE', 'CC'].map((brand, i) => ({ marketplace: 'ES', brand, asins: ['B' + String(305 + i).padStart(9, '0')] })),
+    accounts: () => ['CE', 'CC'].map((brand) => ({ brand, sellerId: brand, region: 'eu', markets: ['ES'] })),
+    save: (payload) => savePublicReports(db, payload),
+    request: async (account, _region, path, request) => {
+      if (request.method === 'POST') {
+        const reportId = 'delayed-' + (++serial);
+        created.set(reportId, { brand: account.brand, ...request.body });
+        return { reportId };
+      }
+      const reportId = path.split('/').at(-1);
+      if (path.includes('/documents/')) return { url: 'https://example.invalid/' + reportId };
+      const body = created.get(reportId);
+      return unavailable && body.brand === 'CC' && body.dataEndTime.slice(0, 10) === latestWeek
+        ? { processingStatus: 'FATAL' } : { processingStatus: 'DONE', reportDocumentId: reportId };
+    },
+    download: async (document) => {
+      const body = created.get(document.url.split('/').at(-1));
+      const task = { ...publicTask, week_start: body.dataStartTime.slice(0, 10), week_end: body.dataEndTime.slice(0, 10), asins_json: JSON.stringify(body.reportOptions.asin.split(' ')) };
+      return publicFixture(task);
+    },
+  };
+  return { options, now: () => clock, setTime: (value) => { clock = Date.parse(value); },
+    available: () => { unavailable = false; }, creates: () => serial,
+    drain: async (sync) => { for (let i = 0; i < 40; i++) { await sync.tick(); if (sync.status().job?.state !== 'running') return; } throw new Error('queue did not finish'); } };
+}
+
+test('Tuesday failures retry only failed reports Wednesday at Beijing noon, persist and resolve without notices', async () => {
+  const db = memoryDb();
+  const fixture = delayedSync(db);
+  try {
+    db.prepare('INSERT INTO aba_public_schedule(id,next_due) VALUES(1,?)').run(fixture.now());
+    let sync = createPublicSync(fixture.options);
+    await fixture.drain(sync);
+    assert.equal(sync.status().job.trigger_kind, 'scheduled');
+    assert.equal(sync.status().summary.failed, 1);
+    assert.equal(sync.status().retry.dueAt, Date.parse('2026-10-07T04:00:00Z'));
+    assert.equal(sync.attention().total, 0);
+    const oldCount = db.prepare('SELECT COUNT(*) n FROM aba_public_reports').get().n;
+    assert.equal(oldCount, 7);
+    fixture.setTime('2026-10-07T03:59:59Z');
+    await sync.tick();
+    assert.equal(fixture.creates(), 8);
+    fixture.available();
+    fixture.setTime('2026-10-07T04:00:00Z');
+    sync = createPublicSync(fixture.options); // persisted due survives restart
+    await sync.tick();
+    assert.equal(sync.status().job.trigger_kind, 'retry');
+    assert.equal(sync.status().summary.total, 1);
+    assert.equal(sync.status().tasks[0].brand, 'CC');
+    assert.equal(sync.status().tasks[0].week_end, '2026-10-03');
+    assert.equal(fixture.creates(), 9); // fresh report, not polling the old FATAL report
+    await createPublicSync(fixture.options).tick();
+    await fixture.drain(sync);
+    assert.equal(sync.status().job.state, 'done');
+    assert.equal(sync.status().retry.state, 'done');
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM aba_public_jobs').get().n, 2);
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM aba_public_reports').get().n, 8);
+    assert.equal(sync.attention().total, 0);
+  } finally { db.close(); }
+});
+
+test('second failure creates durable admin actions; reading and later jobs cannot hide them, actual success clears them', async () => {
+  const db = memoryDb();
+  const fixture = delayedSync(db);
+  try {
+    db.prepare('INSERT INTO aba_public_schedule(id,next_due) VALUES(1,?)').run(fixture.now());
+    let sync = createPublicSync(fixture.options);
+    await fixture.drain(sync);
+    fixture.setTime('2026-10-07T04:00:00Z');
+    await fixture.drain(sync);
+    assert.equal(sync.status().job.state, 'failed');
+    assert.equal(sync.attention().total, 1);
+    assert.equal(sync.attention().asinTotal, 1);
+    assert.equal(sync.attention().items[0].brand, 'CC');
+    assert.match(sync.attention().items[0].error, /报告生成失败/);
+    sync = createPublicSync(fixture.options);
+    assert.equal(sync.attention().total, 1);
+    fixture.setTime('2026-10-08T04:00:00Z');
+    await sync.tick();
+    assert.equal(fixture.creates(), 9); // automatic retry happens once only
+    sync.start();
+    assert.equal(sync.attention().total, 1); // new/latest job does not dismiss old failures
+    fixture.available();
+    await fixture.drain(sync);
+    assert.equal(sync.attention().total, 0);
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM aba_public_actions').get().n, 0);
+  } finally { db.close(); }
+});
+
+test('manual failures retry at start plus 24 hours and skip reports already recovered manually', async () => {
+  for (const recoverManually of [false, true]) {
+    const db = memoryDb();
+    const fixture = delayedSync(db, { manual: true });
+    try {
+      const sync = createPublicSync(fixture.options);
+      sync.start();
+      await fixture.drain(sync);
+      assert.equal(sync.status().retry.dueAt, Date.parse('2026-10-06T06:30:00Z'));
+      fixture.available();
+      if (recoverManually) { sync.start(); await fixture.drain(sync); }
+      const count = fixture.creates();
+      // Move the unrelated weekly schedule away so only the manual retry is measured.
+      db.prepare('UPDATE aba_public_schedule SET next_due=?').run(Date.parse('2026-10-13T04:00:00Z'));
+      fixture.setTime('2026-10-06T06:29:59Z'); await sync.tick();
+      assert.equal(fixture.creates(), count);
+      fixture.setTime('2026-10-06T06:30:00Z'); await fixture.drain(sync);
+      assert.equal(fixture.creates(), count + (recoverManually ? 0 : 1));
+      assert.equal(db.prepare('SELECT state FROM aba_public_retries WHERE source_job_id=1').get().state, recoverManually ? 'cancelled' : 'done');
+    } finally { db.close(); }
+  }
+});
+
 test('Beijing schedule and complete Amazon weeks work across local timezone and year boundaries', () => {
   assert.deepEqual(reportWeeks(Date.parse('2026-10-06T04:00:00Z')), [
     { week_start: '2026-09-27', week_end: '2026-10-03' },
@@ -161,6 +279,9 @@ test('public API authorization, shared all-account SKU filters, private isolatio
   }
   const get = async (query = '', cookie = operator) => (await call('/aba-public/asin?marketplace=ES' + query, cookie)).data;
   assert.equal((await call('/aba-public/status')).status, 401);
+  assert.equal((await call('/aba-public/attention')).status, 401);
+  assert.equal((await call('/aba-public/attention', operator)).status, 403);
+  assert.equal((await call('/aba-public/attention', owner)).data.total, 0);
   assert.equal((await call('/aba-public/sync', operator, {})).status, 403);
   assert.equal((await call('/aba-public/asin?marketplace=DE', operator)).status, 200);
   assert.equal((await call('/aba/asin?marketplace=DE', operator)).status, 403);
@@ -188,6 +309,7 @@ test('public API authorization, shared all-account SKU filters, private isolatio
   assert.equal((await call('/aba-public/sync', owner, {})).data.jobId, started.data.jobId);
   server.db.prepare("UPDATE users SET role='operator',marketplace='DE' WHERE username='aba-other'").run();
   assert.equal((await call('/aba-public/sync', owner, {})).status, 403); // latest DB role, not stale session
+  assert.equal((await call('/aba-public/attention', owner)).status, 403);
   assert.equal(server.db.prepare('SELECT COUNT(*) n FROM aba_public_reports').get().n, 4);
 });
 

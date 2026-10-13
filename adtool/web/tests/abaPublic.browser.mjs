@@ -49,6 +49,8 @@ try {
   const idle = () => view.locator('.aba-results[aria-busy="false"]').waitFor();
   assert.equal(await view.locator('input[type="file"]').count(), 0);
   assert.equal(await page.getByRole('button', { name: '手动同步', exact: true }).count(), 0);
+  assert.equal(await page.getByLabel('超级管理员待处理事项', { exact: true }).count(), 0);
+  assert.equal((await page.request.get(base + '/api/aba-public/attention')).status(), 403);
   assert.equal(await page.getByLabel('切换站点', { exact: true }).count(), 0);
   assert.equal(await page.locator('.aba-public-country').count(), 7);
   assert.match(await view.getByLabel('关联 SKU', { exact: true }).innerText(), /OWNER-305-BK/);
@@ -112,11 +114,48 @@ try {
   await idle();
   const ownerPage = await (await browser.newContext()).newPage();
   ownerPage.on('pageerror', (error) => errors.push(error.message));
+  const putAction = backend.db.prepare('INSERT INTO aba_public_actions(marketplace,brand,week_start,week_end,asin,error,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)');
+  for (const [market, brand] of [['ES', 'CE'], ['ES', 'CC'], ['DE', 'CE'], ['DE', 'CC']]) {
+    for (const asin of ['B000000305', 'B000000306']) putAction.run(market, brand, publicTask.week_start, publicTask.week_end, asin, '模拟报告尚未发布，自动补拉后仍失败，请核对后同步', Date.now(), Date.now());
+  }
   await login(ownerPage, 'aba-other');
+  const attention = ownerPage.getByLabel('超级管理员待处理事项', { exact: true });
+  await attention.getByRole('heading', { name: '待处理事项 · 4 项' }).waitFor();
+  assert.equal(await attention.locator('li').count(), 3);
+  assert.match(await attention.innerText(), /8 份 ASIN 周报/);
+  await ownerPage.locator('.topnav').getByRole('button', { name: '首页', exact: true }).click();
+  await attention.getByRole('heading', { name: '待处理事项 · 4 项' }).waitFor();
+  await ownerPage.reload();
+  await attention.getByRole('heading', { name: '待处理事项 · 4 项' }).waitFor();
+  await attention.getByRole('button', { name: '查看全部 4 项待处理事项' }).focus();
+  await ownerPage.keyboard.press('Space');
+  assert.equal(await attention.locator('li').count(), 4);
+  await attention.getByLabel('分类明细每页记录数').selectOption('50');
+  assert.equal(await attention.getByLabel('分类明细每页记录数').inputValue(), '50');
+  await ownerPage.screenshot({ path: output + 'aba-admin-attention.png', fullPage: true });
+  await ownerPage.getByRole('button', { name: '切换主题', exact: true }).click();
+  await ownerPage.setViewportSize({ width: 390, height: 844 });
+  await ownerPage.waitForFunction(() => {
+    const button = [...document.querySelectorAll('.admin-attention button')].find((el) => el.textContent === '刷新待处理事项');
+    const hex = getComputedStyle(document.documentElement).getPropertyValue('--text').trim();
+    const expected = `rgb(${[1, 3, 5].map((at) => parseInt(hex.slice(at, at + 2), 16)).join(', ')})`;
+    return document.documentElement.dataset.theme === 'dark' && getComputedStyle(button).color === expected;
+  });
+  assert.equal(await ownerPage.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  await ownerPage.screenshot({ path: output + 'aba-admin-attention-narrow-dark.png', fullPage: true });
+  await ownerPage.route('**/api/aba-public/attention?*', (route) => route.fulfill({ status: 503, contentType: 'application/json', body: '{"error":"模拟待处理读取失败"}' }));
+  await attention.getByRole('button', { name: '刷新待处理事项' }).click();
+  await attention.getByRole('alert').filter({ hasText: '模拟待处理读取失败' }).waitFor();
+  assert.equal(await attention.locator('li').count(), 4); // keep previous readable list, labelled stale
+  await ownerPage.unroute('**/api/aba-public/attention?*');
+  await attention.getByRole('button', { name: '刷新待处理事项' }).click();
+  await attention.getByRole('alert').waitFor({ state: 'hidden' });
+  await attention.getByRole('button', { name: '前往公共 ABA 处理' }).click();
+  await ownerPage.getByRole('heading', { name: 'ABA报告（公共）', exact: true }).waitFor();
   await ownerPage.getByRole('button', { name: '手动同步', exact: true }).click();
   await ownerPage.getByRole('heading', { name: '同步进行中', exact: true }).waitFor();
   assert.ok(await ownerPage.getByLabel('报告批次处理进度').count());
-  await ownerPage.getByRole('button', { name: '下一页', exact: true }).first().click();
+  await ownerPage.locator('.aba-public-task-details').getByRole('button', { name: '下一页', exact: true }).click();
   await ownerPage.reload();
   await ownerPage.locator('.topnav').getByRole('button', { name: 'ABA报告（公共）', exact: true }).click();
   await ownerPage.getByRole('heading', { name: '同步进行中', exact: true }).waitFor();
@@ -125,10 +164,18 @@ try {
   const job = backend.db.prepare('SELECT id FROM aba_public_jobs ORDER BY id DESC LIMIT 1').get();
   backend.db.prepare("UPDATE aba_public_jobs SET state='partial',error='1 批失败，已保存数据可继续查看' WHERE id=?").run(job.id);
   backend.db.prepare("UPDATE aba_public_tasks SET stage='failed',error='模拟亚马逊权限不足' WHERE id=(SELECT MIN(id) FROM aba_public_tasks WHERE job_id=?)").run(job.id);
+  backend.db.prepare('INSERT INTO aba_public_retries(source_job_id,due_at) VALUES(?,?)').run(job.id, Date.parse('2026-10-14T04:00:00Z'));
   await ownerPage.getByRole('button', { name: '刷新进度' }).click();
   await ownerPage.getByRole('heading', { name: '部分报告失败', exact: true }).waitFor();
   await ownerPage.getByRole('button', { name: '重试同步', exact: true }).waitFor();
   assert.match(await ownerPage.locator('.aba-public-sync').innerText(), /已保存数据可继续查看/);
+  assert.match(await ownerPage.locator('.aba-public-sync').innerText(), /已安排自动补拉：2026\/10\/14 12:00:00/);
+  // Server-confirmed recovery removes notices; reading them did not clear any rows.
+  assert.equal(backend.db.prepare('SELECT COUNT(*) n FROM aba_public_actions').get().n, 8);
+  backend.db.prepare('DELETE FROM aba_public_actions').run();
+  await attention.getByRole('button', { name: '刷新待处理事项' }).click();
+  await attention.getByRole('heading', { name: '待处理事项 · 暂无待处理事项' }).waitFor();
+  assert.equal(await attention.locator('li').count(), 0);
   assert.deepEqual(errors, []);
   console.log('Public ABA browser passed: all-country access, shared SKU/model filters, public nested details and XLSX export, role restriction, persisted progress, errors/retry, keyboard, light/dark and narrow layout.');
 } finally {

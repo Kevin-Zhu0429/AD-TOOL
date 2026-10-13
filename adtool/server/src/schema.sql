@@ -430,6 +430,20 @@ CREATE TABLE IF NOT EXISTS aba_public_tasks (
 CREATE INDEX IF NOT EXISTS idx_aba_public_tasks_due ON aba_public_tasks(job_id, next_at);
 CREATE TABLE IF NOT EXISTS aba_public_lanes (lane TEXT PRIMARY KEY, next_create INTEGER NOT NULL DEFAULT 0);
 
+-- 首次失败后的次日补拉独立持久化，只产生一次自动补拉任务。
+CREATE TABLE IF NOT EXISTS aba_public_retries (
+  source_job_id INTEGER PRIMARY KEY REFERENCES aba_public_jobs(id),
+  due_at INTEGER NOT NULL, state TEXT NOT NULL DEFAULT 'pending',
+  retry_job_id INTEGER UNIQUE REFERENCES aba_public_jobs(id)
+);
+CREATE INDEX IF NOT EXISTS idx_aba_public_retry_due ON aba_public_retries(state, due_at);
+-- 补拉后仍失败的 ASIN/周需要超级管理员处理；只有实际保存成功才清除。
+CREATE TABLE IF NOT EXISTS aba_public_actions (
+  marketplace TEXT NOT NULL, brand TEXT NOT NULL, week_start TEXT NOT NULL, week_end TEXT NOT NULL,
+  asin TEXT NOT NULL, error TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+  PRIMARY KEY(marketplace, brand, week_end, asin)
+);
+
 -- 公共视图按国家关联全部账号的 SKU，不经过 user_id 前缀索引。
 CREATE INDEX IF NOT EXISTS idx_sku_country_asin ON sku_items(country, asin);
 
