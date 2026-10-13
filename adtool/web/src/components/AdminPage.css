@@ -19,13 +19,21 @@
   background: linear-gradient(105deg, var(--accent-soft), var(--panel) 58%);
 }
 .audit-overview h2, .audit-log-head h2 { font-size: 15px; margin-bottom: 3px; }
-.audit-totals { display: flex; gap: 8px; margin-left: auto; }
+.audit-totals { display: grid; grid-template-columns: repeat(4, minmax(112px, 1fr)); gap: 8px; margin-left: auto; flex-shrink: 0; }
 .audit-totals > div {
   min-width: 94px; padding: 8px 12px;
   border-left: 2px solid var(--accent); background: var(--bg-2);
 }
 .audit-totals b { display: block; font: 600 20px/1.1 var(--mono); }
 .audit-totals span { color: var(--text-faint); font-size: 10.5px; }
+.audit-rate { display: inline-flex; flex-direction: column; color: var(--text); font: 600 14px/1.7 var(--mono); }
+.audit-rate-fraction { color: var(--text-dim); font: 400 10.5px/1.5 var(--mono); }
+.audit-totals .audit-rate { color: var(--text); font-size: 20px; line-height: 1.1; }
+.audit-total-rate > .audit-rate { display: flex; }
+.audit-total-rate > span:last-child { display: block; margin-top: 4px; }
+.audit-totals .audit-rate-fraction { margin-top: 4px; color: var(--text-dim); font-size: 10.5px; }
+.audit-rate-formula { max-width: 490px; margin-top: 6px; }
+.audit-overview .hint { color: var(--text-dim); }
 .audit-stats-card, .audit-log-card { padding: 0; overflow: hidden; }
 .audit-stats-scroll { max-height: 310px; border: 0; border-radius: 0; }
 .audit-log-scroll { max-height: 54vh; border-width: 1px 0 0; border-radius: 0; }
@@ -99,6 +107,7 @@
   .admin-new { position: static; }
   .audit-overview, .audit-log-head { align-items: stretch; flex-direction: column; }
   .audit-totals, .audit-filters { margin-left: 0; }
+  .audit-totals { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .audit-filters { justify-content: flex-start; }
   .audit-sum-totals > div { flex: 1; min-width: 60px; }
   .audit-sum-span { flex-basis: 100%; margin-left: 0; }

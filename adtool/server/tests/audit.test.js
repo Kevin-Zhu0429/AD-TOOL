@@ -35,7 +35,16 @@ test('only owner can read per-account 7/30-day audit statistics', async (t) => {
     module: 'builder', action: 'open', marketplace: 'DE', detail: {},
   })).status, 403);
 
+  assert.equal((await call('/auth/audit/events', operator, 'POST', {
+    module: 'builder', action: 'open', marketplace: 'ES', detail: {},
+  })).status, 200);
+
   const operatorId = server.db.prepare("SELECT id FROM users WHERE username = 'aba-test'").get().id;
+  const insertMetric = server.db.prepare(`INSERT INTO audit_log(user_id,action,entity,created_at)
+    VALUES(?,?,?,datetime('now','localtime',?))`);
+  insertMetric.run(operatorId, 'logout', 'user', '-1 days');
+  insertMetric.run(operatorId, 'authorize', 'mcp_client', '-1 days'); // other actions affect only the denominator
+  insertMetric.run(operatorId, 'open', 'module_builder', '-32 days'); // old browsing cannot affect either window
   server.db.prepare(
     `INSERT INTO audit_log (user_id, marketplace, action, entity, created_at)
      VALUES (?, 'ES', 'update', 'lib_items', datetime('now', 'localtime', '-10 days'))`
@@ -50,6 +59,17 @@ test('only owner can read per-account 7/30-day audit statistics', async (t) => {
   const operatorStats = result.data.stats.find((row) => row.username === 'aba-test');
   assert.ok(operatorStats.seven_day >= 2, 'login and export are both included in 7-day count');
   assert.equal(operatorStats.thirty_day, operatorStats.seven_day + 1);
+  assert.equal(operatorStats.seven_day, 5);
+  assert.equal(operatorStats.thirty_day, 6);
+  assert.equal(operatorStats.seven_day_non_business, 3);
+  assert.equal(operatorStats.thirty_day_non_business, 3);
+  const emptyStats = result.data.stats.find((row) => row.username === 'aba-de');
+  assert.equal(emptyStats.seven_day_non_business, 0);
+  assert.equal(emptyStats.thirty_day_non_business, 0);
+  assert.equal(emptyStats.thirty_day, 0);
+  assert.deepEqual(result.data.totals, { sevenDay: 6, thirtyDay: 7, sevenDayNonBusiness: 4, thirtyDayNonBusiness: 4 });
+  // Overall rates use the sum of counts, not the average of individual account percentages.
+  assert.notEqual(result.data.totals.sevenDayNonBusiness / result.data.totals.sevenDay, (3 / 5 + 1) / 2);
   assert.ok(result.data.logs.some((row) => row.entity === 'module_builder' && row.action === 'export'));
 
   // 明细按 id 倒序分页,账号和时间在服务端筛

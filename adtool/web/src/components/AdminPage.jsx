@@ -36,6 +36,21 @@ const AUDIT_PERIODS = [
   { id: 'all', label: '全部明细' }, { id: 'custom', label: '自定义' },
 ];
 
+const AUDIT_RATE_FORMAT = new Intl.NumberFormat('zh-CN', {
+  style: 'percent', minimumFractionDigits: 1, maximumFractionDigits: 1,
+});
+const AUDIT_RATE_FORMULA = '摸鱼率＝（登录＋打开板块＋退出登录次数）÷ 同期总操作次数；仅表示这三类操作的次数占比。';
+
+function AuditRate({ count, total }) {
+  const known = Number.isInteger(count) && Number.isInteger(total);
+  const value = known && total > 0 ? AUDIT_RATE_FORMAT.format(count / total) : '—';
+  const explanation = !known ? '统计尚未加载' : total === 0 ? '同期暂无操作，不计算摸鱼率' : `${count} ÷ ${total}，登录、打开板块和退出登录次数占比`;
+  return <span className="audit-rate" title={explanation}>
+    <strong>{value}</strong>
+    {known && <small className="audit-rate-fraction" aria-label={`三类操作 ${count} 次，总操作 ${total} 次`}>{count} / {total}</small>}
+  </span>;
+}
+
 /** 本地日期 YYYY-MM-DD(日志时间是服务器本地时间,自定义范围按天算) */
 function localDate(offsetDays = 0) {
   const d = new Date();
@@ -614,28 +629,33 @@ export default function AdminPage({ user, markets }) {
             <div>
               <h2 id="audit-heading">账号操作统计</h2>
               <p className="hint">仅超级管理员可见。统计登录、数据维护、同步，以及本机生成和导出。</p>
+              <p className="hint audit-rate-formula">{AUDIT_RATE_FORMULA}</p>
             </div>
-            <div className="audit-totals" aria-label="操作总数">
+            <div className="audit-totals" aria-label="操作统计汇总">
               <div><b>{auditTotals.sevenDay}</b><span>近 7 天</span></div>
+              <div className="audit-total-rate"><AuditRate count={auditTotals.sevenDayNonBusiness} total={auditTotals.sevenDay} /><span>近 7 天摸鱼率</span></div>
               <div><b>{auditTotals.thirtyDay}</b><span>近 30 天</span></div>
+              <div className="audit-total-rate"><AuditRate count={auditTotals.thirtyDayNonBusiness} total={auditTotals.thirtyDay} /><span>近 30 天摸鱼率</span></div>
             </div>
           </section>
 
           <div className="card audit-stats-card">
             <div className="scroll audit-stats-scroll">
               <table className="tbl audit-stats-table">
-                <thead><tr><th>账号</th><th>角色</th><th>近 7 天</th><th>近 30 天</th><th>最近操作</th></tr></thead>
+                <thead><tr><th>账号</th><th>角色</th><th>近 7 天</th><th title={AUDIT_RATE_FORMULA}>近 7 天摸鱼率</th><th>近 30 天</th><th title={AUDIT_RATE_FORMULA}>近 30 天摸鱼率</th><th>最近操作</th></tr></thead>
                 <tbody>
                   {auditStats.map((item) => (
                     <tr key={item.id}>
                       <td><b>{item.display_name}</b><small className="audit-username mono">{item.username}</small></td>
                       <td><span className={`tag ${item.is_active ? 'gray' : 'red'}`}>{item.is_active ? ROLE_LABELS[item.role] : '已停用'}</span></td>
                       <td><strong className="audit-count seven">{item.seven_day}</strong></td>
+                      <td><AuditRate count={item.seven_day_non_business} total={item.seven_day} /></td>
                       <td><strong className="audit-count thirty">{item.thirty_day}</strong></td>
+                      <td><AuditRate count={item.thirty_day_non_business} total={item.thirty_day} /></td>
                       <td className="audit-time">{item.last_action_at ?? '暂无操作'}</td>
                     </tr>
                   ))}
-                  {!auditStats.length && <tr><td colSpan={5} className="empty">还没有账号统计</td></tr>}
+                  {!auditStats.length && <tr><td colSpan={7} className="empty">还没有账号统计</td></tr>}
                 </tbody>
               </table>
             </div>

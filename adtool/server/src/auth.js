@@ -536,11 +536,15 @@ authRouter.post('/audit/events', requireLogin, (req, res) => {
 });
 
 /** 操作统计和明细只允许超级管理员读取。 */
+const NON_BUSINESS_AUDIT_ACTIONS = ['login', 'open', 'logout'];
 authRouter.get('/audit', requireRole('owner'), (req, res) => {
   const stats = db.prepare(
     `SELECT u.id, u.username, u.display_name, u.role, u.is_active,
             SUM(CASE WHEN a.created_at >= datetime('now', 'localtime', '-7 days') THEN 1 ELSE 0 END) AS seven_day,
             COUNT(a.id) AS thirty_day,
+            SUM(CASE WHEN a.created_at >= datetime('now', 'localtime', '-7 days')
+              AND a.action IN (?, ?, ?) THEN 1 ELSE 0 END) AS seven_day_non_business,
+            SUM(CASE WHEN a.action IN (?, ?, ?) THEN 1 ELSE 0 END) AS thirty_day_non_business,
             (SELECT MAX(created_at) FROM audit_log WHERE user_id = u.id) AS last_action_at
        FROM users u
        -- 只 join 最近 30 天,走 idx_audit_user_time 做范围扫描,不再扫每个人的全部历史
@@ -548,11 +552,13 @@ authRouter.get('/audit', requireRole('owner'), (req, res) => {
                             AND a.created_at >= datetime('now', 'localtime', '-30 days')
       GROUP BY u.id
       ORDER BY seven_day DESC, thirty_day DESC, u.id`
-  ).all();
+  ).all(...NON_BUSINESS_AUDIT_ACTIONS, ...NON_BUSINESS_AUDIT_ACTIONS);
   const totals = stats.reduce((sum, row) => ({
     sevenDay: sum.sevenDay + Number(row.seven_day || 0),
     thirtyDay: sum.thirtyDay + Number(row.thirty_day || 0),
-  }), { sevenDay: 0, thirtyDay: 0 });
+    sevenDayNonBusiness: sum.sevenDayNonBusiness + Number(row.seven_day_non_business || 0),
+    thirtyDayNonBusiness: sum.thirtyDayNonBusiness + Number(row.thirty_day_non_business || 0),
+  }), { sevenDay: 0, thirtyDay: 0, sevenDayNonBusiness: 0, thirtyDayNonBusiness: 0 });
   res.json({ stats, totals, ...auditLogPage(req.query) });
 });
 
