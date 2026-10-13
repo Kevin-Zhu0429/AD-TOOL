@@ -1,4 +1,4 @@
-.home { max-width: 980px; margin: 0 auto; padding: 46px 20px 44px; }
+.home { max-width: 1120px; margin: 0 auto; padding: 36px 20px 44px; }
 
 .home-head { margin-bottom: 24px; }
 .home-head h1 { font-size: 26px; margin-bottom: 6px; letter-spacing: -.025em; }
@@ -136,6 +136,87 @@
 
 @media (max-width: 560px) {
   .home.has-sky .home-hero { min-height: 150px; padding: 20px 18px 18px; }
+}
+
+/* ---------- 首页圆形功能轮播 ---------- */
+.home-showcase { margin-top: 24px; }
+.home-showcase-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.home-showcase-head h2 { font-size: 18px; font-weight: 600; letter-spacing: -.025em; margin: 0 0 8px; }
+.home-showcase-head p { margin: 0; max-width: 660px; font-size: 12px; line-height: 1.7; color: var(--text-dim); }
+.home-carousel-play { flex-shrink: 0; min-width: 88px; }
+.home-carousel-stage { height: 440px; margin: 0 -12px; }
+.home-ring-card {
+  --ring-color: var(--accent);
+  --ring-soft: var(--accent-soft);
+  --ring-text: var(--accent-text);
+  position: relative; display: flex; flex-direction: column;
+  width: 100%; height: 100%; padding: 28px 24px 0;
+  border-radius: 18px; overflow: hidden;
+  background: var(--panel); color: var(--text); text-align: left;
+  box-shadow: inset 0 0 0 1px var(--border), var(--hairline);
+}
+.home-ring-card.green { --ring-color: var(--green); --ring-soft: var(--green-soft); --ring-text: var(--green-text); }
+.home-ring-card.amber { --ring-color: var(--amber); --ring-soft: var(--amber-soft); --ring-text: var(--amber-text); }
+.home-ring-card.violet { --ring-color: var(--violet); --ring-text: var(--violet); }
+.home-ring-card::before {
+  content: ''; position: absolute; inset: 0; pointer-events: none;
+  background: radial-gradient(ellipse at 85% 0%, var(--ring-soft), transparent 70%);
+  border-top: 3px solid var(--ring-color); border-radius: inherit;
+}
+.home-ring-mark {
+  position: relative; display: flex; align-items: center; justify-content: center;
+  width: 100px; height: 100px; margin-bottom: 24px; border-radius: 24px;
+  color: var(--ring-text); background: color-mix(in srgb, var(--panel) 70%, var(--ring-soft));
+}
+.home-ring-mark .ico { stroke-width: 1.25; }
+.home-ring-copy { position: relative; display: flex; flex-direction: column; gap: 10px; flex: 1; min-height: 0; }
+.home-ring-title { font-size: 23px; line-height: 1.4; font-weight: 650; letter-spacing: -.035em; }
+.home-ring-desc {
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+  font-size: 12px; line-height: 1.8; color: var(--text-dim);
+}
+.home-ring-foot {
+  position: relative; display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  min-height: 46px; margin: 16px -24px 0; padding: 10px 24px;
+  border-top: 1px solid var(--border-soft); color: var(--text-dim); font-size: 10px; line-height: 1.5;
+}
+.home-ring-foot .ico { flex-shrink: 0; color: var(--ring-text); }
+.home-carousel-controls { display: flex; align-items: center; justify-content: center; gap: 22px; margin: -8px 0 22px; }
+.home-carousel-controls .btn { width: 40px; height: 40px; border-radius: 50%; }
+.home-carousel-prev { transform: rotate(90deg); }
+.home-carousel-next { transform: rotate(-90deg); }
+.home-carousel-position { display: flex; align-items: center; gap: 10px; color: var(--text-dim); font-family: var(--mono); font-size: 12px; }
+.home-carousel-position b { color: var(--text); font-weight: 600; }
+.home-carousel-position > span { color: var(--text-faint); }
+.home-carousel-detail {
+  display: flex; align-items: center; justify-content: space-between; gap: 24px;
+  min-height: 150px; padding: 20px 24px; background: var(--panel);
+  border: 1px solid var(--border-soft); border-radius: var(--radius-lg); box-shadow: var(--shadow-sm), var(--hairline);
+}
+.home-carousel-detail-copy { display: grid; max-width: 760px; min-width: 0; }
+.home-carousel-detail-text { grid-area: 1 / 1; }
+.home-carousel-detail-measure { visibility: hidden; pointer-events: none; }
+.home-carousel-detail h3, .home-carousel-detail-title { font-size: 17px; font-weight: 600; margin: 0 0 8px; }
+.home-carousel-detail p { font-size: 12.5px; line-height: 1.8; color: var(--text-dim); margin: 0 0 8px; }
+.home-carousel-detail-text > span { font-size: 11px; color: var(--text-dim); }
+.home-carousel-detail > .btn { flex-shrink: 0; }
+.home-carousel-shortcuts { display: flex; justify-content: center; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+.home-shortcut {
+  display: inline-flex; align-items: center; gap: 6px; padding: 9px 12px;
+  border: 1px solid transparent; border-radius: var(--radius); color: var(--text-dim); background: transparent;
+  font-size: 11.5px; line-height: 1.4; transition: background .18s var(--ease), color .18s var(--ease);
+}
+.home-shortcut:hover { background: var(--panel-3); color: var(--text); }
+.home-shortcut.on { background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent-text); }
+@media (max-width: 600px) {
+  .home-showcase-head { gap: 10px; }
+  .home-showcase-head h2 { font-size: 16px; }
+  .home-showcase-head p { font-size: 11px; }
+  .home-carousel-stage { height: 350px; margin: 0 -16px; }
+  .home-carousel-detail { align-items: stretch; flex-direction: column; gap: 16px; padding: 18px; min-height: 225px; }
+  .home-carousel-detail > .btn { align-self: flex-start; }
+  .home-carousel-shortcuts { justify-content: flex-start; gap: 4px; }
+  .home-shortcut { padding: 10px 8px; }
 }
 
 /* ---------- 更新日志 ---------- */

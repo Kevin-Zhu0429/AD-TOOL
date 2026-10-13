@@ -1,0 +1,30 @@
+.card-ambient {
+  position: absolute; inset: 0; overflow: hidden; pointer-events: none;
+  opacity: .76;
+  mask-image: linear-gradient(to bottom, #000 0%, #000 35%, rgba(0, 0, 0, .48) 54%, transparent 83%);
+}
+:root[data-theme='light'] .card-ambient {
+  opacity: .96;
+  mask-image: linear-gradient(to bottom, #000 0%, #000 36%, rgba(0, 0, 0, .55) 48%, rgba(0, 0, 0, .12) 59%, transparent 80%);
+}
+:root[data-theme='light'] .card-ambient-canvas { filter: saturate(1.12); }
+:root[data-theme='light'] .card-ambient--aurora .card-ambient-canvas { filter: saturate(1.12) brightness(.88); }
+.card-ambient--waves {
+  mask-image: linear-gradient(to bottom, #000 0%, #000 45%, rgba(0, 0, 0, .45) 65%, transparent 90%);
+}
+:root[data-theme='light'] .card-ambient--waves {
+  mask-image: linear-gradient(to bottom, #000 0%, #000 40%, rgba(0, 0, 0, .55) 49%, rgba(0, 0, 0, .12) 59%, transparent 80%);
+}
+.card-ambient-fallback, .card-ambient-canvas { position: absolute; inset: 0; pointer-events: none; }
+.card-ambient-fallback { background: radial-gradient(ellipse at 60% 12%, var(--accent-soft), transparent 70%); }
+.card-ambient--gradient .card-ambient-fallback {
+  background: linear-gradient(155deg, var(--accent-soft), var(--amber-soft) 45%, transparent 80%);
+}
+.card-ambient--aurora .card-ambient-fallback {
+  background: radial-gradient(ellipse at 50% 0%, var(--green-soft), var(--accent-soft) 40%, transparent 75%);
+}
+.card-ambient--waves .card-ambient-fallback {
+  background: linear-gradient(150deg, var(--accent-soft), var(--ring-soft) 45%, transparent 85%);
+}
+.card-ambient-canvas[data-renderer='fallback'] { opacity: 0; }
+.home-ring-copy, .home-ring-foot, .home-ring-mark { z-index: 1; }
