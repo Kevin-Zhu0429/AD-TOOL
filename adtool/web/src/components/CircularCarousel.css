@@ -116,7 +116,9 @@
 
 .circular-carousel__shade {
   background: var(--cc-fade);
-  opacity: var(--cc-depth, 0);
+  opacity: 0;
+  /* Own layer: the fade changes every frame and must not repaint the card underneath. */
+  will-change: opacity;
 }
 
 .circular-carousel__inner {

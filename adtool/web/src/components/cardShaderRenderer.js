@@ -1,3 +1,4 @@
+import { getMotionQuality } from '../motionQuality.js';
 import { CARD_VERTEX, GRAINY_FRAGMENT, AURORA_FRAGMENT, WAVES_FRAGMENT } from './cardShaderSources.js';
 
 // One WebGL2 context and clock. Render each original shader once and copy its
@@ -159,7 +160,8 @@ function createRenderer() {
     raf = 0;
     if (failed || document.hidden) { previous = 0; return; }
     const moving = [...groups.values()].some(active);
-    const interval = width < 200 ? 50 : 1000 / 24;
+    // 24 fps is plenty for slow ambient motion; computers that drop frames get 12 fps.
+    const interval = getMotionQuality() === 'lite' ? 1000 / 12 : width < 200 ? 50 : 1000 / 24;
     if (!dirty && previous && now - previous < interval) { if (moving) raf = requestAnimationFrame(frame); return; }
     if (moving && previous) time += Math.min((now - previous) / 1000, .12);
     previous = moving ? now : 0;

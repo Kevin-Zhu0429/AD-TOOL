@@ -185,7 +185,7 @@ try {
   assert.match(await page.locator('.home-carousel-detail-copy').innerText(), /B–E 只读/);
   assert.equal(await page.locator('.circular-carousel img').count(), 0, 'Home cards should use local HTML, not external images');
   await page.evaluate(() => window.__cardShaderTestContext.getExtension('WEBGL_lose_context').loseContext());
-  await page.locator('.card-ambient-canvas[data-renderer="fallback"]').first().waitFor();
+  await page.locator('.card-ambient-canvas[data-renderer="fallback"]').first().waitFor({ state: 'attached' });
   assert.equal(await page.getByRole('button', { name: '进入ES 站否定词库', exact: true }).isEnabled(), true);
   const unsupported = await browser.newContext({ viewport: { width: 390, height: 844 }, reducedMotion: 'reduce' });
   await unsupported.addInitScript(() => {

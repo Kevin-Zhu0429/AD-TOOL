@@ -6,6 +6,7 @@
  * 再往上采一次密度当自阴影;云横向漂移并循环。
  */
 import { useEffect, useRef, useState } from 'react';
+import { getMotionQuality } from '../motionQuality.js';
 import './CloudShader.css';
 
 const VERT = `
@@ -277,7 +278,8 @@ export default function CloudShader({
     const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
     const resize = () => {
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      // 掉帧的电脑按 1 倍像素画,云是柔边的,看不出差别
+      const dpr = getMotionQuality() === 'lite' ? 1 : Math.min(window.devicePixelRatio || 1, 2);
       const w = Math.max(1, Math.floor(canvas.clientWidth * dpr));
       const h = Math.max(1, Math.floor(canvas.clientHeight * dpr));
       if (canvas.width !== w || canvas.height !== h) {
@@ -312,20 +314,40 @@ export default function CloudShader({
     observer.observe(canvas);
     resize();
 
+    // 页头滚出屏幕就停画;掉帧的电脑每秒只画 30 帧,云飘得慢,看不出区别
+    let onScreen = true;
+    let last = 0;
+    let lite = getMotionQuality() === 'lite';
+    const draw = (now) => {
+      frame = 0;
+      if (!running || !onScreen) return;
+      const nowLite = getMotionQuality() === 'lite';
+      if (nowLite !== lite) {
+        lite = nowLite;
+        resize();
+      }
+      if (!lite || now - last >= 1000 / 30 - 2) {
+        last = now;
+        render(((now - start) / 1000) * paramsRef.current.speed);
+      }
+      frame = requestAnimationFrame(draw);
+    };
+    const visibility = new IntersectionObserver(([entry]) => {
+      onScreen = entry.isIntersecting;
+      if (onScreen && !reduceMotion && !frame) frame = requestAnimationFrame(draw);
+    });
+
     if (reduceMotion) {
       render(0);
     } else {
-      const draw = (now) => {
-        if (!running) return;
-        render(((now - start) / 1000) * paramsRef.current.speed);
-        frame = requestAnimationFrame(draw);
-      };
+      visibility.observe(canvas);
       frame = requestAnimationFrame(draw);
     }
 
     return () => {
       running = false;
       cancelAnimationFrame(frame);
+      visibility.disconnect();
       observer.disconnect();
       gl.deleteBuffer(buffer);
       gl.deleteProgram(program);
