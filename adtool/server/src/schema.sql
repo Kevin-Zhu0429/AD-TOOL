@@ -788,3 +788,25 @@ CREATE TABLE IF NOT EXISTS pet_change_reviews (
   UNIQUE (proposal_id, day)
 );
 CREATE INDEX IF NOT EXISTS idx_pet_change_reviews ON pet_change_reviews(proposal_id, day);
+
+-- ---------- Listing 板块 ----------
+-- 店铺所有 SKU 在亚马逊上的完整 Listing 属性(Listings Items API),每天同步一次,页面打开某个 SKU 时实时再读一次
+CREATE TABLE IF NOT EXISTS pet_listing_items (
+  sku TEXT PRIMARY KEY COLLATE NOCASE,
+  asin TEXT,
+  product_type TEXT,
+  item_name TEXT,
+  status_json TEXT,
+  attributes_json TEXT NOT NULL DEFAULT '{}',
+  issues_json TEXT,
+  amazon_updated TEXT,
+  synced_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+
+-- 亚马逊商品类型定义(每个属性的名字、可选值、是否必填),简化后按商品类型缓存
+CREATE TABLE IF NOT EXISTS pet_product_type_schemas (
+  product_type TEXT PRIMARY KEY,
+  version TEXT,
+  schema_json TEXT NOT NULL,
+  fetched_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);

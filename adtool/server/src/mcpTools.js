@@ -16,6 +16,7 @@ import { AD_ACTIONS, AD_ENTITIES, claimAdChanges, listChanges, proposeAdChanges,
 import { TRAFFIC_GROUPS, trafficReport, trafficSyncStatus } from './petTraffic.js';
 import { changeImpact } from './petImpact.js';
 import { returnRecords, returnsAnalysis, returnsSyncStatus } from './petReturns.js';
+import { listingAttributesForAgent } from './petListings.js';
 import { ACTION_TYPES, agentContext, AREAS, LESSON_VERDICTS, REVIEW_VERDICTS, saveDailyReport, saveLesson, SECTION_STATUS } from './petAgent.js';
 
 // 测试可以用 PET_TODAY 固定「今天」;正式环境始终是美国太平洋时间的今天
@@ -524,6 +525,7 @@ propose_listing_changes、propose_ad_changes 只把改动放进网站的「待�
 改动执行后用 get_change_impact 看前后对比(销量、访问量、转化率、搜索份额),至少等执行后 7 天再下结论。
 看退货率、退货原因和买家退货留言用 get_returns(转化正常但差评多、或某个尺码卖得好却留不住时先看它)。
 看月度目标和利润用 get_sales_stats;看竞品最近的降价、改标题、换主图用 get_competitor_overview。
+看或改标题五点以外的属性(产品描述、材质、尺寸、重量、特点、适用宠物等)先用 get_listing_attributes(全店概览,或指定 SKU 看全部属性,includeSchema 看还能填哪些),再用 propose_listing_changes 的 field=attribute 提;店主也会在网站「Listing」板块直接改,这些改动同样记在改动日志里、算冷却期。
 提改动前:先用 get_listing 看现在的文案;尺寸、材质、填充物等产品规格只写有依据的,拿不准就先问用户,不要编;同一款的不同尺码、颜色是不同 SKU,要分别提;改五点要给出全部条目;reason 写清依据的数据(搜索词份额、竞品对比、体检问题、毛利)。改价前看 list_skus 的保本价;正在做促销价的 SKU 改原价前台不变,要改前台价提 sale_price(促销价,带结束日期)。广告改动需要广告活动、广告组、关键词等的数字编号,来自用户给的批量表/报告,或 Miguelpet 连接器 query_ads 查到的编号。提完把 confirmUrl 告诉用户去确认。
 店主确认的广告改动(没有广告 API 时)由 Claude 用 Miguelpet 执行:claim_confirmed_ad_changes 领取 → 在 Miguelpet 里核对当前值 → prepare_change_plan + apply_change_plan → report_ad_change_result 回报。只执行领到的这些,一条一条照着改,不加别的。
 用户在对话里直接让 Claude 用 Miguelpet 改了广告(没走网站确认)时,也要记到网站:propose_ad_changes 传 alreadyApplied(或事后用 mark_ad_changes_applied 补记),记成「已生效」才会进复盘;不要留在待确认。
@@ -656,6 +658,20 @@ export function createPetMcpServer(deps = {}) {
     annotations: remote,
   }, wrap((args) => getListing(args, deps)));
 
+  server.registerTool('get_listing_attributes', {
+    title: '本店 Listing 全部属性',
+    description: '读本店 SKU 在亚马逊上的完整 Listing 属性(网站「Listing」板块同一份数据):标题、五点、描述、后台词、品牌、材质、尺寸、颜色、重量、特点等所有属性和亚马逊报的问题。不给 SKU 看全店(库里每 12 小时同步一次,默认只给常用属性);给 SKU 或款式给全部属性;live=true 实时读亚马逊(1–10 个 SKU)。includeSchema=true 附上该商品类型能填的所有属性(名字、是否必填、可选值),用来找还没填的属性。改属性用 propose_listing_changes。',
+    inputSchema: {
+      skus: z.array(z.string().trim().min(1).max(100)).max(50).default([]).describe('卖家 SKU 列表;不填看全店'),
+      style: optionalText('只看这个款式的 SKU(SKU 库里的款式名,如 方窝牛津)'),
+      attributes: z.array(z.string().trim().min(1).max(80)).max(60).default([]).describe('只看这些属性(亚马逊属性名,如 product_description、material)'),
+      live: z.boolean().default(false).describe('实时读亚马逊,要指定 1–10 个 SKU'),
+      includeSchema: z.boolean().default(false).describe('附上商品类型的属性定义'),
+      limit: z.number().int().min(1).max(500).default(200),
+    },
+    annotations: remote,
+  }, wrap((args) => listingAttributesForAgent(args, deps)));
+
   server.registerTool('get_catalog_items', {
     title: '亚马逊目录信息(含竞品)',
     description: '实时从亚马逊目录读取任意 ASIN(本店或竞品)的标题、品牌、五点、描述、尺码颜色、BSR 排名、变体关系、图片地址和全部属性。一次 1–10 个 ASIN,适合竞品对比。',
@@ -678,16 +694,18 @@ export function createPetMcpServer(deps = {}) {
 
   server.registerTool('propose_listing_changes', {
     title: '提议修改 Listing',
-    description: '把标题、五点描述、后台搜索词、原价、促销价的修改放进网站「待确认改动」队列,店主确认后网站才用 SP-API 提交到亚马逊。会实时读亚马逊上的当前值记为「改动前」,并检查标题 200 字符、后台搜索词 249 字节、和现在一样、低于保本价等;不合格的放在 rejected 里。同一个 SKU 同一项还没确认的旧提议会被替代。',
+    description: '把标题、五点描述、后台搜索词、原价、促销价,以及其它任意 Listing 属性(产品描述、材质、尺寸、特点等,field=attribute)的修改放进网站「待确认改动」队列,店主确认后网站才用 SP-API 提交到亚马逊。会实时读亚马逊上的当前值记为「改动前」,并检查标题 200 字符、后台搜索词 249 字节、和现在一样、低于保本价等;不合格的放在 rejected 里。同一个 SKU 同一项还没确认的旧提议会被替代。',
     inputSchema: {
       title: z.string().trim().min(1).max(100).describe('这批改动的标题,如「方窝牛津 S/M 标题和五点」'),
       summary: z.string().trim().max(2000).optional().describe('整批的思路和依据,显示在确认页上'),
       changes: z.array(z.object({
         sku: z.string().trim().min(1).max(100).describe('卖家 SKU(list_skus 里的 sku)'),
-        field: z.enum(['title', 'bullets', 'search_terms', 'price', 'sale_price'])
-          .describe('title 标题 / bullets 五点 / search_terms 后台搜索词 / price 原价 / sale_price 促销价'),
-        value: z.union([z.string(), z.array(z.string()).max(10), z.number()])
-          .describe('新值:title、search_terms 填文字(后台词用空格分隔);bullets 填文字数组,按顺序给全部条目;price、sale_price 填美元数字,sale_price 填 0 表示取消促销价'),
+        field: z.enum(['title', 'bullets', 'search_terms', 'price', 'sale_price', 'attribute'])
+          .describe('title 标题 / bullets 五点 / search_terms 后台搜索词 / price 原价 / sale_price 促销价 / attribute 其它属性(要填 attribute)'),
+        attribute: z.string().trim().regex(/^[a-z0-9_]{1,80}$/).optional()
+          .describe('field=attribute 才用:亚马逊属性名,如 product_description、material、special_feature(get_listing_attributes 里的名字)'),
+        value: z.union([z.string(), z.array(z.string()).max(30), z.number(), z.boolean(), z.array(z.record(z.string(), z.unknown())).max(30)])
+          .describe('新值:title、search_terms 填文字(后台词用空格分隔);bullets 填文字数组,按顺序给全部条目;price、sale_price 填美元数字,sale_price 填 0 表示取消促销价;attribute 填文字/数字/文字数组(每个是一个值),复杂属性(如尺寸 {value,unit})填和 get_listing_attributes 一样结构的对象数组,给全部值'),
         saleStart: z.string().regex(DAY).optional().describe('sale_price 才用:促销开始日 YYYY-MM-DD(太平洋时间),不填时沿用现有促销的开始日或今天'),
         saleEnd: z.string().regex(DAY).optional().describe('sale_price 才用:促销结束日 YYYY-MM-DD,新设促销价必填;已有促销不填就沿用原结束日'),
         reason,

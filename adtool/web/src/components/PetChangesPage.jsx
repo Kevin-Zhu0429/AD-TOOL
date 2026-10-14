@@ -3,6 +3,7 @@ import * as XLSX from 'xlsx';
 import { api, CHANGES_EVENT } from '../api.js';
 import AppDialog, { useConfirm } from './AppDialog.jsx';
 import { byteLength, changeSheetRows, detailText, SHEET, termChanges, wordDiff } from '../changeExport.js';
+import { entryText, parseJsonEntries, stripEntries } from '../listingEdit.js';
 import './LibraryPage.css';
 import './PetChangesPage.css';
 
@@ -16,10 +17,10 @@ const ENTITY_LABEL = { campaign: '广告活动', adGroup: '广告组', keyword: 
 const MATCH_LABEL = { exact: '否定精准', phrase: '否定词组', asin: '否定商品' };
 const STATE_LABEL = { enabled: '启用', paused: '暂停' };
 const VIEWS = [['pending', '待确认'], ['active', '处理中'], ['history', '历史'], ['log', '日志']];
-const EDITABLE = new Set(['listing_title', 'listing_bullets', 'listing_search_terms', 'listing_price', 'listing_sale_price', 'ad_bid', 'ad_budget']);
+const EDITABLE = new Set(['listing_title', 'listing_bullets', 'listing_search_terms', 'listing_price', 'listing_sale_price', 'listing_attribute', 'ad_bid', 'ad_budget']);
 const NUMERIC = new Set(['listing_price', 'ad_bid', 'ad_budget']);
 const AI_LABEL = { claude: 'Claude', chatgpt: 'ChatGPT' };
-const SOURCE_LABEL = { claude: 'Claude 提议', chatgpt: 'ChatGPT 提议', revert: '撤回', manual: '手动', intel: '产品情报' };
+const SOURCE_LABEL = { claude: 'Claude 提议', chatgpt: 'ChatGPT 提议', revert: '撤回', manual: '手动', intel: '产品情报', listing: 'Listing 板块直接修改' };
 
 function targetText(item) {
   const t = item.target ?? {};
@@ -52,6 +53,13 @@ function AdBody({ item }) {
 
 export function ChangeBody({ item }) {
   const { kind, before, after, target } = item;
+  if (kind === 'listing_attribute') {
+    const text = (entries) => (entries ?? []).map(entryText).filter(Boolean).join(' | ');
+    return <dl className="chg-diff">
+      <dt>现在</dt><dd>{text(before) || '（空）'}</dd>
+      <dt>改成</dt><dd className="w-add">{text(after) || '（删掉这个属性）'}</dd>
+    </dl>;
+  }
   if (kind === 'listing_title') {
     const parts = wordDiff(before ?? '', after);
     return <dl className="chg-diff">
@@ -156,17 +164,20 @@ function ChangeItem({ item, checked, onCheck, busy, onEdit, onAction, onRevert }
 
 function EditDialog({ item, onClose, onSaved }) {
   const sale = item.kind === 'listing_sale_price';
-  const initial = item.kind === 'listing_bullets' ? item.after.join('\n')
+  const attribute = item.kind === 'listing_attribute';
+  const initial = attribute ? JSON.stringify(stripEntries(item.after), null, 1) : item.kind === 'listing_bullets' ? item.after.join('\n')
     : sale ? String(item.after?.price ?? 0)
       : String(item.kind === 'ad_bid' ? item.after.bid : item.kind === 'ad_budget' ? item.after.budget : item.after);
   const [text, setText] = useState(initial), [busy, setBusy] = useState(false), [error, setError] = useState('');
   const [start, setStart] = useState(item.after?.start ?? ''), [end, setEnd] = useState(item.after?.end ?? '');
   const numeric = NUMERIC.has(item.kind) || sale;
-  const value = item.kind === 'listing_bullets' ? text.split('\n').map((line) => line.trim()).filter(Boolean)
+  const parsed = attribute ? parseJsonEntries(text) : null;
+  const value = attribute ? parsed.value : item.kind === 'listing_bullets' ? text.split('\n').map((line) => line.trim()).filter(Boolean)
     : sale ? { price: Number(text), start, end } : numeric ? Number(text) : text;
   const count = item.kind === 'listing_title' ? `${norm(text).length} / 200 字符` : item.kind === 'listing_search_terms' ? `${byteLength(norm(text))} / 249 字节`
-    : item.kind === 'listing_bullets' ? `${value.length} 条，每行一条` : sale ? `美元，原价 ${money(item.target?.listPrice)}，填 0 表示取消促销价` : '美元';
+    : attribute ? (parsed.error ?? '按 JSON 改，站点和语言标记自动补上') : item.kind === 'listing_bullets' ? `${value.length} 条，每行一条` : sale ? `美元，原价 ${money(item.target?.listPrice)}，填 0 表示取消促销价` : '美元';
   async function save() {
+    if (parsed?.error) { setError(parsed.error); return; }
     setBusy(true); setError('');
     try { await api.editChange(item.id, value); onSaved(); } catch (e) { setError(e.message); setBusy(false); }
   }
@@ -176,7 +187,7 @@ function EditDialog({ item, onClose, onSaved }) {
       <label className="row">结束<input className="inp" type="date" value={end} disabled={busy} onChange={(e) => setEnd(e.target.value)} /></label>
     </div>}
     {numeric ? <input className="inp" type="number" step="0.01" min="0" value={text} disabled={busy} aria-label="新值" onChange={(e) => setText(e.target.value)} />
-      : <textarea className="inp chg-edit resize-none" rows={item.kind === 'listing_bullets' ? 12 : 4} value={text} disabled={busy} aria-label="新值" onChange={(e) => setText(e.target.value)} />}
+      : <textarea className="inp chg-edit resize-none" rows={item.kind === 'listing_bullets' || attribute ? 12 : 4} value={text} disabled={busy} aria-label="新值" onChange={(e) => setText(e.target.value)} />}
     <p className="hint">{count}。保存后会重新检查，仍需勾选确认才会执行。</p>
     {error && <p className="note err" role="alert">{error}</p>}
     <footer className="row"><div className="spacer" /><button className="btn" disabled={busy} onClick={onClose}>取消</button>

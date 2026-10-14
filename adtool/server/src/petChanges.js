@@ -8,6 +8,7 @@ import { isPet, PET_SHOP_ID } from './profile.js';
 import { amazonGateway, pacificDay, pacificMidnight, petSpConfig, shiftDay, US_MARKETPLACE } from './petAmazon.js';
 import { withProfit } from './petCosts.js';
 import { adsGateway, executeAdChange, petAdsConfig } from './petAds.js';
+import { cachedSchema, checkAttributeValue, medicalWarning, productTypeSchema, sameEntries, usEntries } from './listingAttrs.js';
 
 export const KINDS = {
   listing_title: { group: 'listing', label: '标题', attribute: 'item_name' },
@@ -15,13 +16,21 @@ export const KINDS = {
   listing_search_terms: { group: 'listing', label: '后台搜索词', attribute: 'generic_keyword' },
   listing_price: { group: 'listing', label: '售价', attribute: 'purchasable_offer' },
   listing_sale_price: { group: 'listing', label: '促销价', attribute: 'purchasable_offer' },
+  // 其它任意属性(产品描述、材质、尺寸……),属性名在 target.attribute
+  listing_attribute: { group: 'listing', label: '属性', attribute: null },
   ad_state: { group: 'ad', label: '投放状态' },
   ad_bid: { group: 'ad', label: '竞价' },
   ad_budget: { group: 'ad', label: '每日预算' },
   ad_negative: { group: 'ad', label: '新增否定' },
 };
 export const LISTING_FIELDS = { title: 'listing_title', bullets: 'listing_bullets', search_terms: 'listing_search_terms', price: 'listing_price',
-  sale_price: 'listing_sale_price' };
+  sale_price: 'listing_sale_price', attribute: 'listing_attribute' };
+/** 改动类型的名字;通用属性带上属性名 */
+export const kindLabelOf = (kind, target = {}) => (kind === 'listing_attribute'
+  ? `属性 ${target.attributeTitle && target.attributeTitle !== target.attribute ? `${target.attributeTitle}（${target.attribute}）` : target.attribute ?? ''}`.trim()
+  : KINDS[kind]?.label ?? kind);
+/** 这条改动对应的亚马逊属性名 */
+export const attributeOf = (kind, target = {}) => (kind === 'listing_attribute' ? target.attribute : KINDS[kind]?.attribute);
 // 原价和促销价都在 purchasable_offer 这一个属性里
 const OFFER_KINDS = new Set(['listing_price', 'listing_sale_price']);
 export const AD_ENTITIES = ['campaign', 'adGroup', 'keyword', 'productTarget', 'productAd'];
@@ -89,7 +98,7 @@ const saleSchedule = ({ price, start, end }) => ({ value_with_tax: price, start_
   end_at: new Date(pacificMidnight(shiftDay(end, 1)).getTime() - 1000).toISOString() });
 const nearDay = (a, b) => a === b || (a && b && Math.abs(Date.parse(`${a}T00:00:00Z`) - Date.parse(`${b}T00:00:00Z`)) <= 86400000);
 
-async function readListing(account, sku, gateway) {
+export async function readListing(account, sku, gateway) {
   let payload;
   try {
     payload = await gateway.request(account, account.region, 'GET', listingPath(account, sku), { query: {
@@ -100,11 +109,13 @@ async function readListing(account, sku, gateway) {
     throw error;
   }
   const summary = (payload?.summaries ?? []).find((entry) => entry.marketplaceId === US_MARKETPLACE) ?? payload?.summaries?.[0] ?? {};
-  return { sku, asin: summary.asin ?? null, productType: summary.productType ?? null, attributes: payload?.attributes ?? {}, issues: payload?.issues ?? [] };
+  return { sku, asin: summary.asin ?? null, productType: summary.productType ?? null, attributes: payload?.attributes ?? {}, issues: payload?.issues ?? [],
+    status: summary.status ?? [], itemName: summary.itemName ?? null, lastUpdated: summary.lastUpdatedDate ?? null };
 }
 
 /** 某种 Listing 改动在亚马逊上的当前值 */
-export function currentValue(kind, attributes) {
+export function currentValue(kind, attributes, target = {}) {
+  if (kind === 'listing_attribute') return usEntries(attributes, target.attribute);
   if (kind === 'listing_title') return textValues(attributes, 'item_name')[0] ?? null;
   if (kind === 'listing_bullets') return textValues(attributes, 'bullet_point');
   if (kind === 'listing_search_terms') return textValues(attributes, 'generic_keyword').join(' ');
@@ -115,6 +126,7 @@ export function currentValue(kind, attributes) {
 
 /** loose:核对执行结果时促销起止日差一天以内也算一样(亚马逊存时间时可能换了时区);提议和执行前比较要精确 */
 export function sameValue(kind, a, b, { loose = false } = {}) {
+  if (kind === 'listing_attribute') return sameEntries(loose ? b : a, loose ? a : b, { loose });
   if (kind === 'listing_bullets') {
     return Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((item, index) => normText(item) === normText(b[index]));
   }
@@ -133,8 +145,14 @@ export function sameValue(kind, a, b, { loose = false } = {}) {
  * 亚马逊 Listings Items 的 patch:文字类属性带语言和站点;售价只改 our_price,促销价只改 discounted_price,
  * 同一报价里的其它字段原样保留。pending 是同一 SKU 已提交、亚马逊还没生效的原价 / 促销价改动,一起带上,免得互相覆盖。
  */
-export function patchFor(kind, after, attributes = {}, pending = []) {
+export function patchFor(kind, after, attributes = {}, pending = [], target = {}) {
   const tag = { language_tag: 'en_US', marketplace_id: US_MARKETPLACE };
+  if (kind === 'listing_attribute') {
+    const path = `/attributes/${target.attribute}`;
+    // 改成空:把现在的值删掉
+    if (!after.length) return { op: 'delete', path, value: usEntries(attributes, target.attribute) };
+    return { op: 'replace', path, value: after };
+  }
   if (kind === 'listing_title') return { op: 'replace', path: '/attributes/item_name', value: [{ value: after, ...tag }] };
   if (kind === 'listing_bullets') return { op: 'replace', path: '/attributes/bullet_point', value: after.map((value) => ({ value, ...tag })) };
   if (kind === 'listing_search_terms') return { op: 'replace', path: '/attributes/generic_keyword', value: [{ value: after, ...tag }] };
@@ -179,9 +197,13 @@ function priceImpact(sku, before, after) {
  * 检查一条 Listing 提议:返回整理好的新值、拦下来的错误和要提醒的问题。
  * before 是亚马逊上的当前值;attributes 只有提议时才有,用来看有没有促销价。
  */
-export function checkListingValue(kind, raw, before, { sku, attributes, listPrice } = {}) {
+export function checkListingValue(kind, raw, before, { sku, attributes, listPrice, attribute, info } = {}) {
   const errors = [], warnings = [];
   let value, extra = {};
+  if (kind === 'listing_attribute') {
+    const checked = checkAttributeValue(attribute, raw, before, { info });
+    return { value: checked.value, errors: checked.errors, warnings: checked.warnings, extra: {} };
+  }
   if (kind === 'listing_title') {
     if (typeof raw !== 'string') return { errors: ['标题要填文字'] };
     value = normText(raw);
@@ -260,25 +282,29 @@ export function checkListingValue(kind, raw, before, { sku, attributes, listPric
   } else {
     return { errors: [`不认识的改动类型：${kind}`] };
   }
+  if (['listing_title', 'listing_bullets', 'listing_search_terms'].includes(kind) && value != null) {
+    const medical = medicalWarning(value);
+    if (medical) warnings.push(medical);
+  }
   if (!errors.length && (before != null || kind === 'listing_sale_price') && sameValue(kind, value, before)) errors.push('和亚马逊上现在的一样，不用改');
   return { value, errors, warnings, extra };
 }
 
 // ---------- 写库和日志 ----------
 
-function log(proposalId, batchId, actor, userId, action, detail = null) {
+export function log(proposalId, batchId, actor, userId, action, detail = null) {
   db.prepare('INSERT INTO pet_change_log (proposal_id, batch_id, actor, user_id, action, detail_json) VALUES (?, ?, ?, ?, ?, ?)')
     .run(proposalId, batchId ?? null, actor, userId ?? null, action, detail == null ? null : JSON.stringify(detail));
 }
 
-function update(id, fields) {
+export function update(id, fields) {
   const keys = Object.keys(fields);
   db.prepare(`UPDATE pet_change_proposals SET ${keys.map((key) => `${key}=@${key}`).join(', ')}, updated_at=datetime('now','localtime') WHERE id=@id`)
     .run({ ...fields, id });
 }
 
 /** 一批提议写库:同一个对象同一个字段还在待确认的旧提议会被替代 */
-function saveProposals({ title, summary, source, userId, items }) {
+export function saveProposals({ title, summary, source, userId, items }) {
   if (!items.length) return { batchId: null, ids: [], superseded: 0 };
   let batchId = null, superseded = 0;
   const ids = [];
@@ -303,7 +329,7 @@ function saveProposals({ title, summary, source, userId, items }) {
   return { batchId, ids, superseded };
 }
 
-function skuDirectory() {
+export function skuDirectory() {
   const rows = db.prepare("SELECT sku, asin, style, size, color FROM sku_items WHERE user_id=? AND country='US'").all(PET_SHOP_ID);
   const map = new Map(rows.map((row) => [lowerKey(row.sku), row]));
   for (const row of db.prepare('SELECT sku, asin FROM pet_listing_cache').all()) {
@@ -312,7 +338,7 @@ function skuDirectory() {
   return map;
 }
 
-function checkBatch({ title, summary, changes }) {
+export function checkBatch({ title, summary, changes }) {
   const name = normText(title);
   if (!name) throw new Error('请给这批改动起个标题，比如「方窝牛津 S/M 标题和五点」');
   if (!Array.isArray(changes) || !changes.length) throw new Error('没有改动');
@@ -320,7 +346,7 @@ function checkBatch({ title, summary, changes }) {
   return { title: name.slice(0, 100), summary: clean(summary).slice(0, 2000) };
 }
 
-function checkReason(reason) {
+export function checkReason(reason) {
   const text = normText(reason);
   if (!text) return { error: '请写明为什么改（依据的数据）' };
   return { text: text.slice(0, LIMITS.reason) };
@@ -341,12 +367,14 @@ export async function proposeListingChanges(input, { userId = null, source = 'cl
   for (const [index, change] of input.changes.entries()) {
     const sku = clean(change?.sku), kind = LISTING_FIELDS[change?.field];
     const reject = (error) => rejected.push({ index, sku, field: change?.field ?? null, error });
-    if (!kind) { reject('field 只能是 title、bullets、search_terms、price、sale_price'); continue; }
+    if (!kind) { reject('field 只能是 title、bullets、search_terms、price、sale_price、attribute'); continue; }
+    const attribute = kind === 'listing_attribute' ? clean(change.attribute) : null;
+    if (kind === 'listing_attribute' && !attribute) { reject('field 是 attribute 时要填 attribute（亚马逊属性名，如 product_description）'); continue; }
     const known = directory.get(lowerKey(sku));
     if (!known) { reject(`SKU 库里没有 ${sku || '(空)'}`); continue; }
     const reason = checkReason(change.reason);
     if (reason.error) { reject(reason.error); continue; }
-    const targetKey = `listing:${lowerKey(known.sku)}:${kind}`;
+    const targetKey = attributeKey(known.sku, kind, attribute);
     if (seen.has(targetKey)) { reject('同一批里同一个 SKU 的同一项重复了'); continue; }
     let listing = listings.get(lowerKey(known.sku));
     if (!listing) {
@@ -359,20 +387,25 @@ export async function proposeListingChanges(input, { userId = null, source = 'cl
     }
     if (listing.error) { reject(`读不到亚马逊上的 Listing：${listing.error}`); continue; }
     if (!listing.productType) { reject('亚马逊没有返回这个 SKU 的商品类型，没法提交修改'); continue; }
-    const before = currentValue(kind, listing.attributes);
+    const info = attribute ? (await productTypeSchema(account, listing.productType, { gateway })).attributes?.[attribute] ?? null : null;
+    const before = currentValue(kind, listing.attributes, { attribute });
     const raw = kind === 'listing_sale_price' ? { price: change.value, start: change.saleStart, end: change.saleEnd } : change.value;
-    const checked = checkListingValue(kind, raw, before, { sku: known.sku, attributes: listing.attributes });
+    const checked = checkListingValue(kind, raw, before, { sku: known.sku, attributes: listing.attributes, attribute, info });
     if (checked.errors.length) { reject(checked.errors.join('；')); continue; }
     seen.add(targetKey);
     items.push({ kind, targetKey, before, after: checked.value, reason: reason.text, warnings: checked.warnings,
       target: { sku: known.sku, asin: listing.asin ?? known.asin ?? null, productType: listing.productType,
-        style: known.style ?? null, size: known.size ?? null, color: known.color ?? null, ...checked.extra } });
+        style: known.style ?? null, size: known.size ?? null, color: known.color ?? null,
+        ...(attribute ? { attribute, attributeTitle: info?.title ?? attribute } : {}), ...checked.extra } });
   }
   const saved = saveProposals({ title, summary, source, userId, items });
   return { batchId: saved.batchId, created: items.map((item, index) => ({ id: saved.ids[index], sku: item.target.sku,
     field: Object.keys(LISTING_FIELDS).find((key) => LISTING_FIELDS[key] === item.kind), warnings: item.warnings })),
   rejected, superseded: saved.superseded };
 }
+
+/** 待确认队列里「同一个对象的同一项」:通用属性按属性名区分 */
+export const attributeKey = (sku, kind, attribute) => `listing:${lowerKey(sku)}:${kind}${kind === 'listing_attribute' ? `:${attribute}` : ''}`;
 
 const AD_ID = /^\d{1,20}$/;
 
@@ -478,7 +511,7 @@ async function executeListing(row, target, before, after, deps) {
   const { account, issues } = petSpConfig(deps.env);
   if (!account) throw new Error(issues[0] ?? '服务器还没有配置宠物店铺的亚马逊 SP-API 凭证(PET_SP_*)');
   const listing = await readListing(account, target.sku, deps.gateway);
-  const current = currentValue(row.kind, listing.attributes);
+  const current = currentValue(row.kind, listing.attributes, target);
   if (sameValue(row.kind, current, after)) {
     update(row.id, { status: 'applied', channel: 'sp_api', executed_at: nowLocal(),
       verified_at: nowLocal(), result_json: JSON.stringify({ note: '亚马逊上已经是这个值，没有再提交' }) });
@@ -496,7 +529,7 @@ async function executeListing(row, target, before, after, deps) {
     WHERE target_key IN (?, ?) AND status='submitted' AND id<>? ORDER BY executed_at, id`)
     .all(`listing:${lowerKey(target.sku)}:listing_price`, `listing:${lowerKey(target.sku)}:listing_sale_price`, row.id)
     .map((item) => ({ kind: item.kind, after: parseJson(item.after_json) })) : [];
-  const body = { productType: listing.productType ?? target.productType, patches: [patchFor(row.kind, after, listing.attributes, pending)] };
+  const body = { productType: listing.productType ?? target.productType, patches: [patchFor(row.kind, after, listing.attributes, pending, target)] };
   const preview = await deps.gateway.request(account, account.region, 'PATCH', listingPath(account, target.sku),
     { query: { marketplaceIds: US_MARKETPLACE, mode: 'VALIDATION_PREVIEW', issueLocale: 'en_US' }, body });
   const previewErrors = (preview?.issues ?? []).filter((issue) => issue.severity === 'ERROR');
@@ -579,8 +612,8 @@ export async function verifySubmitted(deps = defaultDeps) {
     const listing = listings.get(key);
     if (listing.error) continue;
     checked += 1;
-    const current = currentValue(row.kind, listing.attributes);
-    const related = issueList(listing.issues.filter((issue) => (issue.attributeNames ?? []).includes(KINDS[row.kind].attribute)));
+    const current = currentValue(row.kind, listing.attributes, target);
+    const related = issueList(listing.issues.filter((issue) => (issue.attributeNames ?? []).includes(attributeOf(row.kind, target))));
     const result = { ...parseJson(row.result_json, {}), listingIssues: related, checkedAt: new Date().toISOString() };
     if (sameValue(row.kind, current, after, { loose: true })) {
       update(row.id, { status: 'applied', verified_at: nowLocal(), result_json: JSON.stringify(result) });
@@ -599,13 +632,16 @@ export async function verifySubmitted(deps = defaultDeps) {
 // ---------- 读给页面和连接器 ----------
 
 export function targetLabel(kind, target = {}) {
-  if (KINDS[kind]?.group === 'listing') return [target.sku, [target.style, target.size, target.color].filter(Boolean).join(' ')].filter(Boolean).join(' · ');
+  if (KINDS[kind]?.group === 'listing') {
+    return [target.sku, [target.style, target.size, target.color].filter(Boolean).join(' '), kind === 'listing_attribute' ? target.attribute : null]
+      .filter(Boolean).join(' · ');
+  }
   return [target.campaignName ?? target.campaignId, target.adGroupName, target.label].filter(Boolean).join(' / ');
 }
 
-function shape(row) {
+export function shape(row) {
   return {
-    id: row.id, batchId: row.batch_id, kind: row.kind, kindLabel: KINDS[row.kind]?.label ?? row.kind, group: KINDS[row.kind]?.group ?? 'ad',
+    id: row.id, batchId: row.batch_id, kind: row.kind, kindLabel: kindLabelOf(row.kind, parseJson(row.target_json, {})), group: KINDS[row.kind]?.group ?? 'ad',
     status: row.status, statusLabel: STATUS_LABEL[row.status] ?? row.status, channel: row.channel,
     target: parseJson(row.target_json, {}), before: parseJson(row.before_json), after: parseJson(row.after_json), reason: row.reason,
     warnings: parseJson(row.warnings_json, []), result: parseJson(row.result_json), error: row.error, source: row.source, revertOf: row.revert_of,
@@ -640,7 +676,7 @@ export function changeLog({ limit = 300, proposalId } = {}) {
     ${proposalId ? 'WHERE l.proposal_id=?' : ''} ORDER BY l.id DESC LIMIT ?`).all(...(proposalId ? [proposalId, limit] : [limit]));
   return rows.map((row) => ({ id: row.id, at: row.at, actor: row.actor, userName: row.user_name, action: row.action,
     actionLabel: ACTION_LABEL[row.action] ?? row.action, proposalId: row.proposal_id, batchId: row.batch_id,
-    kind: row.kind, kindLabel: KINDS[row.kind]?.label ?? row.kind, target: targetLabel(row.kind, parseJson(row.target_json, {})),
+    kind: row.kind, kindLabel: kindLabelOf(row.kind, parseJson(row.target_json, {})), target: targetLabel(row.kind, parseJson(row.target_json, {})),
     detail: parseJson(row.detail_json) }));
 }
 
@@ -706,7 +742,8 @@ export function editChange(id, value, userId) {
   const target = parseJson(row.target_json, {}), before = parseJson(row.before_json), old = parseJson(row.after_json);
   let after, warnings, extra = {};
   if (KINDS[row.kind]?.group === 'listing') {
-    const checked = checkListingValue(row.kind, value, before, { sku: target.sku, listPrice: target.listPrice });
+    const checked = checkListingValue(row.kind, value, before, { sku: target.sku, listPrice: target.listPrice, attribute: target.attribute,
+      info: target.attribute ? cachedSchema(target.productType)?.attributes?.[target.attribute] ?? null : null });
     if (checked.errors.length) throw Object.assign(new Error(checked.errors.join('；')), { status: 400 });
     ({ value: after, warnings, extra } = checked);
   } else if (row.kind === 'ad_bid' || row.kind === 'ad_budget') {
@@ -731,7 +768,7 @@ export function revertChange(id, userId) {
   const before = parseJson(row.before_json), after = parseJson(row.after_json), target = parseJson(row.target_json, {});
   if (row.kind === 'ad_negative') throw Object.assign(new Error('否定词没法用撤回改回去，请到广告后台把它存档'), { status: 400 });
   // 促销价改动前是 null 表示原来没有促销价,撤回就是取消促销价
-  const knownBefore = row.kind === 'listing_sale_price' ? row.before_json != null : before != null && (Array.isArray(before) ? before.length > 0 : before !== '');
+  const knownBefore = ['listing_sale_price', 'listing_attribute'].includes(row.kind) ? row.before_json != null : before != null && (Array.isArray(before) ? before.length > 0 : before !== '');
   if (!knownBefore) throw Object.assign(new Error('不知道改动前的值，没法撤回'), { status: 400 });
   const label = targetLabel(row.kind, target);
   const saved = saveProposals({ title: `撤回：${label} 的${KINDS[row.kind]?.label ?? '改动'}`.slice(0, 100), summary: `撤回第 ${row.id} 条改动，改回原来的值`,

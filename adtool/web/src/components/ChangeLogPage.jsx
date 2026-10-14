@@ -20,7 +20,7 @@ const STATE_FILTERS = {
   failed: ['失败 / 未生效', (item) => ['failed', 'not_applied'].includes(item.status)],
   closed: ['已拒绝', (item) => ['rejected', 'superseded'].includes(item.status)],
 };
-const AI_LABEL = { claude: 'Claude', chatgpt: 'ChatGPT', revert: '撤回', manual: '手动', intel: '产品情报' };
+const AI_LABEL = { claude: 'Claude', chatgpt: 'ChatGPT', revert: '撤回', manual: '手动', intel: '产品情报', listing: 'Listing 板块' };
 const WEEKDAY = ['日', '一', '二', '三', '四', '五', '六'];
 const signed = (value, unit = '%') => (value == null ? null : `${value > 0 ? '+' : ''}${value}${unit}`);
 const dayTitle = (day) => `${day.slice(5).replace('-', '/')} 周${WEEKDAY[new Date(`${day}T00:00:00Z`).getUTCDay()]}`;
