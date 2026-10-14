@@ -205,6 +205,20 @@ test('Listing board: read every SKU, edit on the site, upload through the logged
     assert.equal(db.prepare('SELECT COUNT(*) AS n FROM pet_change_proposals').get().n, 0);
   });
 
+  await t.test('upload is checked by Amazon as a whole first; one bad field means nothing goes live', async () => {
+    gateway.previewIssues = [{ severity: 'ERROR', code: '90220', message: 'material is invalid', attributeNames: ['material'] }];
+    const result = await call('/listings/item/RR-S/submit', owner, { changes: [
+      { attribute: 'product_description', value: [{ value: 'Fine description' }] },
+      { attribute: 'material', value: [{ value: 'Oxford' }] },
+    ] });
+    gateway.previewIssues = [];
+    assert.equal(result.status, 200);
+    assert.equal(result.data.submitted.length, 0);
+    assert.equal(result.data.issues[0].code, '90220');
+    assert.equal(db.prepare('SELECT COUNT(*) AS n FROM pet_change_proposals').get().n, 0);
+    assert.equal(gateway.state['RR-S'].attributes.product_description[0].value, 'Old description');
+  });
+
   let ids;
   await t.test('upload goes straight to Amazon through the change queue and is logged as the owner\'s edit', async () => {
     const result = await call('/listings/item/RR-S/submit', owner, { reason: '补描述和材质', changes: [
@@ -220,6 +234,7 @@ test('Listing board: read every SKU, edit on the site, upload through the logged
     assert.deepEqual(result.data.submitted.map((item) => item.kind), ['listing_title', 'listing_bullets', 'listing_attribute', 'listing_attribute', 'listing_attribute']);
     await changes.waitForQueue();
     for (const id of ids) assert.equal(row(id).status, 'submitted', `#${id}`);
+    assert.equal((await call('/listings', owner)).data.rows.find((item) => item.sku === 'RR-S').openChanges, 5, '等亚马逊生效的也算没处理完');
     const attr = changes.shape(row(ids[3]));
     assert.equal(attr.kindLabel, '属性 Material（material）');
     assert.deepEqual(attr.before, []);
@@ -271,6 +286,7 @@ test('Listing board: read every SKU, edit on the site, upload through the logged
     assert.equal(one.schemas.PET_BED.material.title, 'Material');
     assert.ok(one.schemas.PET_BED.material.options.includes('Canvas'));
     await assert.rejects(listings.listingAttributesForAgent({ live: true }, deps), /1–10/);
+    assert.equal((await listings.listingAttributesForAgent({ style: '没有这个款' }, deps)).total, 0, '款式对不上不能返回全店');
 
     const proposed = await changes.proposeListingChanges({ title: '材质', changes: [
       { sku: 'RR-M', field: 'attribute', attribute: 'material', value: 'Oxford', reason: '图片 PT01 写的 900D Oxford' },

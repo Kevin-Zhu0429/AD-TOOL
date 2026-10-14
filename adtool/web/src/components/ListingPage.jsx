@@ -229,6 +229,7 @@ function Editor({ sku, owner, onBack, onNav }) {
     try {
       const data = await api.submitListing(sku, changes, reason);
       if (data.rejected?.length) setResult({ kind: 'rejected', rejected: data.rejected });
+      else if (data.issues) setResult({ kind: 'preview', ok: false, issues: data.issues, rejected: [], warnings: [] });
       else {
         setMessage(`已提交 ${data.submitted.length} 项，状态见下面「改动进度」；生效后会显示在改动日志里。`);
         setReason('');
@@ -314,7 +315,7 @@ function Editor({ sku, owner, onBack, onNav }) {
     </section>
 
     {result?.kind === 'preview' && <div className={`note ${result.ok ? 'ok' : 'err'}`} role="status">
-      {result.ok ? '亚马逊预检通过，可以上传。' : '预检没通过：'}
+      {result.ok ? '亚马逊预检通过，可以上传。' : '亚马逊预检没通过，什么都没上传：'}
       <ul>{(result.rejected ?? []).map((item, index) => <li key={`r${index}`}>{item.error}</li>)}
         {(result.issues ?? []).map((issue, index) => <li key={`i${index}`}>{issue.severity === 'ERROR' ? '错误' : '提醒'}：{issue.message}{issue.attributes?.length ? `（${issue.attributes.join(', ')}）` : ''}</li>)}</ul>
       {result.warnings?.length > 0 && <ul className="warn">{result.warnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul>}</div>}

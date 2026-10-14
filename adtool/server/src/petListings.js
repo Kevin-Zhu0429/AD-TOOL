@@ -135,7 +135,7 @@ function changeState() {
   for (const row of db.prepare(`SELECT kind, status, target_json, executed_at FROM pet_change_proposals WHERE kind LIKE 'listing_%'
     AND status IN ('pending','queued','running','submitted','applied','failed')`).all()) {
     const sku = lowerKey(parseJson(row.target_json, {}).sku);
-    if (['pending', 'queued', 'running', 'failed'].includes(row.status)) open.set(sku, (open.get(sku) ?? 0) + 1);
+    if (['pending', 'queued', 'running', 'submitted', 'failed'].includes(row.status)) open.set(sku, (open.get(sku) ?? 0) + 1);
     if (row.executed_at && (!recent.has(sku) || row.executed_at > recent.get(sku))) recent.set(sku, row.executed_at);
   }
   return { recent, open };
@@ -270,6 +270,12 @@ async function prepare(sku, changes, { gateway, env }) {
 export async function previewListingEdit(sku, changes, { gateway = amazonGateway, env = process.env } = {}) {
   const { account, listing, items, rejected } = await prepare(sku, changes, { gateway, env });
   if (!items.length) return { ok: false, rejected, issues: [], warnings: [] };
+  const result = await validateAll(account, listing, items, gateway);
+  return { ...result, ok: result.valid && !rejected.length, rejected };
+}
+
+/** 整批修改合成一次 VALIDATION_PREVIEW */
+async function validateAll(account, listing, items, gateway) {
   // 原价和促销价在同一个属性里,一起改时要合成一条
   const offer = items.filter((item) => item.kind === 'listing_price' || item.kind === 'listing_sale_price');
   const patches = items.filter((item) => !offer.includes(item)).map((item) => patchFor(item.kind, item.after, listing.attributes, [], item.target));
@@ -278,8 +284,8 @@ export async function previewListingEdit(sku, changes, { gateway = amazonGateway
     `/listings/2021-08-01/items/${encodeURIComponent(account.sellerId)}/${encodeURIComponent(listing.sku)}`,
     { query: { marketplaceIds: US_MARKETPLACE, mode: 'VALIDATION_PREVIEW', issueLocale: 'en_US' }, body: { productType: listing.productType, patches } });
   const issues = (preview?.issues ?? []).map((issue) => ({ severity: issue.severity, code: issue.code ?? null, message: clean(issue.message), attributes: issue.attributeNames ?? [] }));
-  return { ok: preview?.status !== 'INVALID' && !issues.some((issue) => issue.severity === 'ERROR') && !rejected.length, status: preview?.status ?? null,
-    issues, rejected, warnings: items.flatMap((item) => item.warnings.map((warning) => `${kindLabelOf(item.kind, item.target)}：${warning}`)) };
+  return { valid: preview?.status !== 'INVALID' && !issues.some((issue) => issue.severity === 'ERROR'), status: preview?.status ?? null,
+    issues, warnings: items.flatMap((item) => item.warnings.map((warning) => `${kindLabelOf(item.kind, item.target)}：${warning}`)) };
 }
 
 /**
@@ -288,8 +294,11 @@ export async function previewListingEdit(sku, changes, { gateway = amazonGateway
  * 有一条检查不过就整批不提交,免得只改了一半。
  */
 export async function submitListingEdit(sku, { changes, reason } = {}, { userId, gateway = amazonGateway, env = process.env, wait = SUBMIT_WAIT_MS } = {}) {
-  const { listing, items, rejected } = await prepare(sku, changes, { gateway, env });
+  const { account, listing, items, rejected } = await prepare(sku, changes, { gateway, env });
   if (rejected.length) return { submitted: [], rejected };
+  // 先整批预检一次:队列里是一条一条提交的,不先整批查,前面的改上去了后面的才被亚马逊拒
+  const check = await validateAll(account, listing, items, gateway);
+  if (!check.valid) return { submitted: [], rejected: [], issues: check.issues };
   const note = checkReason(reason);
   const why = note.error ? '店主在 Listing 板块直接修改' : note.text;
   const fields = items.map((item) => kindLabelOf(item.kind, item.target));
@@ -334,7 +343,9 @@ export async function listingAttributesForAgent({ skus = [], style, attributes =
     list.push(...db.prepare("SELECT sku FROM sku_items WHERE user_id=? AND country='US' AND lower(style) LIKE ?").all(PET_SHOP_ID, `%${wanted}%`).map((row) => row.sku));
   }
   list = [...new Set(list)];
-  const named = attributes.length ? new Set(attributes) : list.length ? null : new Set(DEFAULT_ATTRS);
+  // 指定了 SKU 或款式但一个都没对上,返回空,不能当成「看全店」
+  const filtered = skus.length > 0 || !!style;
+  const named = attributes.length ? new Set(attributes) : filtered ? null : new Set(DEFAULT_ATTRS);
   let rows;
   if (live) {
     if (!list.length || list.length > 10) throw new Error('实时读取要指定 1–10 个 SKU');
@@ -349,7 +360,7 @@ export async function listingAttributesForAgent({ skus = [], style, attributes =
   } else {
     const all = db.prepare('SELECT * FROM pet_listing_items ORDER BY sku').all();
     const wanted = new Set(list.map(lowerKey));
-    rows = all.filter((row) => !list.length || wanted.has(lowerKey(row.sku))).slice(0, limit).map((row) => ({ sku: row.sku, asin: row.asin,
+    rows = all.filter((row) => !filtered || wanted.has(lowerKey(row.sku))).slice(0, limit).map((row) => ({ sku: row.sku, asin: row.asin,
       product_type: row.product_type, status: parseJson(row.status_json, []), attributes: parseJson(row.attributes_json, {}), issues: parseJson(row.issues_json, []),
       synced_at: row.synced_at }));
   }
