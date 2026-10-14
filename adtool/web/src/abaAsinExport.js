@@ -1,4 +1,4 @@
-import { ASIN_COLUMNS } from '../../shared/abaAsin.js';
+import { ASIN_COLUMNS, ASIN_ALIGNMENT_LABELS } from '../../shared/abaAsin.js';
 
 export const ASIN_GROUP_EXPORT_COLUMNS = [
   { key: 'sku', label: 'SKU', text: true },
@@ -6,6 +6,8 @@ export const ASIN_GROUP_EXPORT_COLUMNS = [
   { key: 'query', label: '搜索词', text: true },
   { key: 'asin', label: 'ASIN', text: true },
   ...ASIN_COLUMNS.slice(2),
+  { key: 'alignment_status', label: '机型与 SKU 对应', text: true },
+  { key: 'alignment_reason', label: '型号核对说明', text: true },
 ];
 
 export function skusForAsinRow(row, data, params = {}) {
@@ -71,6 +73,8 @@ export function buildAsinGroupExport(data, params = {}) {
     if (column.key === 'sku') return identity.sku;
     if (column.key === 'recognition') return group.recognition;
     if (column.key === 'asin') return identity.asin;
+    if (column.key === 'alignment_status') return ASIN_ALIGNMENT_LABELS[queryRow.alignment?.status] ?? '';
+    if (column.key === 'alignment_reason') return queryRow.alignment?.reason ?? '';
     const value = column.key in markets[index] ? markets[index][column.key] : queryRow[column.key];
     if (value === null || value === undefined) return '';
     return column.rate ? value / 100 : value;
@@ -98,6 +102,8 @@ export function buildAsinQueryExport(data, params = {}) {
       periods: (row.periods ?? []).map((p) => `${p.week_end.slice(0, 4)} 第 ${p.week_number} 周 · ${p.week_start} — ${p.week_end}`).join('\n'),
       aggregation: data.aggregation === 'average' ? '周平均' : data.merged === false ? '逐周' : '合计',
       average_weeks: row.average_weeks ?? row.periods?.length ?? '',
+      alignment_status: ASIN_ALIGNMENT_LABELS[row.alignment?.status] ?? '',
+      alignment_reason: row.alignment?.reason ?? '',
       market_conflicts: (row.market_conflicts ?? []).map((c) => `${c.week_end} · ${c.query} · ${c.label}：${c.values.map((v) => `${v.asin} = ${v.value}`).join('；')}`).join('\n')
         + (row.conflict_count > 20 ? '\n仅列出前 20 项待核对数据' : ''),
     };

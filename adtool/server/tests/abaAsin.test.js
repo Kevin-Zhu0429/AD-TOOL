@@ -16,7 +16,7 @@ test('ASIN reports: authenticated storage, raw metrics, SKU linkage and filter b
   const login = async (username) => (await call('/auth/login', '', { username, password: 'local-test-password' })).cookie;
   const a = await login('aba-test'), b = await login('aba-other'), de = await login('aba-de');
   const route = '/aba/asin?marketplace=ES';
-  const get = async (q = '', cookie = a) => (await call(route + q, cookie)).data;
+  const get = async (q = '', cookie = a) => (await call(route + (q.includes('&alignment=') ? '' : '&alignment=all') + q, cookie)).data;
   const upload = (files, cookie = a) => call('/aba/asin/import', cookie, { marketplace: 'ES', files, user_id: 999 });
   await t.test('account and market authorization; uploaded empty report persists', async () => {
     assert.equal((await call(route)).status, 401);
@@ -208,6 +208,41 @@ test('ASIN reports: authenticated storage, raw metrics, SKU linkage and filter b
     const children = await get(params + '&group=' + encodeURIComponent(group.group.key));
     assert.equal(children.items.reduce((sum, r) => sum + r.asin_clicks, 0), group.asin_clicks);
     assert.equal((await get('&model=901&brand=alpha&weeks=2026-08-29&aggregation=average')).aggregation, 'sum');
+  });
+  await t.test('ENVY6000 excludes 304 sources by default, retains raw ASIN metrics and supports mismatch export', async () => {
+    server.db.prepare('INSERT INTO lib_items(lib,scope,brand,term,series,printer,dedupe) VALUES(?,?,?,?,?,?,?)')
+      .run('D', 'EU', 'HP', '305', 'ENVY', '6000', 'asin-envy-alignment');
+    await call('/sku/rows', a, { rows: [
+      { country: 'ES', sku: 'ENVY-WRONG-304', brand: 'CE', model: '304', asin: 'B000004304' },
+      { country: 'ES', sku: 'ENVY-RIGHT-305', brand: 'CE', model: '305XL', asin: 'B000004305' },
+    ] });
+    const row = ['hp envy6000 ink', 100, 1000, 100, 20, 200, 10, 5];
+    await upload(['B000004304', 'B000004305', 'B000004399'].flatMap((asin) => [
+      { name: asin + '-40.csv', text: asinFixture({ asin, week: 40, start: '2026-09-27', end: '2026-10-03', rows: [row] }) },
+      { name: asin + '-41.csv', text: asinFixture({ asin, week: 41, start: '2026-10-04', end: '2026-10-10', rows: [row] }) },
+    ]));
+    const scope = '&weeks=2026-10-03,2026-10-10&q=envy';
+    const normal = (await call(route + scope, a)).data; // actual API default
+    assert.equal(normal.total, 2);
+    assert.equal(normal.alignmentSummary.mismatchRecords, 2);
+    assert.equal(normal.items.some((r) => r.asin === 'B000004304'), false);
+    assert.equal(normal.items.find((r) => r.asin === 'B000004305').asin_purchases, 10);
+    assert.equal(normal.items.find((r) => r.asin === 'B000004399').alignment.status, 'insufficient');
+    const mismatched = await get(scope + '&alignment=mismatch');
+    assert.equal(mismatched.total, 1);
+    assert.equal(mismatched.items[0].asin, 'B000004304');
+    assert.equal(mismatched.items[0].asin_purchases, 10);
+    assert.equal(mismatched.items[0].alignment.status, 'mismatch');
+    assert.equal((await get(scope + '&model=304&alignment=normal')).total, 0);
+    const average = await get(scope + '&alignment=mismatch&aggregation=average');
+    assert.equal(average.items[0].asin_purchases, 5);
+    const grouped = await get(scope + '&alignment=mismatch&view=printers&export=1');
+    assert.equal(grouped.items[0].query_rows[0].alignment.status, 'mismatch');
+    const child = await get(scope + '&alignment=mismatch&group=' + encodeURIComponent(grouped.items[0].group.key));
+    assert.equal(child.items[0].asin, 'B000004304');
+    assert.equal((await get(scope + '&alignment=all')).total, 3);
+    assert.equal(server.db.prepare(`SELECT SUM(q.asin_purchases) n FROM aba_asin_queries q JOIN aba_asin_reports r ON r.id=q.report_id WHERE r.asin='B000004304'`).get().n, 10);
+    assert.equal((await get(scope + '&alignment=all', b)).total, 0);
   });
   if (process.env.ASIN_SAMPLE_DIR) await t.test('all four real reports preserve source totals, including header-only week', async () => {
     const files = fs.readdirSync(process.env.ASIN_SAMPLE_DIR).filter((f) => f.endsWith('.csv')).map((name) => ({ name, text: fs.readFileSync(path.join(process.env.ASIN_SAMPLE_DIR, name), 'utf8') }));

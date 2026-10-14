@@ -1,7 +1,7 @@
 // ABA ASIN 周报的查询、匹配、聚合、排序。只依赖传进来的 db,主线程和 worker 线程都能调用。
 import { regionOf } from '../libs.js';
 import { ABA_PAGE_SIZES, abaMatcher } from '../../../shared/aba.js';
-import { ASIN_COLUMNS, asinModelOptions, aggregateAsinView } from '../../../shared/abaAsin.js';
+import { ASIN_COLUMNS, asinModelOptions, aggregateAsinView, asinQueryAlignment } from '../../../shared/abaAsin.js';
 
 /** 算出和页码无关的完整结果(排好序的全部行 + 筛选项);翻页只是在它上面切片 */
 export function buildAsinView(db, userId, market, query, scope = 'private') {
@@ -43,6 +43,14 @@ export function buildAsinView(db, userId, market, query, scope = 'private') {
   const dRows = db.prepare("SELECT brand, term, series, printer FROM lib_items WHERE lib='D' AND scope=?").all(regionOf(market).id);
   const wordType = ['printer', 'cartridge'].includes(query.wordType) ? query.wordType : 'all';
   const match = abaMatcher(String(query.q ?? '').slice(0, 1000), dRows, true, wordType === 'printer' ? 'printer' : 'all');
+  const alignmentFilter = ['all', 'mismatch'].includes(query.alignment) ? query.alignment : 'normal';
+  const alignmentSummary = { mismatchRecords: 0, reviewRecords: 0, excludedRecords: 0 };
+  const skusByAsin = new Map();
+  for (const sku of skuItems) {
+    if (!skusByAsin.has(sku.asin)) skusByAsin.set(sku.asin, []);
+    skusByAsin.get(sku.asin).push(sku);
+  }
+  const alignments = new Map();
   const rows = [];
   if (selected.size) {
     const raw = shared
@@ -58,9 +66,18 @@ export function buildAsinView(db, userId, market, query, scope = 'private') {
       if (wordType === 'printer' && !matching.hasPrinter) continue;
       if (wordType === 'cartridge' && matching.hasPrinter) continue;
       if (query.group && matching.group.key !== query.group) continue;
+      const alignmentKey = JSON.stringify([report.asin, row.query]);
+      if (!alignments.has(alignmentKey)) alignments.set(alignmentKey, asinQueryAlignment(matching, skusByAsin.get(report.asin) ?? []));
+      const alignment = alignments.get(alignmentKey);
+      if (alignment.status === 'mismatch') alignmentSummary.mismatchRecords++;
+      if (['review', 'insufficient'].includes(alignment.status)) alignmentSummary.reviewRecords++;
+      if ((alignmentFilter === 'normal' && alignment.status === 'mismatch')
+        || (alignmentFilter === 'mismatch' && alignment.status !== 'mismatch')) {
+        alignmentSummary.excludedRecords++; continue;
+      }
       rows.push({ ...row, asin: report.asin, week_start: report.week_start, week_end: report.week_end,
         week_number: report.week_number, recognition: matching.group.kind === 'other' ? '墨盒 KW 词' : matching.group.label,
-        candidates: matching.candidates, group: matching.group });
+        candidates: matching.candidates, group: matching.group, alignment });
     }
   }
   const average = query.aggregation === 'average' && selectedWeeks.length > 1;
@@ -80,7 +97,7 @@ export function buildAsinView(db, userId, market, query, scope = 'private') {
     unlinkedAsins: [...new Set(dated.filter((r) => !skuItems.some((s) => s.asin === r.asin && String(s.model ?? '').trim())).map((r) => r.asin))],
     asins: [...new Set(brandReports.map((r) => r.asin))], skuItems: filteredSkus, weeks, selectedWeeks,
     selectedReportCount: selected.size, hasModelLibrary: !!dRows.length, total: items.length, recordCount: rows.length,
-    items, exportAll, sort, direction, merged, view, aggregation: average ? 'average' : 'sum' };
+    items, exportAll, sort, direction, merged, view, alignmentFilter, alignmentSummary, aggregation: average ? 'average' : 'sum' };
 }
 
 /** 从完整结果里切出请求的那一页；两种视图导出时都返回全部筛选结果。 */

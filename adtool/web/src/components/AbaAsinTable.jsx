@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState } from 'react';
 import { api } from '../api.js';
-import { ASIN_COLUMNS } from '../../../shared/abaAsin.js';
+import { ASIN_COLUMNS, ASIN_ALIGNMENT_LABELS } from '../../../shared/abaAsin.js';
 import { skusForAsinRow } from '../abaAsinExport.js';
 import { AbaPagination } from './AbaTable.jsx';
 
@@ -10,7 +10,7 @@ const percent = new Intl.NumberFormat('zh-CN', { minimumFractionDigits: 2, maxim
 function Identity({ row, data, params, hideCodes = false }) {
   const asins = row.asins ?? [row.asin];
   const skus = skusForAsinRow(row, data, params);
-  return <>{!hideCodes && <><small className="aba-asin-id">{row.series_model ? `${row.series_model} · 合并 ${asins.length} 个 ASIN` : row.asin}</small>{row.series_model && <details className="aba-prices"><summary>查看来源 ASIN</summary>{asins.map((asin) => <span key={asin}>{asin}</span>)}</details>}{skus.length ? skus.map((s) => <small className="aba-asin-sku" key={s.id}>{[s.sku, s.brand, s.model ? `${s.model} 系列` : '', s.setGroup].filter(Boolean).join(' · ')}</small>) : <small className="aba-asin-sku">未关联 SKU · 可在 SKU 库补充 ASIN</small>}</>}
+  return <>{row.alignment && ['mismatch', 'review', 'insufficient'].includes(row.alignment.status) && <small className={'aba-asin-alignment ' + (row.alignment.status === 'mismatch' ? 'mismatch' : 'review')}>{ASIN_ALIGNMENT_LABELS[row.alignment.status]}：{row.alignment.reason}</small>}{!hideCodes && <><small className="aba-asin-id">{row.series_model ? `${row.series_model} · 合并 ${asins.length} 个 ASIN` : row.asin}</small>{row.series_model && <details className="aba-prices"><summary>查看来源 ASIN</summary>{asins.map((asin) => <span key={asin}>{asin}</span>)}</details>}{skus.length ? skus.map((s) => <small className="aba-asin-sku" key={s.id}>{[s.sku, s.brand, s.model ? `${s.model} 系列` : '', s.setGroup].filter(Boolean).join(' · ')}</small>) : <small className="aba-asin-sku">未关联 SKU · 可在 SKU 库补充 ASIN</small>}</>}
     {!!row.conflict_count && <details className="aba-prices aba-market-conflict"><summary>市场数据待核对 · {row.conflict_count} 项</summary>{row.market_conflicts.map((c, i) => <span key={i}>{c.week_end} · {c.query} · {c.label}：{c.values.map((v, valueIndex) => `${hideCodes ? `来源 ${valueIndex + 1}` : v.asin} = ${number.format(v.value)}`).join('；')}</span>)}{row.conflict_count > 20 && <span>仅显示前 20 项；展开分类内搜索词可逐词核对。</span>}</details>}
     {!!row.average_weeks && <small className="aba-asin-sku">周平均 · 按实际出现 {row.average_weeks} 周计算</small>}
     {row.averaged_queries && <small className="aba-asin-sku">各搜索词周平均之和</small>}

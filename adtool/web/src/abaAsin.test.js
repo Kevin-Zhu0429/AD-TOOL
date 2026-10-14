@@ -1,7 +1,30 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseAsinReport, parseAsinUpload, mergeAsinRows, asinRates, aggregateAsinSeries, asinModelOptions, aggregateAsinView } from '../../shared/abaAsin.js';
+import { parseAsinReport, parseAsinUpload, mergeAsinRows, asinRates, aggregateAsinSeries, asinModelOptions, aggregateAsinView, asinQueryAlignment } from '../../shared/abaAsin.js';
+import { abaMatcher } from '../../shared/aba.js';
 import { asinFixture, asinFirst, asinSecond, mergedFixture } from '../../server/tests/abaAsinFixture.js';
+
+test('printer/SKU compatibility flags ENVY6000 on 304, accepts 305XL and keeps incomplete or ambiguous cases for review', () => {
+  const match = abaMatcher('', [
+    { brand: 'HP', term: '305', series: 'ENVY', printer: '6000' },
+    { brand: 'HP', term: '304', series: 'DESKJET', printer: '3700' },
+    { brand: 'HP', term: '305', series: 'DESKJET', printer: '3700' },
+    { brand: 'HP', term: '303', series: 'PHOTOSMART', printer: '3700' },
+  ]);
+  const envy = match('hp envy 6000 ink');
+  assert.equal(asinQueryAlignment(envy, [{ model: '304' }]).status, 'mismatch');
+  assert.equal(asinQueryAlignment(envy, [{ model: '305XL', brand: 'CE' }]).status, 'matched');
+  assert.deepEqual(asinQueryAlignment(envy, [{ model: '304' }]).expectedModels, ['305']);
+  assert.equal(asinQueryAlignment(envy, []).status, 'insufficient');
+  assert.equal(asinQueryAlignment(envy, [{ model: '305' }, { model: '' }]).status, 'insufficient');
+  assert.equal(asinQueryAlignment(envy, [{ model: '305' }, { model: '304' }]).status, 'review');
+  assert.equal(asinQueryAlignment(envy, [{ model: '304/305' }]).status, 'review');
+  assert.equal(asinQueryAlignment(envy, [{ model: '305/305XL' }]).status, 'matched');
+  assert.equal(asinQueryAlignment(envy, [{ model: '305 Series' }]).status, 'review');
+  assert.equal(asinQueryAlignment(match('hp deskjet 3700 ink'), [{ model: '304' }]).status, 'matched');
+  assert.equal(asinQueryAlignment(match('hp 3700 ink'), [{ model: '304' }]).status, 'review');
+  assert.equal(asinQueryAlignment(match('generic ink'), [{ model: '304' }]).status, 'unrecognized');
+});
 
 test('ASIN identity and week come only from A1/C1, even when filename conflicts', () => {
   const r = parseAsinReport(asinFirst.text, 'DE_B999999999_Week_2000_01_01.csv', 'ES');

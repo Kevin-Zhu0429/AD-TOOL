@@ -37,6 +37,8 @@ try {
   };
   await idle();
   assert.match(await view.locator('.aba-table-empty').innerText(), /还没有 ASIN 报告/);
+  // Existing raw-report regression cases intentionally include incompatible traffic.
+  await view.getByLabel('机型与 SKU', { exact: true }).selectOption('all');
   await attach([{ name: 'invalid.csv', text: 'bad' }]);
   assert.match(await view.locator('.aba-file').innerText(), /A1/);
   assert.equal(await view.getByRole('button', { name: '上传并保存' }).isDisabled(), true);

@@ -32,6 +32,40 @@ export function asinRates(row) {
     asin_cvr: ratio(row.asin_purchases, row.asin_clicks), brand_share: ratio(row.asin_purchases, row.market_purchases) };
 }
 
+/** Compare recognized printer compatibility with the source ASIN's actual SKU models. */
+export function asinQueryAlignment(matching, skus = []) {
+  const sourceModels = [...new Set(skus.map((s) => String(s.model ?? '').trim()).filter(Boolean))];
+  const expectedModels = [...new Set((matching.printers ?? []).flatMap((p) => p.terms
+    .flatMap((term) => String(term).split(/[,，、;；/|]+/)).map((term) => term.trim()).filter(Boolean)))];
+  const result = (status, reason) => ({ status, sourceModels, expectedModels, reason });
+  if (!matching.hasPrinter) return result('unrecognized', '搜索词未明确识别机型');
+  if (matching.group?.kind !== 'printer' || !expectedModels.length
+    || (matching.printers ?? []).some((p) => !/[a-z]/i.test(String(p.key ?? '').split('|')[1] ?? '')))
+    return result('review', '搜索词有多个候选或机型对应关系不明确，请核对词库');
+  if (!skus.length || skus.some((s) => !String(s.model ?? '').trim()))
+    return result('insufficient', '来源 ASIN 未完整关联 SKU 型号，请补充 SKU 库资料');
+  const expected = new Set(expectedModels.map(modelKey));
+  const sourceKeys = [...new Set(sourceModels.flatMap((model) => model.split(/[,，、;；/|]+/)).map(modelKey))];
+  if (sourceKeys.some((key) => !expected.has(key) && !/^\d+$/.test(key)))
+    return result('review', `来源 SKU 型号格式或对应关系不明确：${sourceModels.join(' / ')}，请核对 SKU 库`);
+  const supported = sourceKeys.filter((key) => expected.has(key));
+  if (supported.length === sourceKeys.length) return result('matched', `机型兼容 ${expectedModels.join(' / ')}，来源 SKU 型号匹配`);
+  if (supported.length) return result('review', `同一来源 ASIN 关联的 SKU 型号不一致：${sourceModels.join(' / ')}，请核对 SKU 库`);
+  return result('mismatch', `机型对应 ${expectedModels.join(' / ')}，来源 SKU 是 ${sourceModels.join(' / ')}，型号不匹配`);
+}
+
+export const ASIN_ALIGNMENT_LABELS = { matched: '型号匹配', mismatch: '型号不匹配', review: '对应关系待核对', insufficient: 'SKU 资料不足', unrecognized: '未识别机型' };
+
+function mergeAlignment(a, b) {
+  if (!a || a === b) return b;
+  if (!b) return a;
+  const sourceModels = [...new Set([...a.sourceModels, ...b.sourceModels])];
+  const expectedModels = [...new Set([...a.expectedModels, ...b.expectedModels])];
+  if (a.status !== b.status) return { status: 'review', sourceModels, expectedModels, reason: '部分来源 SKU 的型号对应关系需要核对，请展开明细查看' };
+  return { ...a, sourceModels, expectedModels,
+    reason: a.status === 'mismatch' ? `机型对应 ${expectedModels.join(' / ')}，来源 SKU 是 ${sourceModels.join(' / ')}，型号不匹配` : a.reason };
+}
+
 export function asinModelOptions(skuItems, reportAsins) {
   const available = new Set(reportAsins);
   const models = new Map();
@@ -58,6 +92,7 @@ export function aggregateAsinSeries(rows, { view = 'queries', mergeWeeks = true,
       query: view === 'printers' ? row.recognition : row.query, asins: new Set(), periods: new Map(), candidates: new Set(), queries: new Set(), market: new Map(),
       ...Object.fromEntries(ASIN_COUNT_KEYS.map((k) => [k, 0])) });
     const group = groups.get(key);
+    group.alignment = mergeAlignment(group.alignment, row.alignment);
     group.asins.add(row.asin); group.queries.add(row.query);
     row.candidates.forEach((c) => group.candidates.add(c));
     group.periods.set(row.week_end, { week_start: row.week_start, week_end: row.week_end, week_number: row.week_number });
@@ -191,6 +226,7 @@ export function mergeAsinRows(rows) {
       grouped.set(key, item);
     }
     for (const k of ASIN_COUNT_KEYS) item[k] += row[k];
+    item.alignment = mergeAlignment(item.alignment, row.alignment);
     item.periods.push({ week_start: row.week_start, week_end: row.week_end, week_number: row.week_number });
   }
   return [...grouped.values()].map((row) => ({ ...row, periods: row.periods.sort((a, b) => b.week_end.localeCompare(a.week_end)) }));
@@ -259,6 +295,7 @@ export function groupAsinRows(rows) {
     if (!groups.has(key)) groups.set(key, { ...row, key, query: row.recognition, periods: new Map(), queries: new Set(), candidates: new Set(),
       ...Object.fromEntries(ASIN_COUNT_KEYS.map((k) => [k, 0])) });
     const group = groups.get(key);
+    group.alignment = mergeAlignment(group.alignment, row.alignment);
     group.queries.add(row.query);
     row.candidates.forEach((v) => group.candidates.add(v));
     group.periods.set(row.week_end, { week_start: row.week_start, week_end: row.week_end, week_number: row.week_number });
