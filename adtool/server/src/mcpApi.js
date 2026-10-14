@@ -13,6 +13,7 @@ import { abaRouter } from './aba.js';
 import { abaPublicRouter } from './abaPublic.js';
 import { captainRouter } from './captain.js';
 import { agedFeesRouter } from './agedFees.js';
+import { listingsRouter } from './listings.js';
 import { bumpOnWrite } from './workers/pool.js';
 
 const api = express();
@@ -20,7 +21,7 @@ api.disable('x-powered-by');
 api.use(bumpOnWrite);
 for (const [name, router] of Object.entries({ auth: authRouter, neg: negRouter,
   sku: skuRouter, portfolio: portfolioRouter, products: productRouter,
-  aba: abaRouter, 'aba-public': abaPublicRouter, captain: captainRouter, 'aged-fees': agedFeesRouter })) {
+  aba: abaRouter, 'aba-public': abaPublicRouter, captain: captainRouter, 'aged-fees': agedFeesRouter, listings: listingsRouter })) {
   api.use(`/api/${name}`, router);
 }
 api.use((_req, res) => res.status(404).json({ error: '接口不存在' }));

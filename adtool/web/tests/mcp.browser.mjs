@@ -47,6 +47,10 @@ try {
   await page.screenshot({ path: output + 'mcp-auth-desktop.png', fullPage: true });
   assert.equal(await page.locator('#u').evaluate((el) => document.activeElement === el), true);
   await page.keyboard.press('Tab'); assert.equal(await page.locator('#p').evaluate((el) => document.activeElement === el), true);
+  params.delete('scope'); await page.goto(url + '/authorize?' + params);
+  assert.match(await page.locator('main').innerText(), /读写授权/);
+  assert.match(await page.locator('main').innerText(), /Listing 修改及变体关系到亚马逊/);
+  assert.equal(await page.locator('input[name=scope]').inputValue(), 'ink:read ink:write');
   params.set('scope', 'ink:read'); await page.goto(url + '/authorize?' + params);
   assert.match(await page.locator('main').innerText(), /只读授权/); assert.doesNotMatch(await page.locator('main').innerText(), /读写授权/);
   await page.getByLabel('网站用户名').fill('aba-test'); await page.getByLabel('密码', { exact: true }).fill('local-test-password');

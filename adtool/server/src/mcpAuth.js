@@ -76,7 +76,7 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline
 </style></head><body><main>
 <h1>授权 AI 连接墨盒广告工作台</h1>
 <p><b>${escapeHtml(client.client_name || 'AI 客户端')}</b> 请求连接本网站。授权后它可以：</p>
-<ul><li>按你的账号权限查看 SKU、库存、词库、产品情报、广告组合和 ABA 报告</li><li>生成广告批量表、分析广告数据、计算仓储费</li>${params.scopes?.includes(MCP_WRITE_SCOPE) ? '<li><b>读写授权：允许导入、编辑和删除网站数据，并启动同步任务；仍受网站权限限制</b></li>' : '<li>只读授权：仅查询和计算，不允许维护或删除网站数据</li>'}</ul>
+<ul><li>按你的账号权限查看 SKU、库存、词库、产品情报、广告组合、ABA 报告和 Listing</li><li>生成广告批量表、分析广告数据、计算仓储费</li>${params.scopes?.includes(MCP_WRITE_SCOPE) ? '<li><b>读写授权：允许导入、编辑和删除网站数据，启动同步任务；超级管理员可提交 Listing 修改及变体关系到亚马逊，仍受网站权限限制</b></li>' : '<li>只读授权：仅查询和计算，不允许维护或删除网站数据</li>'}</ul>
 <p class="err" id="auth-error" role="alert" ${error ? '' : 'hidden'}>${escapeHtml(error)}</p>
 <form method="post" action="/authorize" novalidate>${fields}
 <label for="u">网站用户名</label><input id="u" type="text" name="username" autocomplete="username" value="${escapeHtml(username)}" required ${error ? 'aria-invalid="true" aria-describedby="auth-error"' : 'autofocus'}>
@@ -131,7 +131,7 @@ export function createOAuthProvider({ resourceUrl }) {
     res.set('X-Frame-Options', 'DENY');
     res.set('Content-Security-Policy', `default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'nonce-${nonce}'; form-action 'self' https://chatgpt.com https://claude.ai https://claude.com http://localhost:* http://127.0.0.1:*; frame-ancestors 'none'`);
     checkResource(params.resource);
-    const scopes = params.scopes?.length ? params.scopes : [MCP_SCOPE];
+    const scopes = params.scopes?.length ? params.scopes : [MCP_SCOPE, MCP_WRITE_SCOPE];
     if (!scopes.includes(MCP_SCOPE) || scopes.some((scope) => ![MCP_SCOPE, MCP_WRITE_SCOPE].includes(scope))) {
       throw new InvalidTargetError('Request ink:read and optionally ink:write');
     }

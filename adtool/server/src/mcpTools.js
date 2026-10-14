@@ -5,6 +5,8 @@ import { db, audit } from './db.js';
 import { canRead, publicUser } from './auth.js';
 import { MARKETPLACES, LIBS } from './libs.js';
 import { MCP_WRITE_SCOPE } from './mcpAuth.js';
+import { registerListingTools } from './mcpListingTools.js';
+import { AMAZON_MARKETPLACES } from './spApi.js';
 import { invokeApi } from './mcpApi.js';
 import * as auto from '../../shared/adEngine.js';
 import * as manual from '../../shared/manualEngine.js';
@@ -81,8 +83,8 @@ export function workbookResult(aoa, sheet, format = 'rows', filename = '广告�
 }
 
 export function createInkMcpServer({ authInfo, siteUrl = '' } = {}) {
-  const server = new McpServer({ name: 'adtool-ink', version: '1.0.0' }, { instructions:
-    '墨盒广告工作台。先用 workspace_overview 确认账号、站点和权限。私有报告、SKU 和组合归当前授权账号；公共 ABA 和仓储费为共享数据。写工具要求 ink:write。广告工具生成批量文件，需上传亚马逊后台才生效。浏览器未保存的优化表不能直接读取，调用时提供表头和行数据。分页查询请继续 nextOffset/page。' });
+  const server = new McpServer({ name: 'adtool-ink', version: '1.1.0' }, { instructions:
+    '墨盒广告工作台。先用 workspace_overview 确认账号、站点和权限。私有报告、SKU 和组合归当前授权账号；公共 ABA 和仓储费为共享数据。写工具要求 ink:write。Listing 工具仅超级管理员可用；validate 工具只校验，submit/merge/detach 工具会正式修改亚马逊 Listing，需用户明确要求该具体修改。广告工具生成批量文件，需上传亚马逊后台才生效。浏览器未保存的优化表不能直接读取，调用时提供表头和行数据。分页查询请继续 nextOffset/page。' });
   function user() {
     const row = db.prepare('SELECT * FROM users WHERE id=?').get(authInfo?.extra?.userId);
     if (!row?.is_active) throw new Error('账号不存在或已停用，请重新授权');
@@ -97,7 +99,7 @@ export function createInkMcpServer({ authInfo, siteUrl = '' } = {}) {
         user();
         if (write && !authInfo?.scopes?.includes(MCP_WRITE_SCOPE)) throw new Error('当前是只读授权，此工具需要 ink:write；请重新连接并选择读写授权');
         const data = await handler(args);
-        if (write) audit(user().id, args.marketplace ?? null, 'mcp_call', 'mcp_tool', null, { name });
+        if (write) audit(user().id, args.marketplace ?? args.country ?? null, 'mcp_call', 'mcp_tool', null, { name });
         return { content: [{ type: 'text', text: JSON.stringify(data) }], structuredContent: data };
       } catch (error) { return { content: [{ type: 'text', text: error.message }], isError: true }; }
     });
@@ -112,7 +114,8 @@ export function createInkMcpServer({ authInfo, siteUrl = '' } = {}) {
   }
 
   tool('workspace_overview', '查看墨盒工作台账号、权限、站点、各模块工具及数据归属。', {}, async () => ({
-    user: user(), siteUrl, scopes: authInfo?.scopes ?? [], markets: MARKETPLACES, libraries: LIBS,
+    user: user(), siteUrl, scopes: authInfo?.scopes ?? [], canWrite: authInfo?.scopes?.includes(MCP_WRITE_SCOPE) ?? false,
+    listingAccess: user().role === 'owner', listingMarkets: Object.keys(AMAZON_MARKETPLACES), markets: MARKETPLACES, libraries: LIBS,
     notes: ['SKU、组合、私有 ABA 按授权账号隔离；owner 可显式读取全部 SKU，但只能编辑自己的 SKU。',
       '公共 ABA 和超龄仓储费共享。广告批量表需另行上传亚马逊后台。库存 stock 为可用+转运+接收，transit 为处理中+已发货。'] }));
   route('list_skus', '查询本人 SKU、墨盒型号、套组、ASIN、在库/在途库存及断货补货记录。owner 可用 scope=all 只读查看全账号。',
@@ -325,5 +328,6 @@ export function createInkMcpServer({ authInfo, siteUrl = '' } = {}) {
         return { ...workbookResult([model.header, ...opt.buildExportRows(model, changeSet)], auto.SHEET, args.format, `${args.marketplace}_ad_changes.xlsx`),
           changes: opt.changeList(model, changeSet), warnings: issues.filter((issue) => issue.level !== 'error') };
       });
+  registerListingTools({ tool, api, page });
   return server;
 }

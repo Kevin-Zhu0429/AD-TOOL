@@ -65,6 +65,11 @@ export function mountMcp(app, { publicUrl = process.env.MCP_PUBLIC_URL, deps = {
     if (req.headers.origin && req.headers.origin !== issuerUrl.origin) {
       return res.status(403).json({ error: 'Origin not allowed' });
     }
+    // 新连接请求完整读写范围；已授权的只读令牌仍可查询，由工具逐项校验写权限。
+    if (!req.headers.authorization) {
+      res.set('WWW-Authenticate', `Bearer scope="${MCP_SCOPE} ${MCP_WRITE_SCOPE}", resource_metadata="${getOAuthProtectedResourceMetadataUrl(resourceUrl)}"`);
+      return res.status(401).json({ error: 'invalid_token', error_description: 'Authorization required' });
+    }
     next();
   });
   // 无状态:每个请求新建一个 MCP 服务和传输,直接返回 JSON,不开 SSE 长连接,反向代理不用改配置

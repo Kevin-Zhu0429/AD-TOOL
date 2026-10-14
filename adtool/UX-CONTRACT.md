@@ -252,6 +252,7 @@
 
 - 业务来源：`server/src/mcpAuth.js` 的 `ink:read` / `ink:write` 授权范围，以及 `server/src/auth.js` 的角色、站点和模块权限。
 - 授权页展示实际请求范围；只读查询不提供数据维护权，读写授权不会提升原网站权限。
+- 新连接默认申请读写；显式只读和旧令牌保持只读。授权页说明 owner 的 Listing 正式提交与变体修改权限，Listing 写工具仍受网站角色和正式提交开关限制。
 - `loginPage` 是独立授权表单的唯一所有者；样式变量由 `web/src/index.css` 通过 `/mcp-auth.css` 提供。
 - 登录错误保持用户名，密码始终不回填；内联错误供辅助技术读取，密码默认隐藏并可显隐，提交期间防重复操作。
 - 验证：`server/tests/mcp.test.js` 和 `web/tests/mcp.browser.mjs`。

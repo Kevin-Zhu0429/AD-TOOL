@@ -1,6 +1,6 @@
 # 墨盒版 MCP 接入
 
-main 分支的墨盒广告工作台提供 58 个 MCP 工具。入口为现有网站的 `/mcp`，使用官方 MCP SDK 的 Streamable HTTP、OAuth 授权码和 PKCE，复用网站账号、SQLite 数据和业务接口。宠物版仍由其原分支维护。
+main 分支的墨盒广告工作台提供 71 个 MCP 工具。入口为现有网站的 `/mcp`，使用官方 MCP SDK 的 Streamable HTTP、OAuth 授权码和 PKCE，复用网站账号、SQLite 数据和业务接口。宠物版仍由其原分支维护。
 
 ## 开启服务
 
@@ -27,6 +27,7 @@ docker compose up -d --build
 
 - `ink:read`：查询、分析、计算和生成批量表。
 - `ink:read ink:write`：额外允许网站数据维护、账号管理及库存/公共 ABA 同步。授权页明确显示这一范围。
+- 新连接的未认证响应会申请 `ink:read ink:write`；授权请求没有指定 scope 时默认读写。显式请求 `ink:read` 仍保持只读，旧令牌和刷新令牌不会自动扩大权限。当前只读连接需在部署后断开并重新授权，客户端需申请两个范围。
 
 所有在用账号都可授权。MCP 每次工具调用重新读取账号的角色、站点和功能权限；只读令牌无法调用写工具，普通运营无法调用 owner 工具。停用或删除账号后令牌立即失效，修改站点或模块权限后下一次调用生效。
 
@@ -57,6 +58,7 @@ HTTP 客户端配置格式示例（具体字段以客户端要求为准）：
 | 模块 | 工具 |
 |---|---|
 | 工作台 | `workspace_overview` |
+| Listing | `list_listing_stores`、`get_listing_edit_schema`、`list_listings`、`get_listing`、`refresh_listing`、`pull_listings`、`get_listing_pull`、`validate_listing_changes`、`submit_listing_changes`、`validate_listing_variation_merge`、`merge_listing_variations`、`validate_listing_variation_detach`、`detach_listing_variation` |
 | SKU | `list_skus`、`import_skus`、`update_sku`、`delete_skus` |
 | 广告组合 | `list_portfolios`、`import_portfolios`、`update_portfolio`、`delete_portfolios`、`match_portfolio` |
 | 否定词与机型 | `get_negative_library`、`import_negative_library`、`update_negative_entry`、`delete_negative_entries`、`configure_negative_library`、`plan_negatives`、`list_cartridge_series` |
@@ -95,7 +97,19 @@ HTTP 客户端配置格式示例（具体字段以客户端要求为准）：
 
 导出变更使用 `edits=[{rowIndex,field,value}]`，字段为 `bid`、`defaultBid`、`dailyBudget`、`percentage` 或 `state`。字段必须与实体类型匹配，数值、状态、竞价下限和溢价范围均校验；状态按原表中文/英文转换。可用 `negatives` 新建活动或广告组否定，活动和组编号必须属于传入基准表。
 
-生成/导出工具仅返回批量表。亚马逊广告实际变更在人工核对并上传后台后生效。没有加入宠物版的 Listing 或实时广告修改功能，因为 main 墨盒版没有这些业务模块。
+生成/导出工具仅返回批量表。亚马逊广告实际变更在人工核对并上传后台后生效。Listing 工具复用 main 的 Listings Items API；广告批量工具不会直接修改亚马逊广告。
+
+## Listing 读写
+
+Listing 仅 owner 可用，按 `brand` 和 `country` 定位卖家账号；站点枚举包含 SE、BE，实际可用品牌和站点由 `list_listing_stores` 返回，不返回 SP-API 凭证。
+
+先用 `pull_listings` 拉取整店，轮询 `get_listing_pull` 到 done，再通过 `list_listings` 分页搜索、`get_listing` 读取完整属性。`refresh_listing` 会更新本地缓存，要求读写授权。`get_listing_edit_schema` 返回可编辑属性和正式提交开关。
+
+`validate_listing_changes` 只发亚马逊校验；`submit_listing_changes` 会自动先校验，再正式提交。两者输入 `brand/country/sku/changes`，changes 为属性名对应的亚马逊对象数组或 null(删除)，只允许 `item_name`、`bullet_point`、`product_description`、`generic_keyword`、`purchasable_offer`、`page_yield`。提交时保留其他语言、站点和 B2B 报价。校验失败返回 blocked，不继续正式提交。
+
+变体工具使用 `parentSku` 或 `newParent={sku,itemName,brand,category}`，并提供 `theme`、`children=[{sku,values}]`，最多50个子体。`fill` 可补充 GDPR、危险品、电池和原产国字段。validate 工具只校验，merge/detach 工具正式修改关系。新父体创建后子体可能失败，检查返回的 parent/results，避免重复提交成功项。ACCEPTED 表示亚马逊接收，生效情况需刷新确认。
+
+全部 Listing 写工具要求 `ink:write`，正式工具带破坏性及外部访问标记，保留网站的 `LISTINGS_LIVE_SUBMIT=false` 紧急关闭开关，校验工具不受该开关影响。该开关默认开启正式提交，无需另加 true。MCP 写操作记录工具名和站点审计，不记录属性内容。连接读写授权并不授权任意具体商品变更，正式提交应对应用户明确要求的改动。
 
 品牌 ABA 导入 `files=[{name,text}]`；ASIN 导入支持 CSV 的同样结构或 `{name:"merged.xlsx",sheets:[{name,rows}]}`，二维表保留原 AI/AJ 的 ASIN 与日期来源。单次最多 10 个文件，大小与报告归属按现有接口校验。
 

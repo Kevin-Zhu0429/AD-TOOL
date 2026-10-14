@@ -74,6 +74,7 @@ test('ink MCP: OAuth, permissions, business tools and exports', async (t) => {
     assert.deepEqual(metadata.scopes_supported, ['ink:read', 'ink:write']);
     const denied = await post('/mcp', '{}', { 'content-type': 'application/json' });
     assert.equal(denied.status, 401); assert.match(denied.headers.get('www-authenticate'), /resource_metadata/);
+    assert.match(denied.headers.get('www-authenticate'), /scope="ink:read ink:write"/);
     assert.equal((await post('/mcp', '{}', { 'content-type': 'application/json', origin: 'https://evil.example' })).status, 403);
     assert.throws(() => mcpUrls('http://evil.example')); assert.throws(() => mcpUrls('ftp://localhost'));
     const disabled = express(); mountMcp(disabled, { publicUrl: '' });
@@ -97,6 +98,17 @@ test('ink MCP: OAuth, permissions, business tools and exports', async (t) => {
   const staffTokens = await grant('aba-test', 'ink:read ink:write');
   const ownerTokens = await grant('aba-other', 'ink:read ink:write');
   const reader = await connect(readTokens.access_token), staff = await connect(staffTokens.access_token), owner = await connect(ownerTokens.access_token);
+  await t.test('new connections request write scope without escalating existing read grants', async () => {
+    const proof = pkce(), params = authorize(proof); delete params.scope;
+    const html = await (await fetch(url + '/authorize?' + form(params))).text();
+    assert.match(html, /读写授权/); assert.match(html, /Listing 修改及变体关系到亚马逊/);
+    const response = await post('/authorize', form({ ...params, username: 'aba-other', password: 'local-test-password' }));
+    const code = new URL(response.headers.get('location')).searchParams.get('code');
+    const issued = await (await exchange({ grant_type: 'authorization_code', code, code_verifier: proof.verifier, redirect_uri: CALLBACK })).json();
+    assert.equal(issued.scope, 'ink:read ink:write');
+    assert.equal((await call(reader, 'workspace_overview')).canWrite, false);
+    assert.equal((await call(owner, 'workspace_overview')).canWrite, true);
+  });
   await t.test('tools discover, inputs validate and read scopes cannot write', async () => {
     const tools = (await owner.listTools()).tools;
     assert.ok(tools.length >= 45); assert.equal(new Set(tools.map((x) => x.name)).size, tools.length);
@@ -255,6 +267,96 @@ test('ink MCP: OAuth, permissions, business tools and exports', async (t) => {
     await call(staff, 'correct_aged_sales', { id: record.id, special: true, value: 2, reason: '促销', revision: 0 });
     await fail(owner, 'correct_aged_sales', { id: record.id, special: true, value: 3, reason: '', revision: 0 }, /已被其他/);
     assert.equal((await call(owner, 'get_aged_storage_fees')).rows[0].correction.revision, 1);
+  });
+  await t.test('Listing tools reuse owner gates, cache, validation and actual submit paths', async () => {
+    const env = { BRAND1_NAME: 'MCP-LIST', BRAND1_MARKETS: 'ES,SE,BE', BRAND1_LWA_CLIENT_ID: 'listing-client',
+      BRAND1_LWA_CLIENT_SECRET: 'listing-secret', BRAND1_LWA_REFRESH_TOKEN_EU: 'listing-refresh', BRAND1_SELLER_ID_EU: 'MCPSELLER' };
+    const keys = [...Object.keys(env), 'LISTINGS_LIVE_SUBMIT'];
+    const previous = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+    const originalFetch = global.fetch;
+    const { spApiTiming } = await import('../src/spApi.js');
+    const interval = spApiTiming.minIntervalMs; spApiTiming.minIntervalMs = 0;
+    const requests = [];
+    const item = (sku) => ({ sku, summaries: [{ marketplaceId: 'A1RKKUPIHCS9HS', productType: 'INK_OR_TONER', itemName: sku }],
+      attributes: { item_name: [{ value: sku, language_tag: 'es_ES', marketplace_id: 'A1RKKUPIHCS9HS' }] } });
+    Object.assign(process.env, env); delete process.env.LISTINGS_LIVE_SUBMIT;
+    global.fetch = async (input, init = {}) => {
+      const target = new URL(String(input));
+      if (target.hostname === '127.0.0.1') return originalFetch(input, init);
+      const json = (body) => new Response(JSON.stringify(body), { headers: { 'content-type': 'application/json' } });
+      if (target.href === 'https://api.amazon.com/auth/o2/token') return json({ access_token: 'listing-token', expires_in: 3600 });
+      assert.equal(target.hostname, 'sellingpartnerapi-eu.amazon.com');
+      const entry = { method: init.method ?? 'GET', mode: target.searchParams.get('mode'),
+        path: target.pathname, body: init.body ? JSON.parse(init.body) : undefined };
+      requests.push(entry);
+      if (entry.method === 'PATCH' || entry.method === 'PUT') {
+        const blocked = JSON.stringify(entry.body).includes('BAD');
+        return json({ status: blocked ? 'INVALID' : entry.mode ? 'VALID' : 'ACCEPTED', submissionId: 'listing-submit',
+          issues: blocked ? [{ severity: 'ERROR', code: 'bad-title', message: '标题不合规' }] : [] });
+      }
+      if (target.pathname.endsWith('/MCPSELLER')) return json({ numberOfResults: 3, items: ['PARENT', 'CHILD', 'CHILD2'].map(item) });
+      return json(item(decodeURIComponent(target.pathname.split('/').pop())));
+    };
+    try {
+      const store = { brand: 'MCP-LIST', country: 'ES' };
+      const ownerReader = await connect((await grant('aba-other', 'ink:read')).access_token);
+      await fail(staff, 'list_listing_stores', {}, /权限/);
+      const stores = await call(owner, 'list_listing_stores');
+      assert.equal(stores.liveSubmit, true); assert.ok(stores.stores.some((row) => row.country === 'SE'));
+      const schema = await call(owner, 'get_listing_edit_schema'); assert.ok(schema.editableAttributes.includes('purchasable_offer'));
+      const tools = (await owner.listTools()).tools;
+      assert.equal(tools.length, 71);
+      assert.equal(tools.find((row) => row.name === 'submit_listing_changes').annotations.destructiveHint, true);
+      assert.equal(tools.find((row) => row.name === 'refresh_listing').annotations.readOnlyHint, false);
+      await fail(ownerReader, 'pull_listings', store, /ink:write/);
+      await call(owner, 'pull_listings', store);
+      let job;
+      for (let attempt = 0; attempt < 100; attempt++) {
+        ({ job } = await call(owner, 'get_listing_pull', store)); if (job?.status !== 'running') break;
+      }
+      assert.equal(job.status, 'done', job.error); assert.equal(job.result.count, 3);
+      const list = await call(ownerReader, 'list_listings', { ...store, q: 'CHILD', limit: 1 });
+      assert.equal(list.total, 2); assert.equal(list.nextOffset, 1);
+      const next = await call(owner, 'list_listings', { ...store, q: 'CHILD', offset: 1, limit: 1 });
+      assert.notEqual(next.items[0].sku, list.items[0].sku);
+      assert.equal((await call(ownerReader, 'get_listing', { ...store, sku: 'CHILD' })).item.sku, 'CHILD');
+      const count = requests.length;
+      await fail(ownerReader, 'refresh_listing', { ...store, sku: 'CHILD' }, /ink:write/);
+      assert.equal(requests.length, count);
+      await call(owner, 'refresh_listing', { ...store, sku: 'CHILD' });
+      const edited = { ...store, sku: 'CHILD', changes: { item_name: [{ value: 'Updated', language_tag: 'es_ES', marketplace_id: 'A1RKKUPIHCS9HS' }] } };
+      await fail(ownerReader, 'submit_listing_changes', edited, /ink:write/);
+      await fail(staff, 'submit_listing_changes', edited, /权限/);
+      await fail(owner, 'submit_listing_changes', { ...edited, changes: { brand: [{ value: 'illegal' }] } });
+      let before = requests.length;
+      assert.equal((await call(owner, 'validate_listing_changes', { ...edited, live: true })).mode, 'preview');
+      assert.deepEqual(requests.slice(before).map((r) => r.mode), ['VALIDATION_PREVIEW']);
+      before = requests.length;
+      assert.equal((await call(owner, 'submit_listing_changes', edited)).status, 'ACCEPTED');
+      assert.deepEqual(requests.slice(before).map((r) => r.mode), ['VALIDATION_PREVIEW', null]);
+      assert.equal((await call(owner, 'get_listing', { ...store, sku: 'CHILD' })).row.itemName, 'Updated');
+      before = requests.length;
+      const blocked = await call(owner, 'submit_listing_changes', { ...edited, changes: { item_name: [{ value: 'BAD' }] } });
+      assert.equal(blocked.blocked, true); assert.equal(requests.length, before + 1);
+      process.env.LISTINGS_LIVE_SUBMIT = 'false'; before = requests.length;
+      await fail(owner, 'submit_listing_changes', edited, /关闭了正式提交/); assert.equal(requests.length, before);
+      assert.equal((await call(owner, 'validate_listing_changes', edited)).mode, 'preview');
+      delete process.env.LISTINGS_LIVE_SUBMIT;
+      const merge = { ...store, parentSku: 'PARENT', theme: 'COLOR', children: [{ sku: 'CHILD', values: { color: 'Black' } }] };
+      assert.equal((await call(owner, 'validate_listing_variation_merge', merge)).results[0].mode, 'preview');
+      assert.equal((await call(owner, 'merge_listing_variations', merge)).results[0].status, 'ACCEPTED');
+      const child = { ...store, sku: 'CHILD' };
+      assert.equal((await call(owner, 'validate_listing_variation_detach', child)).mode, 'preview');
+      assert.equal((await call(owner, 'detach_listing_variation', child)).status, 'ACCEPTED');
+      const created = await call(owner, 'merge_listing_variations', { ...store, theme: 'COLOR', newParent: { sku: 'NEW-P', itemName: 'New parent', brand: 'MCP-LIST', category: '123' },
+        children: [{ sku: 'CHILD2', values: { color: 'Color' } }], fill: { batteries_required: false, country_of_origin: 'CN' } });
+      assert.equal(created.parent.status, 'ACCEPTED'); assert.equal(created.results[0].status, 'ACCEPTED');
+      const audit = backend.db.prepare("SELECT marketplace,detail FROM audit_log WHERE action='mcp_call' ORDER BY id DESC LIMIT 1").get();
+      assert.equal(audit.marketplace, 'ES'); assert.match(audit.detail, /merge_listing_variations/);
+    } finally {
+      global.fetch = originalFetch; spApiTiming.minIntervalMs = interval;
+      for (const key of keys) { if (previous[key] === undefined) delete process.env[key]; else process.env[key] = previous[key]; }
+    }
   });
   await t.test('refresh rotates and account deactivation invalidates access and refresh', async () => {
     const escalated = await exchange({ grant_type: 'refresh_token', refresh_token: readTokens.refresh_token, scope: 'ink:read ink:write' });
