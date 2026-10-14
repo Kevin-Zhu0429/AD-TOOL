@@ -1,11 +1,14 @@
 import { getMotionQuality } from '../motionQuality.js';
-import { CARD_VERTEX, GRAINY_FRAGMENT, AURORA_FRAGMENT, WAVES_FRAGMENT } from './cardShaderSources.js';
+import { CARD_VERTEX, GRAINY_FRAGMENT, AURORA_FRAGMENT, WAVES_FRAGMENT, SILK_FRAGMENT, LINE_WAVES_FRAGMENT } from './cardShaderSources.js';
 
 // One WebGL2 context and clock. Render each original shader once and copy its
 // matching strips to the curved cards, without one shader per DOM segment.
 let renderer;
 let generation = 0;
-const FRAGMENTS = { gradient: GRAINY_FRAGMENT, aurora: AURORA_FRAGMENT, waves: WAVES_FRAGMENT };
+const FRAGMENTS = { gradient: GRAINY_FRAGMENT, aurora: AURORA_FRAGMENT, waves: WAVES_FRAGMENT, silk: SILK_FRAGMENT, lines: LINE_WAVES_FRAGMENT };
+const hexRgb = (hex) => [1, 3, 5].map((offset) => parseInt(hex.slice(offset, offset + 2), 16) / 255);
+const SILK_COLOR = hexRgb('#b8b0e0');
+const LINE_COLORS = ['#6366f1', '#a855f7', '#38bdf8'].map(hexRgb);
 
 const mixColor = (a, b, amount) => a.map((value, index) => value * (1 - amount) + b[index] * amount);
 function themeRgb(value) {
@@ -119,6 +122,18 @@ function createRenderer() {
       for (const [name, value] of Object.entries({ uAmplitude: 1, uBlend: .5, uHeight: .62, uScale: 1,
         uGlow: .6, uBrightness: 1, uFlip: 0, uReveal: 1, uOpacity: 1, uLightMode: 0 })) f(name, value);
       n('uLayers', 2); v3('uPointer', 0, 0, 0);
+    } else if (effect === 'silk') {
+      // React Bits Silk, light preset: speed 5 (flow 0.5 / s), lilac cloth, no bloom pass.
+      v2('uView', width, height); f('uTime', time * .5);
+      for (const [name, value] of Object.entries({ uScale: 1, uRotation: 0, uWave: 1, uRipple: 1, uFold: 1,
+        uNoiseIntensity: 1.5, uDepth: .5, uSheen: .5, uLightMode: light ? 1 : 0 })) f(name, value);
+      v3('uColor', ...SILK_COLOR); v3('uSheenColor', 1, 1, 1); v3('uLight', -.55, .7, 0);
+      v2('uStep', 1 / 290, 1 / 330);
+    } else if (effect === 'lines') {
+      v3('uResolution', width, height, width / height); f('uTime', time);
+      for (const [name, value] of Object.entries({ uSpeed: .3, uInnerLines: 32, uOuterLines: 36, uWarpIntensity: 1,
+        uRotation: -Math.PI / 4, uEdgeFadeWidth: 0, uColorCycleSpeed: 1, uBrightness: .2, uLightMode: light ? 1 : 0 })) f(name, value);
+      v3('uColor1', ...LINE_COLORS[0]); v3('uColor2', ...LINE_COLORS[1]); v3('uColor3', ...LINE_COLORS[2]);
     } else {
       v2('iResolution', width, height); f('iTime', time);
       for (const [name, value] of Object.entries({ uSpeed: .4, uAmplitude: 2.5, uWaveScale: .6, uWaveRatio: .9,
@@ -166,7 +181,8 @@ function createRenderer() {
     if (moving && previous) time += Math.min((now - previous) / 1000, .12);
     previous = moving ? now : 0;
     try {
-      const effects = new Set([...groups.values()].filter((group) => dirty || active(group)).map((group) => group.effect));
+      // Read effects from the strips themselves: a card switches effect when the theme changes.
+      const effects = new Set([...subscribers].filter((sub) => dirty || active(sub.group)).map((sub) => sub.effect));
       for (const effect of effects) {
         const cache = paint(effect);
         for (const sub of subscribers) if (sub.effect === effect && (dirty || active(sub.group))) copy(sub, cache);
@@ -198,7 +214,7 @@ function createRenderer() {
       const card = canvas.closest('.circular-carousel__card'), root = canvas.closest('.circular-carousel'), showcase = canvas.closest('.home-showcase');
       let group = groups.get(card);
       if (!group) {
-        group = { card, root, showcase, effect, count: 0 }; groups.set(card, group);
+        group = { card, root, showcase, count: 0 }; groups.set(card, group);
         observer.observe(card, { attributes: true, attributeFilter: ['data-motion-side'] });
         observer.observe(root, { attributes: true, attributeFilter: ['data-motion-hidden'] });
         observer.observe(showcase, { attributes: true, attributeFilter: ['data-effects-paused'] });

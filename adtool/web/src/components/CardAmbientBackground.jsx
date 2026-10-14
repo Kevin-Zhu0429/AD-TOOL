@@ -7,9 +7,14 @@ const EFFECTS = {
   library: 'aurora', skus: 'gradient', portfolios: 'aurora', products: 'gradient',
   tools: 'gradient', agedFees: 'waves', admin: 'aurora',
 };
+// 浅色主题:原来三种保留一部分,另加丝绸(silk)和斜向线条(lines),相邻卡片尽量不重复
+const LIGHT_EFFECTS = {
+  ...EFFECTS,
+  builder: 'silk', optimizer: 'lines', skus: 'silk', portfolios: 'lines', tools: 'silk', admin: 'lines',
+};
 
-export default function CardAmbientBackground({ id, slice }) {
-  const effect = EFFECTS[id] || 'gradient';
+export default function CardAmbientBackground({ id, slice, light }) {
+  const effect = (light ? LIGHT_EFFECTS : EFFECTS)[id] || 'gradient';
   const canvasRef = useRef(null);
   const { axis, offset, size, cardWidth, cardHeight, back } = slice;
   useEffect(() => {

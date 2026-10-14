@@ -58,7 +58,7 @@ try {
   const shaderCanvas = page.locator('.card-ambient-canvas').first();
   assert.equal(await shaderCanvas.getAttribute('data-renderer'), 'webgl2', await shaderCanvas.getAttribute('data-shader-error') || 'Expected the supplied GLSL shaders');
   await page.locator('.card-ambient-canvas[data-shader-frame]').first().waitFor();
-  for (const [effect, index] of [['waves', 0], ['aurora', 1], ['gradient', 2]]) {
+  for (const [effect, index] of [['waves', 0], ['silk', 1], ['gradient', 2], ['lines', 3], ['aurora', 4]]) {
     const texture = await page.locator(`[data-cc-index="${index}"] .card-ambient-canvas`).evaluateAll((strips) => {
       const bitmap = document.createElement('canvas'); bitmap.width = 290; bitmap.height = 330;
       const painter = bitmap.getContext('2d');
@@ -69,7 +69,7 @@ try {
   }
   assert.equal(await page.locator('.card-ambient-canvas').evaluateAll((canvases) => new Set(canvases.map((canvas) => canvas.dataset.shaderContext)).size), 1, 'All strips share one WebGL2 context');
   assert.equal(await page.locator('.circular-carousel__card').evaluateAll((cards) => cards.every((card) => card.querySelector('.card-ambient'))), true);
-  assert.equal(await page.locator('.card-ambient').evaluateAll((backgrounds) => new Set(backgrounds.map((node) => node.dataset.effect)).size), 3);
+  assert.equal(await page.locator('.card-ambient').evaluateAll((backgrounds) => new Set(backgrounds.map((node) => node.dataset.effect)).size), 5, 'Light theme adds silk and line waves');
   await page.waitForTimeout(100);
   const staticFrame = await shaderCanvas.getAttribute('data-shader-frame');
   await page.waitForTimeout(150);
@@ -113,6 +113,8 @@ try {
   await assertEventually(() => active().innerText(), 'DE 站否定词库');
   await page.getByRole('button', { name: '切换主题', exact: true }).click();
   assert.equal(await page.locator('html').getAttribute('data-theme'), 'dark');
+  assert.deepEqual(await page.locator('.card-ambient').evaluateAll((backgrounds) => [...new Set(backgrounds.map((node) => node.dataset.effect))].sort()),
+    ['aurora', 'gradient', 'waves'], 'Dark theme keeps the original three effects');
   await page.locator('.shell-main').evaluate((element) => { element.scrollTop = 0; });
   await page.screenshot({ path: output + 'home-carousel-dark.png', fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
