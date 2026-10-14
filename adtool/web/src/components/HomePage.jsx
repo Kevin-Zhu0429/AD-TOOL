@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api.js';
 import { useReducedMotion } from '../useReducedMotion.js';
-import { useMotionQuality } from '../motionQuality.js';
+import { getMotionReason, useMotionQuality } from '../motionQuality.js';
 import { hasUnseen, visibleChangelog, visibleVersion } from '../changelog.js';
 import Icon from './Icon.jsx';
 import CloudShader from './CloudShader.jsx';
@@ -111,7 +111,9 @@ export default function HomePage({ user, market, onNav, theme, onOpenChangelog }
             <p id="home-carousel-help">左右拖动切换，点击两侧卡片移到正中，点击正中卡片进入。也可用方向键切换、回车进入。</p>
           </div>
           <button className="btn sm home-carousel-play" disabled={reducedMotion || stillMotion} aria-pressed={reducedMotion || stillMotion || paused}
-            title={stillMotion && !reducedMotion ? '这台电脑的浏览器没有用上显卡加速,为了不卡已改成静态画面;打开浏览器设置里的「使用图形加速」后刷新即可恢复' : undefined}
+            title={stillMotion && !reducedMotion ? (getMotionReason() === 'software'
+              ? '这台电脑的浏览器没有用上显卡加速,为了不卡已改成静态画面;打开浏览器设置里的「使用图形加速」后刷新即可恢复'
+              : '这台电脑播放首页动画太卡,已改成静态画面;7 天后会重新检测') : undefined}
             onClick={() => setPaused((value) => !value)}>
             {reducedMotion ? '动态效果已关闭' : stillMotion ? '已切换静态画面' : paused ? '继续动效' : '暂停动效'}
           </button>

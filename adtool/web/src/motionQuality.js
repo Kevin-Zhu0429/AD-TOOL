@@ -41,6 +41,8 @@ export function usesSoftwareGraphics() {
 }
 
 let pinned = false;
+// 为什么降档:'software' 浏览器没用上显卡(每次打开都重新检测,打开图形加速后刷新即恢复),'fps' 实测太卡
+let reason = '';
 
 function initial() {
   try {
@@ -50,9 +52,16 @@ function initial() {
       pinned = true;
       return saved.quality;
     }
-    if (LEVELS.includes(saved?.quality) && saved.quality !== 'full' && Date.now() - saved.at < RETEST_DAYS * 864e5) return saved.quality;
+    if (LEVELS.includes(saved?.quality) && saved.quality !== 'full' && Date.now() - saved.at < RETEST_DAYS * 864e5) {
+      if (usesSoftwareGraphics()) reason = 'software';
+      else reason = 'fps';
+      return reason === 'software' ? 'static' : saved.quality;
+    }
   } catch { /* 隐私模式等读不到本机存储时按检测结果处理 */ }
-  if (usesSoftwareGraphics()) return 'static';
+  if (usesSoftwareGraphics()) {
+    reason = 'software';
+    return 'static';
+  }
   return navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 2 ? 'lite' : 'full';
 }
 
@@ -65,9 +74,14 @@ export function getMotionQuality() {
   return quality;
 }
 
+export function getMotionReason() {
+  return reason;
+}
+
 function setMotionQuality(next) {
   if (next === quality) return;
   quality = next;
+  reason = 'fps';
   samples = [];
   slowWindows = 0;
   try {

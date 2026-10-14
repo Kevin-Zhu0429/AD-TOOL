@@ -307,9 +307,11 @@ export default function CloudShader({
     };
 
     // 系统开了「减弱动态效果」就只画一帧静止的云,不再占 GPU
+    // 改画布尺寸会清空画面,静止的云(减弱动态效果或 static 档)要补画一帧
+    let lastElapsed = 0;
     const observer = new ResizeObserver(() => {
       resize();
-      if (reduceMotion) render(0);
+      if (reduceMotion || getMotionQuality() === 'static') render(lastElapsed);
     });
     observer.observe(canvas);
     resize();
@@ -328,7 +330,8 @@ export default function CloudShader({
       }
       if (!lite || now - last >= 1000 / 30 - 2) {
         last = now;
-        render(((now - start) / 1000) * paramsRef.current.speed);
+        lastElapsed = ((now - start) / 1000) * paramsRef.current.speed;
+        render(lastElapsed);
       }
       // 没有显卡加速的电脑只留一帧静止的云
       if (getMotionQuality() === 'static') return;
