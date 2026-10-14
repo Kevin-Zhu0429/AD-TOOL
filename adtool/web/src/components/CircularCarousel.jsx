@@ -714,10 +714,16 @@ const CircularCarousel = ({
   useLayoutEffect(() => {
     for (const card of cardRefs.current) {
       if (!card) continue;
+      // React keeps matching strips across layout changes; clear the culling we wrote on them so a
+      // preset without culling does not inherit hidden strips. The next frame culls again if needed.
+      for (const tile of card.__ccTiles || []) {
+        tile.__ccHidden = undefined;
+        tile.style.display = '';
+      }
       card.__ccTiles = card.__ccShades = card.__ccDepth = undefined;
     }
     wakeRef.current();
-  }, [tiles, list, layout.backfaces]);
+  }, [tiles, list, layout]);
 
   useLayoutEffect(() => {
     measureRef.current();

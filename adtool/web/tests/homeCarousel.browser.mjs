@@ -160,7 +160,11 @@ try {
   const stopped = await transform(); await page.waitForTimeout(400);
   assert.equal(await transform(), stopped, 'Paused ring should settle');
   await page.getByRole('button', { name: '继续动效', exact: true }).click();
-  await page.locator('.home-log').scrollIntoViewIfNeeded();
+  // Pad the page so the carousel can leave the screen however short the latest changelog entry is.
+  await page.locator('.shell-main').evaluate((element) => {
+    element.querySelector('.home').style.paddingBottom = '1200px';
+    element.scrollTop = element.scrollHeight;
+  });
   await page.waitForTimeout(250);
   assert.equal(await page.locator('.circular-carousel').getAttribute('data-motion-hidden'), '');
   const hiddenFrame = await background.getAttribute('data-shader-frame');
