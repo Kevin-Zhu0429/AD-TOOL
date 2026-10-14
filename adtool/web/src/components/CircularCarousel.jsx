@@ -4,6 +4,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useReducedMotion } from '../useReducedMotion.js';
+import { reportFrameGap, useMotionQuality } from '../motionQuality.js';
 
 import './CircularCarousel.css';
 
@@ -121,6 +122,8 @@ const PRESETS = {
 
 const INTRO_LENGTH = { assemble: 1500, rise: 1400, spin: 1800, none: 0 };
 const TILES = 8;
+// Weak graphics: fewer curved strips per card, still smooth enough to read as a bend.
+const LITE_TILES = 5;
 const OVERLAP = 2.5;
 const DRAG_THRESHOLD = 5;
 const SPRING = 118;
@@ -129,6 +132,7 @@ const CAPTION_SPACE = 76;
 const SWAP_LENGTH = 700;
 const SWAP_SPREAD = 420;
 const TO_RAD = Math.PI / 180;
+const CULL_MARGIN = 0.16;
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 const wrap = degrees => ((((degrees + 180) % 360) + 360) % 360) - 180;
@@ -226,8 +230,10 @@ const CircularCarousel = ({
     return Math.max(chord + (arc - chord) * curveValue, along * 0.6);
   }, [count, along, gap, curveValue, layout.spread]);
 
+  const quality = useMotionQuality();
+  const tileCount = quality === 'lite' ? LITE_TILES : TILES;
   const tiles = useMemo(() => {
-    const total = curveValue > 0.001 ? TILES : 1;
+    const total = curveValue > 0.001 ? tileCount : 1;
     const length = along / total;
     const bend = curveValue > 0.001 ? radius / curveValue : 0;
     return Array.from({ length: total }, (_, index) => {
@@ -243,9 +249,9 @@ const CircularCarousel = ({
         axis === 'x'
           ? `translate3d(0px, ${shift}px, ${depth}px) rotateX(${-turn}deg)`
           : `translate3d(${shift}px, 0px, ${depth}px) rotateY(${turn}deg)`;
-      return { index, total, start, end, size: end - start, move };
+      return { index, total, start, end, size: end - start, move, turn: axis === 'x' ? 0 : turn };
     });
-  }, [along, axis, curveValue, layout.inward, radius]);
+  }, [along, axis, curveValue, layout.inward, radius, tileCount]);
 
   const rootRef = useRef(null);
   const stageRef = useRef(null);
@@ -308,6 +314,7 @@ const CircularCarousel = ({
     depthFade: clamp(depthFade, 0, 1),
     captions,
     reduced,
+    cull: layout.backfaces && axis === 'y' && !layout.inward && !layout.billboard,
     html: Boolean(renderItem)
   };
   const settingsRef = useRef(settings);
@@ -556,6 +563,8 @@ const CircularCarousel = ({
       }
       const angle = state.angle + spinOffset;
       const R = s.radius * swell;
+      // A strip on the outside of the ring faces the camera while cos(angle) is above this value.
+      const horizon = s.perspective ? R / (s.perspective + R) : 0;
 
       if (s.axis === 'x') {
         camera.style.transform = `translate3d(0, 0, ${-R}px) rotateY(${s.tilt + state.yaw}deg) rotateX(${state.pitch}deg)`;
@@ -591,8 +600,28 @@ const CircularCarousel = ({
         const motionSide = facing > 0.08 ? 'front' : 'rear';
         if (card.dataset.motionSide !== motionSide) card.dataset.motionSide = motionSide;
         if (s.layout.inward) card.style.visibility = Math.abs(world) > 86 ? 'hidden' : '';
-        const fade = s.depthFade * Math.pow((1 - facing) / 2, 1.25);
-        card.style.setProperty('--cc-depth', fade.toFixed(3));
+        if (s.cull) {
+          // Only the side of each curved strip that can face the camera is displayed. The browser
+          // would still composite the hidden side of every strip, which is what drops frames on
+          // weak graphics.
+          card.__ccTiles ||= card.querySelectorAll(':scope > .circular-carousel__tile');
+          for (const tile of card.__ccTiles) {
+            const face = Math.cos((world + Number(tile.dataset.turn)) * TO_RAD) - horizon;
+            const hide = tile.hasAttribute('data-backface') ? face > CULL_MARGIN : face < -CULL_MARGIN;
+            if (tile.__ccHidden !== hide) {
+              tile.__ccHidden = hide;
+              tile.style.display = hide ? 'none' : '';
+            }
+          }
+        }
+        // Write the depth fade straight onto the shades: a custom property on the card would
+        // restyle the whole card subtree on every frame.
+        const fade = (s.depthFade * Math.pow((1 - facing) / 2, 1.25)).toFixed(3);
+        if (card.__ccDepth !== fade) {
+          card.__ccDepth = fade;
+          card.__ccShades ||= card.querySelectorAll('.circular-carousel__shade');
+          for (const shade of card.__ccShades) shade.style.opacity = fade;
+        }
       }
 
       const index = ((Math.round(-state.angle / s.step) % s.count) + s.count) % s.count || 0;
@@ -607,6 +636,7 @@ const CircularCarousel = ({
       raf = 0;
       const s = settingsRef.current;
       const dt = state.last ? Math.min((now - state.last) / 1000, 0.05) : 1 / 60;
+      if (state.last) reportFrameGap(now - state.last);
       state.last = now;
       const busy = advance(s, dt, now);
       render(s, now);
@@ -680,6 +710,20 @@ const CircularCarousel = ({
       document.removeEventListener('visibilitychange', onVisibility);
     };
   }, []);
+
+  useLayoutEffect(() => {
+    for (const card of cardRefs.current) {
+      if (!card) continue;
+      // React keeps matching strips across layout changes; clear the culling we wrote on them so a
+      // preset without culling does not inherit hidden strips. The next frame culls again if needed.
+      for (const tile of card.__ccTiles || []) {
+        tile.__ccHidden = undefined;
+        tile.style.display = '';
+      }
+      card.__ccTiles = card.__ccShades = card.__ccDepth = undefined;
+    }
+    wakeRef.current();
+  }, [tiles, list, layout]);
 
   useLayoutEffect(() => {
     measureRef.current();
@@ -900,6 +944,7 @@ const CircularCarousel = ({
         className="circular-carousel__tile"
         style={{ ...box, transform: tile.move + (back ? flip : '') }}
         aria-hidden="true"
+        data-turn={tile.turn.toFixed(2)}
         data-backface={back ? '' : undefined}
       >
         <div
@@ -953,6 +998,7 @@ const CircularCarousel = ({
       tabIndex={0}
       data-axis={axis}
       data-shape={shape}
+      data-quality={quality}
       data-ready={ready ? '' : undefined}
       data-draggable={draggable ? '' : undefined}
       data-dragging={dragging ? '' : undefined}

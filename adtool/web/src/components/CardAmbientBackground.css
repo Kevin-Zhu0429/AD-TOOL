@@ -26,5 +26,11 @@
 .card-ambient--waves .card-ambient-fallback {
   background: linear-gradient(150deg, var(--accent-soft), var(--ring-soft) 45%, transparent 85%);
 }
+.card-ambient--silk .card-ambient-fallback {
+  background: linear-gradient(160deg, var(--ring-soft), var(--panel) 45%, var(--accent-soft) 70%, transparent 90%);
+}
+.card-ambient--lines .card-ambient-fallback {
+  background: repeating-linear-gradient(135deg, var(--accent-soft) 0 2px, transparent 2px 9px);
+}
 .card-ambient-canvas[data-renderer='fallback'] { opacity: 0; }
 .home-ring-copy, .home-ring-foot, .home-ring-mark { z-index: 1; }

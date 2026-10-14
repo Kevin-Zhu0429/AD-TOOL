@@ -24,10 +24,10 @@ function homeEntries(user, market) {
   ].filter((entry) => !Object.hasOwn(entry, 'visible') || entry.visible);
 }
 
-function CarouselEntry({ entry, slice }) {
+function CarouselEntry({ entry, slice, light }) {
   return (
     <div className={`home-ring-card ${entry.tone}`}>
-      <CardAmbientBackground id={entry.id} slice={slice} />
+      <CardAmbientBackground id={entry.id} slice={slice} light={light} />
       <span className="home-ring-mark"><Icon name={entry.icon} size={66} /></span>
       <div className="home-ring-copy">
         <span className="home-ring-title">{entry.title}</span>
@@ -131,7 +131,7 @@ export default function HomePage({ user, market, onNav, theme, onOpenChangelog }
             cornerRadius={18}
             parallax={0.12}
             stretch={0.2}
-            renderItem={(entry, _index, slice) => <CarouselEntry entry={entry} slice={slice} />}
+            renderItem={(entry, _index, slice) => <CarouselEntry entry={entry} slice={slice} light={theme === 'light'} />}
             selectedIndex={selection.index}
             selectionVersion={selection.revision}
             ariaLabel="工作台功能轮播"

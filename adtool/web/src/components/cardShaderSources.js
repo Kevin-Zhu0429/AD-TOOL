@@ -2,6 +2,8 @@
 // Gradient Shader Card: https://21st.dev/@daniel__designs/components/gradient-shader-card
 // Aurora: https://reactbits.dev/backgrounds/aurora
 // Gradient Waves: https://reactbits.dev/backgrounds/gradient-waves
+// Silk: https://reactbits.dev/backgrounds/silk (light composite only, without the bloom pass)
+// Line Waves: https://reactbits.dev/backgrounds/line-waves
 // The gradient shader uses GLSL 300 syntax to share the same WebGL2 renderer.
 export const CARD_VERTEX = `#version 300 es
 in vec2 aPosition;
@@ -577,3 +579,203 @@ void main() {
 }
 
 `;
+
+export const SILK_FRAGMENT = `#version 300 es
+precision highp float;
+uniform vec2 uView;
+uniform float uScale;
+uniform float uRotation;
+uniform float uTime;
+uniform float uWave;
+uniform float uRipple;
+uniform float uFold;
+uniform vec3 uColor;
+uniform vec3 uSheenColor;
+uniform float uNoiseIntensity;
+uniform float uDepth;
+uniform float uSheen;
+uniform float uLightMode;
+uniform vec3 uLight;
+uniform vec2 uStep;
+out vec4 outColor;
+
+const float e = 2.71828182845904523536;
+
+float noise(vec2 texCoord) {
+  float G = e;
+  vec2 r = (G * sin(G * texCoord));
+  return fract(r.x * r.y * (1.0 + texCoord.x));
+}
+
+vec2 rotateUvs(vec2 uv, float angle) {
+  float c = cos(angle);
+  float s = sin(angle);
+  mat2 rot = mat2(c, -s, s, c);
+  return rot * uv;
+}
+
+float silk(vec2 vUv) {
+  vec2 uv = rotateUvs(vUv * uScale, uRotation);
+  vec2 tex = uv * uScale;
+  float tOffset = uTime;
+  tex.y += 0.03 * uWave * sin(8.0 * tex.x - tOffset);
+  return 0.6 + 0.4 * uFold * sin(5.0 * (tex.x + tex.y + cos(3.0 * tex.x + 5.0 * tex.y) + 0.02 * tOffset) + uRipple * sin(20.0 * (tex.x + tex.y - 0.1 * tOffset)));
+}
+
+vec3 softClip(vec3 c) {
+  vec3 over = max(c - 0.75, 0.0);
+  return min(c, 0.75) + 0.25 * (1.0 - exp(-over * 4.0));
+}
+
+void main() {
+  vec2 coord = gl_FragCoord.xy / uView;
+  float pattern = silk(coord);
+  float rnd = noise(gl_FragCoord.xy);
+  float n = clamp((pattern - 0.2) / 0.8, 0.0, 1.0);
+
+  float gx = silk(coord + vec2(uStep.x, 0.0)) - pattern;
+  float gy = silk(coord + vec2(0.0, uStep.y)) - pattern;
+  vec3 normal = normalize(vec3(-gx * 26.0, -gy * 26.0, 1.0));
+  vec3 toLight = normalize(vec3(uLight.xy, 0.85));
+  float relief = 1.0 + (dot(normal, toLight) - toLight.z) * 1.8 * uDepth;
+  vec3 halfway = normalize(toLight + vec3(0.0, 0.0, 1.0));
+  float gloss = pow(max(dot(normal, halfway), 0.0), 48.0) * smoothstep(0.25, 0.85, n);
+  float crest = pow(n, 5.0);
+  float shine = (gloss * 0.85 + crest * 0.4) * uSheen * (1.0 + uLight.z * 0.6);
+
+  vec3 result;
+  if (uLightMode > 0.5) {
+    float fold = smoothstep(0.28, 0.9, pattern);
+    float specular = smoothstep(0.72, 0.98, pattern);
+    vec3 shadowColor = uColor * (0.72 - 0.12 * uDepth);
+    vec3 bodyColor = min(uColor * 1.18, vec3(1.0));
+    vec3 lightBase = mix(shadowColor, bodyColor, fold) * mix(1.0, relief, 0.6);
+    lightBase = mix(lightBase, vec3(1.0), clamp(specular * 0.92 + shine * 0.22, 0.0, 1.0));
+    float fineNoise = noise(gl_FragCoord.xy * 0.63 + vec2(17.0, 41.0));
+    float grainSignal = (rnd + fineNoise - 1.0);
+    float grainStrength = clamp(uNoiseIntensity * 0.038, 0.0, 0.16);
+    result = clamp(lightBase + grainSignal * grainStrength, 0.0, 1.0);
+  } else {
+    float grain = rnd / 15.0 * uNoiseIntensity;
+    float floorValue = mix(0.2, 0.03, uDepth);
+    float curve = uDepth > 0.0 ? pow(n, 1.0 + 1.4 * uDepth) : n;
+    float shade = uDepth > 0.0 ? floorValue + (1.0 - floorValue) * curve : pattern;
+    vec3 tone = mix(uColor, pow(uColor, vec3(1.45)), (1.0 - n) * uDepth);
+    vec3 lit = tone * shade * relief - vec3(grain);
+    vec3 extra = mix(uColor, uSheenColor, 0.8) * shine;
+    result = mix(clamp(lit, 0.0, 1.0), clamp(softClip(lit + extra), 0.0, 1.0), clamp(uSheen * 4.0, 0.0, 1.0));
+  }
+  outColor = vec4(result, 1.0);
+}`;
+
+export const LINE_WAVES_FRAGMENT = `#version 300 es
+precision highp float;
+
+uniform float uTime;
+uniform vec3 uResolution;
+uniform float uSpeed;
+uniform float uInnerLines;
+uniform float uOuterLines;
+uniform float uWarpIntensity;
+uniform float uRotation;
+uniform float uEdgeFadeWidth;
+uniform float uColorCycleSpeed;
+uniform float uBrightness;
+uniform vec3 uColor1;
+uniform vec3 uColor2;
+uniform vec3 uColor3;
+uniform float uLightMode;
+out vec4 outColor;
+
+#define HALF_PI 1.5707963
+
+float hashF(float n) {
+  return fract(sin(n * 127.1) * 43758.5453123);
+}
+
+float smoothNoise(float x) {
+  float i = floor(x);
+  float f = fract(x);
+  float u = f * f * (3.0 - 2.0 * f);
+  return mix(hashF(i), hashF(i + 1.0), u);
+}
+
+float displaceA(float coord, float t) {
+  float result = sin(coord * 2.123) * 0.2;
+  result += sin(coord * 3.234 + t * 4.345) * 0.1;
+  result += sin(coord * 0.589 + t * 0.934) * 0.5;
+  return result;
+}
+
+float displaceB(float coord, float t) {
+  float result = sin(coord * 1.345) * 0.3;
+  result += sin(coord * 2.734 + t * 3.345) * 0.2;
+  result += sin(coord * 0.189 + t * 0.934) * 0.3;
+  return result;
+}
+
+vec2 rotate2D(vec2 p, float angle) {
+  float c = cos(angle);
+  float s = sin(angle);
+  return vec2(p.x * c - p.y * s, p.x * s + p.y * c);
+}
+
+void main() {
+  vec2 coords = gl_FragCoord.xy / uResolution.xy;
+  coords = coords * 2.0 - 1.0;
+  coords = rotate2D(coords, uRotation);
+
+  float halfT = uTime * uSpeed * 0.5;
+  float fullT = uTime * uSpeed;
+
+  float warpAx = coords.x + displaceA(coords.y, halfT) * uWarpIntensity;
+  float warpAy = coords.y - displaceA(coords.x * cos(fullT) * 1.235, halfT) * uWarpIntensity;
+  float warpBx = coords.x + displaceB(coords.y, halfT) * uWarpIntensity;
+  float warpBy = coords.y - displaceB(coords.x * sin(fullT) * 1.235, halfT) * uWarpIntensity;
+
+  vec2 fieldA = vec2(warpAx, warpAy);
+  vec2 fieldB = vec2(warpBx, warpBy);
+  vec2 blended = mix(fieldA, fieldB, mix(fieldA, fieldB, 0.5));
+
+  float fadeTop = smoothstep(uEdgeFadeWidth, uEdgeFadeWidth + 0.4, blended.y);
+  float fadeBottom = smoothstep(-uEdgeFadeWidth, -(uEdgeFadeWidth + 0.4), blended.y);
+  float vMask = 1.0 - max(fadeTop, fadeBottom);
+
+  float tileCount = mix(uOuterLines, uInnerLines, vMask);
+  float scaledY = blended.y * tileCount;
+  float nY = smoothNoise(abs(scaledY));
+
+  float ridge = pow(
+    step(abs(nY - blended.x) * 2.0, HALF_PI) * cos(2.0 * (nY - blended.x)),
+    5.0
+  );
+
+  float lines = 0.0;
+  for (float i = 1.0; i < 3.0; i += 1.0) {
+    lines += pow(max(fract(scaledY), fract(-scaledY)), i * 2.0);
+  }
+
+  float pattern = vMask * lines;
+
+  float cycleT = fullT * uColorCycleSpeed;
+  float rChannel = (pattern + lines * ridge) * (cos(blended.y + cycleT * 0.234) * 0.5 + 1.0);
+  float gChannel = (pattern + vMask * ridge) * (sin(blended.x + cycleT * 1.745) * 0.5 + 1.0);
+  float bChannel = (pattern + lines * ridge) * (cos(blended.x + cycleT * 0.534) * 0.5 + 1.0);
+
+  vec3 col = (rChannel * uColor1 + gChannel * uColor2 + bChannel * uColor3) * uBrightness;
+  float alpha = clamp(length(col), 0.0, 1.0);
+
+  if (uLightMode > 0.5) {
+    vec3 weights = pow(max(vec3(rChannel, gChannel, bChannel), vec3(0.0)), vec3(3.0));
+    float weightSum = max(weights.r + weights.g + weights.b, 0.0001);
+    vec3 chroma = (weights.r * uColor1 + weights.g * uColor2 + weights.b * uColor3) / weightSum;
+    float neutral = min(chroma.r, min(chroma.g, chroma.b));
+    chroma = max(chroma - vec3(neutral * 0.92), vec3(0.0));
+    float peak = max(chroma.r, max(chroma.g, chroma.b));
+    chroma = pow(clamp(chroma / max(peak, 0.0001), 0.0, 1.0), vec3(1.08));
+    float ink = clamp(max(rChannel, max(gChannel, bChannel)) * uBrightness * 1.15, 0.0, 0.92);
+    outColor = vec4(mix(vec3(1.0), chroma, ink), 1.0);
+  } else {
+    outColor = vec4(col * alpha, alpha);
+  }
+}`;
