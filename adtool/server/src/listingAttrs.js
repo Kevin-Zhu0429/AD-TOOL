@@ -189,3 +189,69 @@ export function checkAttributeValue(attribute, raw, before, { info = null } = {}
   if (!errors.length && sameEntries(value, before ?? [])) errors.push('和亚马逊上现在的一样，不用改');
   return { value, errors, warnings };
 }
+
+// ---------- 单件包装尺寸和重量 ----------
+// 亚马逊判定标准件 / 大件看的是每个 ASIN 自己的单件包装尺寸。卖家在 Listing 里填的(item_package_dimensions)
+// 可能被亚马逊目录里的值(常常是 FBA 仓库实测)覆盖,所以三套放在一起对照。
+
+const INCH = { inches: 1, inch: 1, in: 1, centimeters: 1 / 2.54, centimetres: 1 / 2.54, cm: 1 / 2.54, millimeters: 1 / 25.4, mm: 1 / 25.4, feet: 12, ft: 12, meters: 39.3701, m: 39.3701 };
+const POUND = { pounds: 1, pound: 1, lb: 1, lbs: 1, ounces: 1 / 16, ounce: 1 / 16, oz: 1 / 16, kilograms: 2.20462, kilogram: 2.20462, kg: 2.20462, grams: 0.00220462, gram: 0.00220462, g: 0.00220462 };
+const round2 = (value) => Math.round(value * 100) / 100;
+const convert = (table) => (value, unit) => {
+  const factor = table[String(unit ?? '').trim().toLowerCase()];
+  const number = Number(value);
+  return factor && Number.isFinite(number) ? round2(number * factor) : null;
+};
+export const toInches = convert(INCH);
+export const toPounds = convert(POUND);
+// 大号标准件上限(美国站):最长边 18、次长边 14、最短边 8 英寸,20 磅
+export const LARGE_STANDARD = { longest: 18, median: 14, shortest: 8, weight: 20 };
+
+/** 三边从长到短排好,判定是不是标准件,超了的写清楚哪条边 */
+export function packageVerdict(sides, weight) {
+  const sorted = (sides ?? []).filter((value) => value != null).sort((a, b) => b - a);
+  if (sorted.length < 3) return { sides: sorted, weight: weight ?? null, standard: null, over: [] };
+  const [longest, median, shortest] = sorted;
+  const over = [];
+  if (longest > LARGE_STANDARD.longest) over.push(`最长边 ${longest} > ${LARGE_STANDARD.longest} 英寸`);
+  if (median > LARGE_STANDARD.median) over.push(`次长边 ${median} > ${LARGE_STANDARD.median} 英寸`);
+  if (shortest > LARGE_STANDARD.shortest) over.push(`最短边 ${shortest} > ${LARGE_STANDARD.shortest} 英寸`);
+  if (weight != null && weight > LARGE_STANDARD.weight) over.push(`重量 ${weight} > ${LARGE_STANDARD.weight} 磅`);
+  return { sides: sorted, weight: weight ?? null, standard: !over.length, over };
+}
+
+/** 卖家在 Listing 里填的单件包装(item_package_dimensions / item_package_weight) */
+export function sellerPackage(attributes) {
+  const dims = usEntries(attributes, 'item_package_dimensions')[0];
+  const weight = usEntries(attributes, 'item_package_weight')[0];
+  if (!dims && !weight) return null;
+  const side = (part) => (part ? toInches(part.value, part.unit) : null);
+  return { source: 'seller', ...packageVerdict([side(dims?.length), side(dims?.width), side(dims?.height)], weight ? toPounds(weight.value, weight.unit) : null) };
+}
+
+/** 亚马逊目录(Catalog Items API dimensions.package)里在用的单件包装 */
+export function catalogPackage(dimensions) {
+  const entry = (dimensions ?? []).find((item) => item.marketplaceId === US_MARKETPLACE) ?? dimensions?.[0];
+  const pkg = entry?.package;
+  if (!pkg) return null;
+  const side = (part) => (part ? toInches(part.value, part.unit) : null);
+  return { source: 'catalog', ...packageVerdict([side(pkg.length), side(pkg.width), side(pkg.height)], pkg.weight ? toPounds(pkg.weight.value, pkg.weight.unit) : null) };
+}
+
+/** FBA 预估费用报告里的实测值和尺寸分段 */
+export function measuredPackage(measured, sizeTier) {
+  if (!measured && !sizeTier) return null;
+  const side = (value) => (value == null ? null : toInches(value, measured?.dimensionUnit || 'inches'));
+  return { source: 'fba', sizeTier: sizeTier ?? null,
+    ...packageVerdict([side(measured?.longest), side(measured?.median), side(measured?.shortest)],
+      measured?.weight == null ? null : toPounds(measured.weight, measured.weightUnit || 'pounds')) };
+}
+
+/** 卖家填的是标准件、亚马逊在用的却是大件:多半是测量有误,要开 case 申请复测 */
+export function packageMismatch(seller, amazon) {
+  if (!seller || !amazon || seller.standard == null || amazon.standard == null) return null;
+  if (seller.standard && !amazon.standard) {
+    return `卖家填的包装是标准件，亚马逊在用的尺寸是大件（${amazon.over.join('，')}）。改 Listing 里的包装尺寸不会生效，要在卖家后台开 case 申请复测，附实测照片。`;
+  }
+  return null;
+}

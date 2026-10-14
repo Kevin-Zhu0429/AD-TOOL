@@ -15,7 +15,7 @@ const nameOf = (row) => [row.style, row.size, row.color].filter(Boolean).join(' 
 const raw = (values) => values.map((value) => ({ value }));
 const STATUS_TONE = { queued: 'gray', running: 'blue', submitted: 'amber', applied: 'green', failed: 'red', pending: 'blue' };
 // 常用的几项放在上面单独编辑,下面「全部属性」里不再重复
-const COMMON = ['item_name', 'bullet_point', 'generic_keyword', 'product_description'];
+const COMMON = ['item_name', 'bullet_point', 'generic_keyword', 'product_description', 'item_package_dimensions', 'item_package_weight'];
 const LIMIT = { item_name: 200, bullet: 500, bullets: 10, generic_keyword: 249 };
 
 // ---------- 全店一览 ----------
@@ -38,7 +38,7 @@ function Board({ owner, onOpen }) {
     const term = q.trim().toLowerCase();
     return (data?.rows ?? []).filter((row) => (!term || [row.sku, row.asin, row.title, nameOf(row)].some((field) => String(field ?? '').toLowerCase().includes(term)))
       && (filter === 'all' || (filter === 'issues' && row.errors > 0) || (filter === 'buyable' && row.statusText === '可售')
-        || (filter === 'cooldown' && row.cooldown) || (filter === 'open' && row.openChanges > 0)));
+        || (filter === 'cooldown' && row.cooldown) || (filter === 'oversize' && (row.packaging?.fba?.standard === false || row.packaging?.warning)) || (filter === 'open' && row.openChanges > 0)));
   }, [data, q, filter]);
 
   async function sync() {
@@ -78,11 +78,11 @@ function Board({ owner, onOpen }) {
         <label>搜索 <input className="inp" value={q} onChange={(e) => setQ(e.target.value)} placeholder="SKU / ASIN / 标题 / 款式" /></label>
         <label>筛选 <select className="inp" value={filter} onChange={(e) => setFilter(e.target.value)}>
           <option value="all">全部</option><option value="buyable">可售</option><option value="issues">有亚马逊报错</option>
-          <option value="cooldown">冷却期内</option><option value="open">有没处理完的改动</option></select></label>
+          <option value="cooldown">冷却期内</option><option value="oversize">包装被判大件</option><option value="open">有没处理完的改动</option></select></label>
         <div className="spacer" /><span className="hint">{rows.length} / {all.length} 个 SKU · 点一行查看和修改</span></div>
       <div className="scroll lst-table"><table className="tbl">
         <thead><tr><th>SKU</th><th>ASIN</th><th>状态</th><th>标题</th><th className="num">五点</th><th className="num">后台词</th><th>描述</th>
-          <th className="num">属性</th><th>亚马逊问题</th><th>改动</th></tr></thead>
+          <th className="num">属性</th><th>包装尺寸</th><th>亚马逊问题</th><th>改动</th></tr></thead>
         <tbody>{rows.map((row) => <tr key={row.sku} className="lst-row" tabIndex={0} onClick={() => onOpen(row.sku)}
           onKeyDown={(e) => { if (e.key === 'Enter') onOpen(row.sku); }}>
           <td className="col-sku"><b>{row.sku}</b>{nameOf(row) && <small>{nameOf(row)}</small>}</td>
@@ -93,12 +93,53 @@ function Board({ owner, onOpen }) {
           <td className={`num${row.searchTermBytes > 249 ? ' danger' : ''}`}>{row.searchTermBytes ? `${row.searchTermBytes} B` : ''}</td>
           <td>{row.hasDescription ? '有' : <span className="warn">无</span>}</td>
           <td className="num">{row.attributeCount}</td>
+          <td>{verdictTag(row.packaging?.fba?.standard != null ? row.packaging.fba : row.packaging?.seller)}
+            {row.packaging?.warning && <span className="tag amber" title={row.packaging.warning}>尺寸被记大</span>}</td>
           <td>{row.errors > 0 && <span className="tag red">错误 {row.errors}</span>} {row.warnings > 0 && <span className="tag amber">提醒 {row.warnings}</span>}</td>
           <td>{row.cooldown && <span className="tag amber" title={`${row.cooldown.lastChangeDay} 改过 Listing`}>冷却 {row.cooldown.daysLeft} 天</span>}
             {row.openChanges > 0 && <span className="tag blue">{row.openChanges} 条处理中</span>}</td>
         </tr>)}</tbody></table></div>
     </section>}
   </>;
+}
+
+// ---------- 单件包装尺寸 ----------
+
+const SOURCE = { seller: '你在 Listing 里填的', catalog: '亚马逊目录在用的', fba: 'FBA 费用报告实测' };
+const sidesText = (pkg) => (pkg?.sides?.length ? `${pkg.sides.join(' × ')} in` : '—');
+const verdictTag = (pkg) => (pkg?.standard == null ? null : pkg.standard
+  ? <span className="tag green">标准件</span> : <span className="tag red" title={pkg.over.join('；')}>大件</span>);
+
+function PackageCard({ packaging, dims, weight, changed, locked, onDims, onWeight }) {
+  const entry = dims[0] ?? {};
+  const unit = entry.length?.unit ?? entry.width?.unit ?? entry.height?.unit ?? 'inches';
+  const weightEntry = weight[0] ?? {};
+  const weightUnit = weightEntry.unit ?? 'pounds';
+  const setSide = (side, value) => onDims([{ length: { unit, value: entry.length?.value ?? '' }, width: { unit, value: entry.width?.value ?? '' },
+    height: { unit, value: entry.height?.value ?? '' }, [side]: { unit, value: value === '' ? '' : Number(value) } }]);
+  const rows = ['seller', 'catalog', 'fba'].map((key) => [key, packaging?.[key]]).filter(([, pkg]) => pkg);
+  return <section className="card lst-package">
+    <div className="card-title">单件包装尺寸和重量</div>
+    <p className="hint">亚马逊判断标准件还是大件，看的是每个 ASIN 自己的单件包装尺寸（大号标准件上限 18 × 14 × 8 英寸、20 磅），不看货件里填的箱规。
+      下表把三套数据放在一起：亚马逊按它自己在用的那套收入库费和配送费。</p>
+    {packaging?.warning && <p className="note err">{packaging.warning}</p>}
+    {rows.length > 0 && <table className="tbl lst-package-table"><thead><tr><th>来源</th><th>三边（长到短）</th><th>重量</th><th>判定</th><th>说明</th></tr></thead>
+      <tbody>{rows.map(([key, pkg]) => <tr key={key}><td>{SOURCE[key]}</td><td className="mono">{sidesText(pkg)}</td>
+        <td className="mono">{pkg.weight != null ? `${pkg.weight} lb` : '—'}</td><td>{verdictTag(pkg)}</td>
+        <td className="hint">{[pkg.sizeTier && `尺寸分段 ${pkg.sizeTier}`, pkg.over?.join('；'), pkg.updatedAt && `${short(pkg.updatedAt)} 同步`].filter(Boolean).join(' · ')}</td></tr>)}</tbody></table>}
+    {packaging?.catalogError && <p className="hint">亚马逊目录没读到：{packaging.catalogError}</p>}
+    {!packaging?.fba && <p className="hint">还没有 FBA 实测数据：价格策略表同步 FBA 费用后会显示（没入过仓的 SKU 没有）。</p>}
+    <div className={`row wrap lst-package-edit${changed ? ' changed' : ''}`}>
+      <span>改 Listing 里填的：</span>
+      {['length', 'width', 'height'].map((side) => <label key={side}>{{ length: '长', width: '宽', height: '高' }[side]}
+        <input className="inp" type="number" step="0.01" min="0" value={entry[side]?.value ?? ''} disabled={locked} onChange={(e) => setSide(side, e.target.value)} /></label>)}
+      <span className="hint">{unit}</span>
+      <label>重量<input className="inp" type="number" step="0.01" min="0" value={weightEntry.value ?? ''} disabled={locked}
+        onChange={(e) => onWeight([{ unit: weightUnit, value: e.target.value === '' ? '' : Number(e.target.value) }])} /></label>
+      <span className="hint">{weightUnit}</span>
+    </div>
+    <p className="hint">亚马逊在用的尺寸是仓库测出来的话，改这里不会生效，要在卖家后台开 case 申请复测，附上卷尺和秤入镜的照片。</p>
+  </section>;
 }
 
 // ---------- 单个属性的编辑 ----------
@@ -304,6 +345,10 @@ function Editor({ sku, owner, onBack, onNav }) {
         <span className="hint">清空促销价就是取消促销；有促销时前台显示促销价。改价会检查保本价。</span>
       </div>
     </section>
+
+    <PackageCard packaging={detail.packaging} dims={current('item_package_dimensions')} weight={current('item_package_weight')} locked={locked}
+      changed={!sameEntries(original.item_package_dimensions, current('item_package_dimensions')) || !sameEntries(original.item_package_weight, current('item_package_weight'))}
+      onDims={(value) => setAttr('item_package_dimensions', value)} onWeight={(value) => setAttr('item_package_weight', value)} />
 
     <section className="card">
       <div className="row wrap"><div className="card-title">全部属性</div><div className="spacer" />

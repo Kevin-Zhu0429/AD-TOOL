@@ -58,3 +58,8 @@ textarea.changed, .lst-bullets.changed textarea { border-color: var(--amber); ba
 .listing-page .lst-filter { width: 240px; }
 .listing-page .card > .row.wrap { gap: 10px; }
 .lst-field > .btn { justify-self: start; }
+.lst-package-table { margin: 8px 0; }
+.lst-package-edit { gap: 10px; align-items: center; padding: 8px; border-radius: 8px; margin-top: 6px; }
+.lst-package-edit.changed { background: var(--amber-soft); }
+.lst-package-edit .inp { width: 90px; margin-left: 4px; }
+@media (max-width: 760px) { .lst-package-table { display: block; overflow-x: auto; } }

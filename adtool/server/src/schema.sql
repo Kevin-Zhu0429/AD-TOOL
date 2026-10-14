@@ -533,6 +533,7 @@ CREATE TABLE IF NOT EXISTS pet_sku_fees (
   referral_rate REAL,
   fee_price REAL,
   size_tier TEXT,
+  measured_json TEXT,
   updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
 

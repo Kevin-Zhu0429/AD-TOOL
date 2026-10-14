@@ -9,7 +9,8 @@ import { amazonGateway, pacificDay, petSpConfig, US_MARKETPLACE } from './petAma
 import { COOLDOWN_DAYS } from './petAgent.js';
 import { attributeKey, checkBatch, checkListingValue, checkReason, currentValue, kickQueue, kindLabelOf, LISTING_FIELDS, log, patchFor,
   readListing, saveProposals, shape, skuDirectory, update } from './petChanges.js';
-import { cachedSchema, DEDICATED_ATTRS, entryText, productTypeSchema, READ_ONLY_ATTRS, usEntries } from './listingAttrs.js';
+import { cachedSchema, catalogPackage, DEDICATED_ATTRS, entryText, measuredPackage, packageMismatch, productTypeSchema, READ_ONLY_ATTRS, sellerPackage,
+  usEntries } from './listingAttrs.js';
 
 const clean = (value) => String(value ?? '').trim();
 const lowerKey = (value) => clean(value).toLowerCase();
@@ -125,6 +126,29 @@ export function startListingSyncScheduler() {
   setInterval(run, 12 * 3600_000).unref();
 }
 
+// ---------- 包装尺寸对照 ----------
+
+/** 库里 FBA 费用报告的实测值和尺寸分段,按 SKU */
+function feeMeasures() {
+  return new Map(db.prepare('SELECT sku, size_tier, measured_json, updated_at FROM pet_sku_fees').all()
+    .map((row) => [lowerKey(row.sku), { sizeTier: row.size_tier, measured: parseJson(row.measured_json), updatedAt: row.updated_at }]));
+}
+
+/** 亚马逊目录里在用的单件包装尺寸(Catalog Items API) */
+async function readCatalogDimensions(account, asin, gateway) {
+  const payload = await gateway.request(account, account.region, 'GET', `/catalog/2022-04-01/items/${encodeURIComponent(asin)}`, {
+    query: { marketplaceIds: US_MARKETPLACE, includedData: 'dimensions' } });
+  return payload?.dimensions ?? [];
+}
+
+/** 一个 SKU 的三套包装数据:卖家填的、亚马逊目录在用的(有 catalog 时)、FBA 实测和尺寸分段 */
+function packaging(attributes, fee, catalog) {
+  const seller = sellerPackage(attributes);
+  const fba = fee ? measuredPackage(fee.measured, fee.sizeTier) : null;
+  const amazon = catalog ?? (fba?.standard != null ? fba : null);
+  return { seller, catalog: catalog ?? null, fba: fba ? { ...fba, updatedAt: fee.updatedAt } : null, warning: packageMismatch(seller, amazon) };
+}
+
 // ---------- 读给页面 ----------
 
 const statusText = (list) => (list.includes('BUYABLE') ? '可售' : list.includes('DISCOVERABLE') ? '可搜到' : list.length ? list.join('/') : '不可售');
@@ -155,6 +179,7 @@ export function listingBoard({ q = '', env = process.env } = {}) {
   const library = new Map(db.prepare("SELECT sku, style, size, color, stock FROM sku_items WHERE user_id=? AND country='US'").all(PET_SHOP_ID)
     .map((row) => [lowerKey(row.sku), row]));
   const { recent, open } = changeState();
+  const fees = feeMeasures();
   const term = lowerKey(q);
   const rows = db.prepare('SELECT * FROM pet_listing_items ORDER BY sku').all().map((row) => {
     const attributes = parseJson(row.attributes_json, {});
@@ -167,7 +192,7 @@ export function listingBoard({ q = '', env = process.env } = {}) {
       bullets: usEntries(attributes, 'bullet_point').length, searchTermBytes: Buffer.byteLength(usEntries(attributes, 'generic_keyword').map((entry) => entry.value ?? '').join(' '), 'utf8'),
       hasDescription: usEntries(attributes, 'product_description').length > 0, attributeCount: Object.keys(attributes).length,
       errors: issues.filter((issue) => issue.severity === 'ERROR').length, warnings: issues.filter((issue) => issue.severity === 'WARNING').length,
-      openChanges: open.get(lowerKey(row.sku)) ?? 0, cooldown: cooldownOf(recent.get(lowerKey(row.sku))),
+      openChanges: open.get(lowerKey(row.sku)) ?? 0, packaging: packaging(attributes, fees.get(lowerKey(row.sku)), null), cooldown: cooldownOf(recent.get(lowerKey(row.sku))),
       amazonUpdated: row.amazon_updated, syncedAt: row.synced_at,
     };
   }).filter((row) => !term || [row.sku, row.asin, row.title, row.style, row.size, row.color].some((field) => lowerKey(field).includes(term)));
@@ -203,6 +228,10 @@ export async function listingDetail(sku, { gateway = amazonGateway, env = proces
   saveItem(listing);
   const schema = await productTypeSchema(account, listing.productType, { gateway });
   const { recent } = changeState();
+  let catalog = null, catalogError = null;
+  if (listing.asin) {
+    try { catalog = catalogPackage(await readCatalogDimensions(account, listing.asin, gateway)); } catch (error) { catalogError = error.message; }
+  }
   return {
     sku: listing.sku, asin: listing.asin, productType: listing.productType, status: listing.status, statusText: statusText(listing.status),
     lastUpdated: listing.lastUpdated, style: known?.style ?? null, size: known?.size ?? null, color: known?.color ?? null,
@@ -211,6 +240,7 @@ export async function listingDetail(sku, { gateway = amazonGateway, env = proces
     schema: { version: schema?.version ?? null, error: schema?.error ?? null, stale: !!schema?.stale, attributes: schema?.attributes ?? {} },
     readOnly: READ_ONLY_ATTRS, dedicated: DEDICATED_ATTRS,
     cooldown: cooldownOf(recent.get(lowerKey(listing.sku))), cooldownDays: COOLDOWN_DAYS, pending: pendingFor(listing.sku),
+    packaging: { ...packaging(listing.attributes, feeMeasures().get(lowerKey(listing.sku)), catalog), catalogError },
   };
 }
 
@@ -354,8 +384,10 @@ export async function listingAttributesForAgent({ skus = [], style, attributes =
     for (const sku of list) {
       const listing = await readListing(account, sku, gateway);
       saveItem(listing);
+      let catalog = null;
+      if (listing.asin) { try { catalog = catalogPackage(await readCatalogDimensions(account, listing.asin, gateway)); } catch { catalog = null; } }
       rows.push({ sku: listing.sku, asin: listing.asin, product_type: listing.productType, status: listing.status, attributes: listing.attributes,
-        issues: listing.issues, synced_at: '刚刚实时读取' });
+        issues: listing.issues, synced_at: '刚刚实时读取', catalog });
     }
   } else {
     const all = db.prepare('SELECT * FROM pet_listing_items ORDER BY sku').all();
@@ -365,6 +397,7 @@ export async function listingAttributesForAgent({ skus = [], style, attributes =
       synced_at: row.synced_at }));
   }
   const library = new Map(db.prepare("SELECT sku, style, size, color FROM sku_items WHERE user_id=? AND country='US'").all(PET_SHOP_ID).map((row) => [lowerKey(row.sku), row]));
+  const fees = feeMeasures();
   const items = rows.map((row) => {
     const out = {};
     for (const name of Object.keys(row.attributes).sort()) {
@@ -374,7 +407,7 @@ export async function listingAttributesForAgent({ skus = [], style, attributes =
     }
     const info = library.get(lowerKey(row.sku)) ?? {};
     return { sku: row.sku, asin: row.asin, productType: row.product_type, style: info.style ?? null, size: info.size ?? null, color: info.color ?? null,
-      status: statusText(row.status), syncedAt: row.synced_at, attributes: out,
+      status: statusText(row.status), syncedAt: row.synced_at, packaging: packaging(row.attributes, fees.get(lowerKey(row.sku)), row.catalog ?? null), attributes: out,
       issues: (row.issues ?? []).map((issue) => ({ severity: issue.severity, message: clean(issue.message).slice(0, 300), attributes: issue.attributeNames ?? [] })) };
   });
   const result = { total: items.length, items, sync: listingSyncStatus(env) };
@@ -394,6 +427,7 @@ export async function listingAttributesForAgent({ skus = [], style, attributes =
     `不给 SKU 时只列常用属性(${DEFAULT_ATTRS.join('、')}),要别的用 attributes 指定;给 SKU 时列全部属性。`,
     '改属性用 propose_listing_changes:标题/五点/后台词/价格用对应 field;其它属性 field=attribute 并填 attribute 属性名,value 填值(文字、数字、文字数组,或和这里一样结构的对象数组)。',
     `同步是每 12 小时一次,syncedAt 是这条数据读取的时间;要最新的用 live。`,
+    'packaging 是单件包装尺寸(英寸、磅,三边从长到短):seller 是卖家在 Listing 里填的,catalog 是亚马逊目录在用的(只有 live 时才读),fba 是 FBA 预估费用报告的实测值和尺寸分段;standard=false 是大件(超过 18×14×8 英寸或 20 磅)。亚马逊按自己在用的尺寸算入库和配送费,和卖家填的不一致时改 Listing 不会生效,要开 case 申请复测。',
   ];
   return result;
 }

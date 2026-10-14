@@ -34,6 +34,8 @@ function fakeAmazon() {
         item_name: [text('PawNest Dog Bed Small')], bullet_point: ['one', 'two'].map(text), generic_keyword: [text('dog bed')], brand: [text('PawNest')],
         product_description: [text('Old description')], number_of_items: [{ value: 1, marketplace_id: US }],
         item_dimensions: [{ length: { value: 20, unit: 'inches' }, width: { value: 15, unit: 'inches' }, height: { value: 6, unit: 'inches' }, marketplace_id: US }],
+        item_package_dimensions: [{ length: { value: 28, unit: 'centimeters' }, width: { value: 28, unit: 'centimeters' }, height: { value: 11, unit: 'centimeters' }, marketplace_id: US }],
+        item_package_weight: [{ value: 2.6, unit: 'pounds', marketplace_id: US }],
         purchasable_offer: [{ marketplace_id: US, currency: 'USD', audience: 'ALL', our_price: price(25.99) }] } },
     'RR-M': { asin: 'B0RRM00001', productType: 'PET_BED', issues: [], attributes: { item_name: [text('PawNest Dog Bed Medium')], brand: [text('PawNest')] } },
     'OLD-1': { asin: 'B0OLD00001', productType: 'PET_BED', issues: [], attributes: { item_name: [text('Old listing')] } },
@@ -42,6 +44,8 @@ function fakeAmazon() {
   const summary = (sku) => ({ marketplaceId: US, asin: state[sku].asin, productType: state[sku].productType, status: ['BUYABLE'], itemName: state[sku].attributes.item_name?.[0]?.value });
   const fake = { state, calls, previewIssues: [], searchFails: false, async request(account, region, method, route, { query, body } = {}) {
     calls.push({ method, route, query, body });
+    if (route.startsWith('/catalog/')) return { asin: route.split('/').pop(), dimensions: [{ marketplaceId: US, package: { length: { value: 19.7, unit: 'inches' },
+      width: { value: 17.8, unit: 'inches' }, height: { value: 7.2, unit: 'inches' }, weight: { value: 2.49, unit: 'pounds' } } }] };
     if (route.startsWith('/definitions/')) return { schema: { link: { resource: 'https://schemas.example/PET_BED.json' } }, productTypeVersion: { version: 'v1' } };
     if (route === '/listings/2021-08-01/items/APETSELLER') {
       if (fake.searchFails) throw Object.assign(new Error('亚马逊接口请求失败 (403)'), { upstreamStatus: 403 });
@@ -160,6 +164,14 @@ test('Listing board: read every SKU, edit on the site, upload through the logged
     assert.equal(detail.data.schema.attributes.number_of_items.languageTag, false);
     assert.ok(detail.data.readOnly.purchasable_offer);
     assert.equal(detail.data.cooldown, null);
+    // 包装尺寸三套对照:卖家填的是标准件,亚马逊目录在用的是大件
+    const pkg = detail.data.packaging;
+    assert.deepEqual(pkg.seller.sides, [11.02, 11.02, 4.33]);
+    assert.equal(pkg.seller.standard, true);
+    assert.deepEqual(pkg.catalog.sides, [19.7, 17.8, 7.2]);
+    assert.equal(pkg.catalog.standard, false);
+    assert.deepEqual(pkg.catalog.over, ['最长边 19.7 > 18 英寸', '次长边 17.8 > 14 英寸']);
+    assert.match(pkg.warning, /开 case/);
   });
 
   await t.test('only the owner can preview or upload', async () => {
@@ -304,4 +316,21 @@ test('Listing board: read every SKU, edit on the site, upload through the logged
     const edited = changes.editChange(queued.id, ['Canvas'], 1);
     assert.deepEqual(edited.after, [{ value: 'Canvas', language_tag: 'en_US', marketplace_id: US }]);
   });
+});
+
+test('package size helpers convert units and judge standard size', async () => {
+  const attrs = await import('../src/listingAttrs.js');
+  assert.equal(attrs.toInches(31, 'centimeters'), 12.2);
+  assert.equal(attrs.toPounds(1.2, 'kilograms'), 2.65);
+  assert.equal(attrs.toInches(1, 'parsecs'), null);
+  const blue = attrs.packageVerdict([10.3, 7.5, 12.0], 5);
+  assert.deepEqual(blue, { sides: [12, 10.3, 7.5], weight: 5, standard: true, over: [] });
+  assert.deepEqual(attrs.packageVerdict([8.5, 11.1, 14.9], 6.13).over, ['最短边 8.5 > 8 英寸']);
+  assert.equal(attrs.packageVerdict([1, 2], 1).standard, null);
+  const fba = attrs.measuredPackage({ longest: 50, median: 45, shortest: 18.3, dimensionUnit: 'centimeters', weight: 1.13, weightUnit: 'kilograms' }, 'Large Standard-Size');
+  assert.deepEqual(fba.sides, [19.69, 17.72, 7.2]);
+  assert.equal(fba.standard, false);
+  assert.equal(fba.sizeTier, 'Large Standard-Size');
+  assert.equal(attrs.packageMismatch({ standard: true }, { standard: false, over: ['x'] }) != null, true);
+  assert.equal(attrs.packageMismatch({ standard: true }, { standard: true, over: [] }), null);
 });

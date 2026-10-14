@@ -57,6 +57,10 @@ function migrate() {
     db.exec('ALTER TABLE sku_items ADD COLUMN asin TEXT');
   }
   db.exec('CREATE INDEX IF NOT EXISTS idx_sku_asin ON sku_items (user_id, country, asin)');
+  // FBA 预估费用报告里亚马逊实测的单件包装尺寸和重量(Listing 板块对照用)
+  if (!db.prepare('PRAGMA table_info(pet_sku_fees)').all().some((c) => c.name === 'measured_json')) {
+    db.exec('ALTER TABLE pet_sku_fees ADD COLUMN measured_json TEXT');
+  }
   const cols = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
   if (!cols.includes('goods_admin')) {
     db.exec('ALTER TABLE users ADD COLUMN goods_admin INTEGER NOT NULL DEFAULT 0');
