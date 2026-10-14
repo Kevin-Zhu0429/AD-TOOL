@@ -24,7 +24,7 @@ try {
       return route.fulfill({ json: {} });
     });
     await context.addInitScript((value) => localStorage.setItem('adtool-theme', value), theme);
-    if (process.env.QUALITY) await context.addInitScript((value) => localStorage.setItem('adtool-motion-quality', JSON.stringify({ quality: value, at: Date.now() })), process.env.QUALITY);
+    if (process.env.QUALITY) await context.addInitScript((value) => localStorage.setItem('adtool-motion-quality', JSON.stringify({ quality: value, pinned: true })), process.env.QUALITY);
     const page = await context.newPage();
     await page.goto(url);
     await page.locator('.circular-carousel[data-ready]').waitFor();

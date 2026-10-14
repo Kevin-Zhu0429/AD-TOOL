@@ -99,7 +99,7 @@ function createRenderer() {
     dirty = true;
   }
   function active(group) {
-    return !document.hidden && !reduced.matches && !group.root.hasAttribute('data-motion-hidden')
+    return !document.hidden && !reduced.matches && getMotionQuality() !== 'static' && !group.root.hasAttribute('data-motion-hidden')
       && !group.showcase.hasAttribute('data-effects-paused') && group.card.dataset.motionSide !== 'rear';
   }
   function paint(effect) {
@@ -176,7 +176,7 @@ function createRenderer() {
     if (failed || document.hidden) { previous = 0; return; }
     const moving = [...groups.values()].some(active);
     // 24 fps is plenty for slow ambient motion; computers that drop frames get 12 fps.
-    const interval = getMotionQuality() === 'lite' ? 1000 / 12 : width < 200 ? 50 : 1000 / 24;
+    const interval = getMotionQuality() !== 'full' ? 1000 / 12 : width < 200 ? 50 : 1000 / 24;
     if (!dirty && previous && now - previous < interval) { if (moving) raf = requestAnimationFrame(frame); return; }
     if (moving && previous) time += Math.min((now - previous) / 1000, .12);
     previous = moving ? now : 0;

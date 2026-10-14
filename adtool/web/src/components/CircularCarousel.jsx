@@ -231,7 +231,9 @@ const CircularCarousel = ({
   }, [count, along, gap, curveValue, layout.spread]);
 
   const quality = useMotionQuality();
-  const tileCount = quality === 'lite' ? LITE_TILES : TILES;
+  const tileCount = quality === 'full' ? TILES : LITE_TILES;
+  // 'static': the browser has no graphics acceleration, so the ring only moves when someone drags or clicks.
+  const still = reduced || quality === 'static';
   const tiles = useMemo(() => {
     const total = curveValue > 0.001 ? tileCount : 1;
     const length = along / total;
@@ -301,16 +303,16 @@ const CircularCarousel = ({
     perspective: layout.inward ? radius : (perspective ?? layout.perspective),
     cardW,
     cardH,
-    intro: reduced ? 'none' : intro in INTRO_LENGTH ? intro : 'rise',
-    autoplay: reduced ? 'off' : autoplay,
+    intro: still ? 'none' : intro in INTRO_LENGTH ? intro : 'rise',
+    autoplay: still ? 'off' : autoplay,
     speed,
     interval: Math.max(0.5, interval),
     draggable,
     momentum: clamp(momentum, 0, 1),
     snap,
     pauseOnHover,
-    parallax: reduced ? 0 : clamp(parallax, 0, 1),
-    stretch: reduced ? 0 : clamp(stretch, 0, 1),
+    parallax: still ? 0 : clamp(parallax, 0, 1),
+    stretch: still ? 0 : clamp(stretch, 0, 1),
     depthFade: clamp(depthFade, 0, 1),
     captions,
     reduced,

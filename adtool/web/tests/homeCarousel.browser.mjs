@@ -44,6 +44,8 @@ async function assertEventually(getValue, expected) {
 }
 try {
   await page.addInitScript(() => localStorage.setItem('adtool-theme', 'light'));
+  // This browser renders WebGL in software, which the home page would answer with the static mode; pin full quality here.
+  await page.addInitScript(() => localStorage.setItem('adtool-motion-quality', JSON.stringify({ quality: 'full', pinned: true })));
   await page.addInitScript(() => {
     const original = HTMLCanvasElement.prototype.getContext;
     HTMLCanvasElement.prototype.getContext = function (type, ...args) {
@@ -211,8 +213,24 @@ try {
   await fallbackPage.getByRole('button', { name: '进入小工具', exact: true }).click();
   await fallbackPage.locator('.tools-page').waitFor();
   await unsupported.close();
+  const software = await browser.newContext({ viewport: { width: 1600, height: 1000 }, reducedMotion: 'no-preference' });
+  await software.route('**/api/**', (route) => route.fulfill({ json: new URL(route.request().url()).pathname === '/api/auth/me'
+    ? { user: owner, marketplaces: ['ES', 'DE'] } : { items: [] } }));
+  const softwarePage = await software.newPage();
+  softwarePage.on('pageerror', (error) => errors.push(error.message));
+  await softwarePage.goto(url);
+  await softwarePage.locator('.circular-carousel[data-ready]').waitFor();
+  assert.equal(await softwarePage.locator('.circular-carousel').getAttribute('data-quality'), 'static', 'Software WebGL switches to the static mode');
+  assert.equal(await softwarePage.getByRole('button', { name: '已切换静态画面', exact: true }).isDisabled(), true);
+  await softwarePage.mouse.move(1, 1); await softwarePage.waitForTimeout(600);
+  const softwareRing = softwarePage.locator('.circular-carousel__ring');
+  const staticRing = await softwareRing.getAttribute('style'); await softwarePage.waitForTimeout(500);
+  assert.equal(await softwareRing.getAttribute('style'), staticRing, 'Static mode does not autoplay');
+  await softwarePage.getByRole('button', { name: '查看自动广告', exact: true }).click();
+  await softwarePage.locator('.home-carousel-detail h3', { hasText: '自动广告' }).waitFor();
+  await software.close();
   assert.deepEqual(errors, []);
-  console.log('Home carousel browser passed: original GLSL, one context, animated pixels, synchronized strips, pause/reduced/offscreen states, context loss and unsupported WebGL fallback, permissions, navigation, drag, themes, stations and mobile layout.');
+  console.log('Home carousel browser passed: original GLSL, one context, animated pixels, synchronized strips, pause/reduced/offscreen states, context loss and unsupported WebGL fallback, software WebGL static mode, permissions, navigation, drag, themes, stations and mobile layout.');
 } finally {
   await browser.close(); await vite.close();
 }

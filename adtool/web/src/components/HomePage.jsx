@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api.js';
 import { useReducedMotion } from '../useReducedMotion.js';
+import { useMotionQuality } from '../motionQuality.js';
 import { hasUnseen, visibleChangelog, visibleVersion } from '../changelog.js';
 import Icon from './Icon.jsx';
 import CloudShader from './CloudShader.jsx';
@@ -44,6 +45,8 @@ export default function HomePage({ user, market, onNav, theme, onOpenChangelog }
   const [activeId, setActiveId] = useState('aba');
   const [paused, setPaused] = useState(false);
   const reducedMotion = useReducedMotion();
+  // 电脑没用上显卡加速时轮播不自动转、背景只画一帧,按钮跟着说明原因
+  const stillMotion = useMotionQuality() === 'static';
   const [selection, setSelection] = useState({ index: undefined, revision: 0 });
   const entries = useMemo(() => homeEntries(user, market), [user, market]);
   const activeIndex = Math.max(0, entries.findIndex((entry) => entry.id === activeId));
@@ -107,8 +110,10 @@ export default function HomePage({ user, market, onNav, theme, onOpenChangelog }
             <h2>选择你的工作入口</h2>
             <p id="home-carousel-help">左右拖动切换，点击两侧卡片移到正中，点击正中卡片进入。也可用方向键切换、回车进入。</p>
           </div>
-          <button className="btn sm home-carousel-play" disabled={reducedMotion} aria-pressed={reducedMotion || paused} onClick={() => setPaused((value) => !value)}>
-            {reducedMotion ? '动态效果已关闭' : paused ? '继续动效' : '暂停动效'}
+          <button className="btn sm home-carousel-play" disabled={reducedMotion || stillMotion} aria-pressed={reducedMotion || stillMotion || paused}
+            title={stillMotion && !reducedMotion ? '这台电脑的浏览器没有用上显卡加速,为了不卡已改成静态画面;打开浏览器设置里的「使用图形加速」后刷新即可恢复' : undefined}
+            onClick={() => setPaused((value) => !value)}>
+            {reducedMotion ? '动态效果已关闭' : stillMotion ? '已切换静态画面' : paused ? '继续动效' : '暂停动效'}
           </button>
         </div>
         <div className="home-carousel-stage">

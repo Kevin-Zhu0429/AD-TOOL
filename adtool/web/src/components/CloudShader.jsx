@@ -279,7 +279,7 @@ export default function CloudShader({
 
     const resize = () => {
       // 掉帧的电脑按 1 倍像素画,云是柔边的,看不出差别
-      const dpr = getMotionQuality() === 'lite' ? 1 : Math.min(window.devicePixelRatio || 1, 2);
+      const dpr = getMotionQuality() !== 'full' ? 1 : Math.min(window.devicePixelRatio || 1, 2);
       const w = Math.max(1, Math.floor(canvas.clientWidth * dpr));
       const h = Math.max(1, Math.floor(canvas.clientHeight * dpr));
       if (canvas.width !== w || canvas.height !== h) {
@@ -317,11 +317,11 @@ export default function CloudShader({
     // 页头滚出屏幕就停画;掉帧的电脑每秒只画 30 帧,云飘得慢,看不出区别
     let onScreen = true;
     let last = 0;
-    let lite = getMotionQuality() === 'lite';
+    let lite = getMotionQuality() !== 'full';
     const draw = (now) => {
       frame = 0;
       if (!running || !onScreen) return;
-      const nowLite = getMotionQuality() === 'lite';
+      const nowLite = getMotionQuality() !== 'full';
       if (nowLite !== lite) {
         lite = nowLite;
         resize();
@@ -330,6 +330,8 @@ export default function CloudShader({
         last = now;
         render(((now - start) / 1000) * paramsRef.current.speed);
       }
+      // 没有显卡加速的电脑只留一帧静止的云
+      if (getMotionQuality() === 'static') return;
       frame = requestAnimationFrame(draw);
     };
     const visibility = new IntersectionObserver(([entry]) => {
