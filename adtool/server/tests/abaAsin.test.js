@@ -90,6 +90,12 @@ test('ASIN reports: authenticated storage, raw metrics, SKU linkage and filter b
     const result = await get('&weeks=2026-08-29&sort=market_impressions&pageSize=25&page=2');
     assert.equal(result.total, 110);
     assert.equal(result.items[0].market_impressions, 84);
+    const fullExport = await get('&weeks=2026-08-29&sort=market_impressions&pageSize=25&page=2&export=1&view=queries');
+    assert.equal(fullExport.items.length, 110);
+    assert.equal(fullExport.items[0].market_impressions, 109);
+    assert.deepEqual(fullExport.items.slice(25, 50).map((r) => r.key), result.items.map((r) => r.key));
+    assert.equal((await get('&weeks=2026-08-29&wordType=printer&export=1')).items.length, 0);
+    assert.equal((await get('&weeks=2026-08-29&wordType=cartridge&merge=0&export=1&pageSize=25')).items.length, 110);
     assert.equal((await get('&weeks=2026-08-29&page=999')).page, 2);
     const persisted = new Database(path.join(server.directory, 'adtool.db'), { readonly: true });
     try { assert.equal(persisted.prepare('SELECT count(*) AS count FROM aba_asin_queries').get().count, 116); }

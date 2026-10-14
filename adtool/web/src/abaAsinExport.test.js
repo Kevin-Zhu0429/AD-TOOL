@@ -1,7 +1,54 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { aggregateAsinView } from '../../shared/abaAsin.js';
-import { buildAsinGroupExport, skusForAsinRow } from './abaAsinExport.js';
+import { buildAsinExport, buildAsinGroupExport, skusForAsinRow } from './abaAsinExport.js';
+
+test('query export preserves displayed merged totals once, exact SKU mappings, null metrics and averaging metadata', () => {
+  const row = { query: 'hp deskjet 2700', recognition: 'HP DESKJET2700', asins: ['B000000305', 'B000000306'],
+    market_impressions: null, market_clicks: 120, market_purchases: 24, market_cvr: 20,
+    asin_impressions: 90, asin_clicks: 15, asin_purchases: 3, asin_cvr: 20, brand_share: 12.5,
+    average_weeks: 2, periods: [
+      { week_start: '2026-09-13', week_end: '2026-09-19', week_number: 38 },
+      { week_start: '2026-09-20', week_end: '2026-09-26', week_number: 39 },
+    ], market_conflicts: [{ week_end: '2026-09-19', query: 'hp deskjet 2700', label: '市场 IMP',
+      values: [{ asin: 'B000000305', value: 1000 }, { asin: 'B000000306', value: 900 }] }],
+  };
+  const data = { view: 'queries', aggregation: 'average', items: [row], selectedModel: { skuIds: [1, 2] }, skuItems: [
+    { id: 1, asin: 'B000000305', sku: 'BK' }, { id: 2, asin: 'B000000306', sku: 'COLOR' },
+    { id: 3, asin: 'B000000305', sku: 'OUTSIDE-MODEL' },
+  ] };
+  const result = buildAsinExport(data);
+  const exported = Object.fromEntries(result.columns.map((c, i) => [c.key, result.rows[0][i]]));
+  assert.equal(result.sheetName, '搜索查询明细');
+  assert.equal(result.rows.length, 1);
+  assert.equal(exported.sku, 'BK\nCOLOR');
+  assert.equal(exported.asin, 'B000000305\nB000000306');
+  assert.equal(exported.links, 'B000000305：BK\nB000000306：COLOR');
+  assert.equal(exported.market_impressions, '');
+  assert.equal(exported.market_clicks, 120);
+  assert.equal(exported.asin_clicks, 15);
+  assert.equal(exported.market_cvr, 0.2);
+  assert.equal(exported.brand_share, 0.125);
+  assert.equal(exported.average_weeks, 2);
+  assert.equal(exported.aggregation, '周平均');
+  assert.match(exported.periods, /第 38 周.*2026-09-19[\s\S]*第 39 周/);
+  assert.match(exported.market_conflicts, /B000000305 = 1000；B000000306 = 900/);
+});
+
+test('query export keeps unmerged weeks and sort order, zero-denominator rates and unlinked ASINs', () => {
+  const items = [20, 10].map((clicks, i) => ({ query: 'generic ink', recognition: '墨盒 KW 词', asin: 'B000000305',
+    market_clicks: clicks, market_cvr: null, asin_clicks: 0, asin_cvr: null,
+    periods: [{ week_start: '2026-09-13', week_end: i ? '2026-09-19' : '2026-09-26', week_number: i ? 38 : 39 }],
+  }));
+  const { columns, rows } = buildAsinExport({ view: 'queries', merged: false, aggregation: 'sum', items, skuItems: [] });
+  const field = (key) => columns.findIndex((c) => c.key === key);
+  assert.deepEqual(rows.map((r) => r[field('market_clicks')]), [20, 10]);
+  assert.ok(rows.every((r) => r[field('query')] === 'generic ink' && r[field('sku')] === ''
+    && r[field('asin_cvr')] === '' && r[field('aggregation')] === '逐周'));
+  assert.equal(rows[0][field('links')], 'B000000305：未关联 SKU');
+  assert.equal(buildAsinExport({ view: 'queries', items: [] }).rows.length, 0);
+  assert.equal(buildAsinExport({ view: 'printers', items: [] }).sheetName, '机型分类汇总');
+});
 
 test('printer-group export puts each search term, ASIN and SKU mapping on its own row', () => {
   const queryRow = {

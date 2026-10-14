@@ -7,6 +7,7 @@ import { startAbaTestServer } from '../../server/tests/abaHarness.js';
 import { savePublicReports } from '../../server/src/services/publicAsinData.js';
 import { publicTask, publicFixture } from '../../server/tests/abaPublicFixture.js';
 import { AMAZON_MARKETPLACES } from '../../server/src/spApi.js';
+import { checkAsinExports } from './asinExportChecks.mjs';
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const XLSX = require('xlsx');
@@ -47,6 +48,10 @@ try {
   await login(page, 'aba-test');
   const view = page.locator('.aba-asin-view');
   const idle = () => view.locator('.aba-results[aria-busy="false"]').waitFor();
+  await checkAsinExports(page, view, '/api/aba-public/asin');
+  await page.locator('.verbadge').click();
+  assert.match(await page.locator('.logrel').first().innerText(), /2\.9\.2[\s\S]*ABA ASIN 支持全筛选导出[\s\S]*仅墨盒 KW 词筛选/);
+  await page.getByRole('button', { name: '知道了', exact: true }).click();
   assert.equal(await view.locator('input[type="file"]').count(), 0);
   assert.equal(await page.getByRole('button', { name: '手动同步', exact: true }).count(), 0);
   assert.equal(await page.getByLabel('超级管理员待处理事项', { exact: true }).count(), 0);
@@ -71,6 +76,13 @@ try {
   await idle();
   await view.getByLabel('多周统计', { exact: true }).selectOption('average');
   await idle();
+  const averageDownload = page.waitForEvent('download');
+  await view.getByRole('button', { name: '导出 Excel', exact: true }).click();
+  const averageBook = XLSX.readFile(await (await averageDownload).path());
+  const averageRows = XLSX.utils.sheet_to_json(averageBook.Sheets['搜索查询明细'], { header: 1, defval: '' });
+  assert.equal(averageRows.length, 3); // merged colors remain one record per search term, not per SKU
+  assert.ok(averageRows.slice(1).every((r) => r[0].includes('OWNER-305-BK') && r[0].includes('OTHER-ACCOUNT-COLOR')));
+  assert.ok(averageRows.slice(1).every((r) => r[averageRows[0].indexOf('统计方式')] === '周平均' && r[averageRows[0].indexOf('实际出现周数')] === 2));
   await view.getByLabel('显示方式', { exact: true }).selectOption('printers');
   await idle();
   let publicGroupRead = false;

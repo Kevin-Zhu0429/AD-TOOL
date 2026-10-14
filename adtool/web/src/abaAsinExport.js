@@ -77,3 +77,41 @@ export function buildAsinGroupExport(data, params = {}) {
   }));
   return { columns: ASIN_GROUP_EXPORT_COLUMNS, rows };
 }
+
+export const ASIN_QUERY_EXPORT_COLUMNS = [
+  ...ASIN_GROUP_EXPORT_COLUMNS.map((column) => column.key === 'recognition' ? { ...column, label: '机型识别' } : column),
+  { key: 'links', label: 'ASIN / SKU 对应', text: true },
+  { key: 'periods', label: '报告周', text: true },
+  { key: 'aggregation', label: '统计方式', text: true },
+  { key: 'average_weeks', label: '实际出现周数' },
+  { key: 'market_conflicts', label: '市场数据核对', text: true },
+];
+
+/** 明细保持一条显示记录一行，来源关系作为说明，关联多个 SKU 不复制指标。 */
+export function buildAsinQueryExport(data, params = {}) {
+  const rows = (data.items ?? []).map((row) => {
+    const identities = identitiesForAsinRow(row, data, params);
+    const text = {
+      sku: [...new Set(identities.map((i) => i.sku).filter(Boolean))].join('\n'),
+      asin: [...new Set(identities.map((i) => i.asin).filter(Boolean))].join('\n'),
+      links: identities.map((i) => `${i.asin}：${i.sku || '未关联 SKU'}`).join('\n'),
+      periods: (row.periods ?? []).map((p) => `${p.week_end.slice(0, 4)} 第 ${p.week_number} 周 · ${p.week_start} — ${p.week_end}`).join('\n'),
+      aggregation: data.aggregation === 'average' ? '周平均' : data.merged === false ? '逐周' : '合计',
+      average_weeks: row.average_weeks ?? row.periods?.length ?? '',
+      market_conflicts: (row.market_conflicts ?? []).map((c) => `${c.week_end} · ${c.query} · ${c.label}：${c.values.map((v) => `${v.asin} = ${v.value}`).join('；')}`).join('\n')
+        + (row.conflict_count > 20 ? '\n仅列出前 20 项待核对数据' : ''),
+    };
+    return ASIN_QUERY_EXPORT_COLUMNS.map((column) => {
+      const value = column.key in text ? text[column.key] : row[column.key];
+      if (value === null || value === undefined) return '';
+      return column.rate ? value / 100 : value;
+    });
+  });
+  return { columns: ASIN_QUERY_EXPORT_COLUMNS, rows };
+}
+
+export function buildAsinExport(data, params = {}) {
+  return data.view === 'printers'
+    ? { ...buildAsinGroupExport(data, params), sheetName: '机型分类汇总' }
+    : { ...buildAsinQueryExport(data, params), sheetName: '搜索查询明细' };
+}

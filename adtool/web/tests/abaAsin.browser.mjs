@@ -6,6 +6,7 @@ import { createServer } from 'vite';
 import * as XLSX from 'xlsx';
 import { startAbaTestServer } from '../../server/tests/abaHarness.js';
 import { asinFirst, asinSecond, asinFixture, mergedFixture } from '../../server/tests/abaAsinFixture.js';
+import { checkAsinExports } from './asinExportChecks.mjs';
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -46,6 +47,7 @@ try {
   await view.getByText(/已保存 4 条/).waitFor();
   await idle();
   assert.equal(await rows().count(), 4);
+  await checkAsinExports(page, view, '/api/aba/asin');
   assert.equal(await view.locator('.aba-table th').count(), 11);
   const printer = () => rows().filter({ hasText: 'hp deskjet 2820e' });
   assert.match(await printer().innerText(), /25.00%[\s\S]*53.33%[\s\S]*26.67%/);
@@ -169,6 +171,32 @@ try {
   await view.locator('.aba-file').getByText('2 份周报 · 62 条记录', { exact: true }).waitFor();
   await view.getByRole('button', { name: '上传并保存' }).click();
   await view.getByText(/已更新 31 条/).waitFor();
+  await idle();
+  await view.getByLabel('每页记录数', { exact: true }).selectOption('25');
+  await idle();
+  await Promise.all([
+    page.waitForResponse((r) => r.url().includes('/api/aba/asin?') && r.url().includes('page=2') && r.status() === 200),
+    view.getByRole('button', { name: '下一页', exact: true }).click(),
+  ]);
+  await idle();
+  assert.equal(await rows().count(), 6);
+  const fullDownload = page.waitForEvent('download');
+  await view.getByRole('button', { name: '导出 Excel', exact: true }).click();
+  const fullBook = XLSX.read(await readFile(await (await fullDownload).path()), { type: 'buffer' });
+  const fullRows = XLSX.utils.sheet_to_json(fullBook.Sheets['搜索查询明细'], { header: 1, defval: '' });
+  assert.equal(fullRows.length, 32, 'export contains all 31 records while viewing page 2');
+  await Promise.all([
+    page.waitForResponse((r) => r.url().includes('/api/aba/asin?') && r.url().includes('merge=0') && r.status() === 200),
+    view.getByLabel('多周合并相同搜索词').uncheck(),
+  ]);
+  await idle();
+  const weeklyDownload = page.waitForEvent('download');
+  await view.getByRole('button', { name: '导出 Excel', exact: true }).click();
+  const weeklyBook = XLSX.read(await readFile(await (await weeklyDownload).path()), { type: 'buffer' });
+  const weeklyRows = XLSX.utils.sheet_to_json(weeklyBook.Sheets['搜索查询明细'], { header: 1, defval: '' });
+  assert.equal(weeklyRows.length, 63);
+  assert.ok(weeklyRows.slice(1).every((r) => r[weeklyRows[0].indexOf('统计方式')] === '逐周' && r[weeklyRows[0].indexOf('实际出现周数')] === 1));
+  await view.getByLabel('多周合并相同搜索词').check();
   await idle();
   await view.getByLabel('显示方式', { exact: true }).selectOption('printers');
   await idle();

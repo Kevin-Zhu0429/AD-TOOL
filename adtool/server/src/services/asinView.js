@@ -66,7 +66,7 @@ export function buildAsinView(db, userId, market, query, scope = 'private') {
   const average = query.aggregation === 'average' && selectedWeeks.length > 1;
   const view = query.view === 'printers' ? 'printers' : 'queries';
   const merged = average || view === 'printers' || query.merge !== '0';
-  const exportAll = query.export === '1' && view === 'printers';
+  const exportAll = query.export === '1';
   const items = aggregateAsinView(rows, { series: !!model, view, mergeWeeks: merged, average, modelLabel: selectedModel?.label, includeQueries: exportAll });
   const sort = ASIN_COLUMNS.some((c) => c.key === query.sort) || (view === 'printers' && query.sort === 'query_count') ? query.sort : 'market_impressions';
   const direction = query.direction === 'asc' ? 'asc' : 'desc';
@@ -83,7 +83,7 @@ export function buildAsinView(db, userId, market, query, scope = 'private') {
     items, exportAll, sort, direction, merged, view, aggregation: average ? 'average' : 'sum' };
 }
 
-/** 从完整结果里切出请求的那一页;打印机视图导出时整份返回 */
+/** 从完整结果里切出请求的那一页；两种视图导出时都返回全部筛选结果。 */
 export function asinPage(full, query) {
   const { exportAll, ...rest } = full;
   const pageSize = ABA_PAGE_SIZES.includes(Number(query.pageSize)) ? Number(query.pageSize) : 100;
