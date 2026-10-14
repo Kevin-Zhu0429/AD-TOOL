@@ -408,6 +408,14 @@ const moneyOf = (value) => {
  * Fee Preview 报告:每个在售 FBA SKU 的预估配送费和佣金。亚马逊至少每 72 小时更新一次,
  * 申请时开始时间要早于现在 72 小时以上、结束时间比开始晚 72 小时以上,所以取最近 4 天。
  */
+/** 费用报告里亚马逊实测的单件包装:最长边、中边、最短边、重量,带单位 */
+function measuredOf(row) {
+  const num = (key) => { const value = Number(clean(row[key])); return clean(row[key]) && Number.isFinite(value) ? value : null; };
+  const measured = { longest: num('longest-side'), median: num('median-side'), shortest: num('shortest-side'), lengthAndGirth: num('length-and-girth'),
+    dimensionUnit: clean(row['unit-of-dimension']) || null, weight: num('item-package-weight'), weightUnit: clean(row['unit-of-weight']) || null };
+  return measured.longest == null && measured.weight == null ? null : measured;
+}
+
 export async function fetchFeePreview(account, now = new Date(), gateway = amazonGateway, onProgress = () => {}) {
   const end = new Date(now.getTime() - 5 * 60_000);
   const rows = await runReport(account, 'GET_FBA_ESTIMATED_FBA_FEES_TXT_DATA',
@@ -423,6 +431,7 @@ export async function fetchFeePreview(account, now = new Date(), gateway = amazo
       sku, asin: validAsin(row.asin), fbaFee, referralFee, price: price || null,
       referralRate: referralFee != null && price ? Number((referralFee / price).toFixed(4)) : null,
       sizeTier: clean(row['product-size-tier']) || null,
+      measured: measuredOf(row),
     });
   }
   return [...fees.values()];

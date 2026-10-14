@@ -56,12 +56,12 @@ export function withProfit(rows) {
 
 /** Fee Preview 结果写库:报告里有的 SKU 覆盖,没有的保留上次的值 */
 export function saveFees(fees) {
-  const upsert = db.prepare(`INSERT INTO pet_sku_fees(sku,asin,fba_fee,referral_fee,referral_rate,fee_price,size_tier)
-    VALUES(@sku,@asin,@fbaFee,@referralFee,@referralRate,@price,@sizeTier)
+  const upsert = db.prepare(`INSERT INTO pet_sku_fees(sku,asin,fba_fee,referral_fee,referral_rate,fee_price,size_tier,measured_json)
+    VALUES(@sku,@asin,@fbaFee,@referralFee,@referralRate,@price,@sizeTier,@measured)
     ON CONFLICT(sku) DO UPDATE SET asin=excluded.asin, fba_fee=excluded.fba_fee, referral_fee=excluded.referral_fee,
       referral_rate=excluded.referral_rate, fee_price=excluded.fee_price, size_tier=excluded.size_tier,
-      updated_at=datetime('now','localtime')`);
-  db.transaction(() => { for (const fee of fees) upsert.run(fee); })();
+      measured_json=COALESCE(excluded.measured_json, pet_sku_fees.measured_json), updated_at=datetime('now','localtime')`);
+  db.transaction(() => { for (const fee of fees) upsert.run({ ...fee, measured: fee.measured ? JSON.stringify(fee.measured) : null }); })();
   return fees.length;
 }
 
