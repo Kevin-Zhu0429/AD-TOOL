@@ -11,8 +11,7 @@ import './HomePage.css';
 function homeEntries(user, market) {
   return [
     { id: "aba", tone: "blue", icon: "chart", title: "ABA 报告", desc: "上传品牌搜索查询周报，按搜索词、墨盒系列和对应机型筛选，查看每周查询量、曝光、点击和购买表现。", meta: "品牌视图 · 数据仅自己可见 · 服务器保存" },
-    { id: "builder", tone: "blue", icon: "layers", title: "自动广告", desc: "按任务批量配置自动广告,一次生成可直接上传的总表。词库里的否定词会自动带进每一条活动;开系列广告时还会按 D 类反推,把其它墨盒和打印机型号一起否掉。", meta: "生成 xlsx 批量表" },
-    { id: "manual", tone: "violet", icon: "sliders", title: "手动广告", desc: "关键词投放和商品投放(ASIN / 品类定向)。关键词和 ASIN 自己粘贴,不接词表库;否定词照样联动本站词库,精准 / 词组 / 广泛可以分别给出价、也可以各自拆广告组。出价可以自己填,也可以填目标 CPC 按溢价和系数反推。", meta: "试用中 · 生成 xlsx 批量表", visible: user.manualAds },
+    { id: "builder", tone: "blue", icon: "layers", title: "开设广告", desc: user.manualAds ? "SP 自动、SP 手动、SB 品牌三种广告在一页里切换着填，一次生成可直接上传的总表。自动广告保留瀑布流；SB 支持集合、视频两种格式，也能按溢价档位开瀑布流。词库里的否定词三种广告都能套用。" : "按任务批量配置自动广告（瀑布流 / 组合），一次生成可直接上传的总表。词库里的否定词会自动带进每一条活动；开系列广告时还会按 D 类反推，把其它墨盒和打印机型号一起否掉。", meta: user.manualAds ? "SP + SB · 生成 xlsx 批量表" : "生成 xlsx 批量表" },
     { id: "optimizer", tone: "blue", icon: "chart", title: "广告优化", desc: "把后台下载的批量表拖进来,逐条活动看广告位 / SKU / 投放 / 搜索词的表现,改竞价、调溢价、批量否定,最后导出能直接回传的批量表。批量否定可以直接勾本站词库的 A–E 类,D 类还能按在投的墨盒型号反推该否掉的其它型号。", meta: "试用中 · 数据只在本机浏览器里解析", visible: user.adOpt },
     { id: "library", tone: "green", icon: "book", title: `${market} 站否定词库`, desc: "A 无名词 · B 非售品牌 · C 非售流量干扰墨盒 · D 在售墨盒和打印机 · E 原装竞品 ASIN。改动立即生效。D 类还能当型号库单独用:后台否定助手里一次搜多个墨盒型号,把墨盒或打印机型号复制走,直接粘进后台否定。", meta: user.goodsAdmin ? 'A–E 都可编辑' : 'A 类可编辑,B–E 只读' },
     { id: "skus", tone: "amber", icon: "file", title: "我的 SKU 库", desc: "按国家 / 品牌 / 型号 / 套组存自己负责的 SKU 和库存。每个账号一份自己的,开广告时在「投放 SKU」那里一键挑进去。", meta: "模板导入 · 只有自己看得到" },

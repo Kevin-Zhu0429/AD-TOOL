@@ -359,6 +359,17 @@ CREATE TABLE IF NOT EXISTS portfolio_items (
 CREATE INDEX IF NOT EXISTS idx_portfolio_user_market
   ON portfolio_items (user_id, marketplace, name);
 
+-- ---------- 品牌推广(SB)素材 ----------
+-- 从后台下载的 SB 批量表里读出的品牌实体、徽标、视频,按站点整份存,同站点所有人共用。
+-- data 是 JSON:{ brands: [...], logos: [...], videos: [...] }
+CREATE TABLE IF NOT EXISTS sb_brand_assets (
+  marketplace  TEXT    PRIMARY KEY,
+  data         TEXT    NOT NULL,
+  uploaded_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  file_name    TEXT,
+  updated_at   TEXT    NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+
 -- ---------- 分市场产品库 ----------
 -- 完整卖家精灵记录以 JSON 保存；高频筛选字段单独建列并建索引。
 CREATE TABLE IF NOT EXISTS products (

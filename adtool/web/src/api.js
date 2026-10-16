@@ -182,6 +182,11 @@ export const api = {
   updatePortfolio: (id, body) => request(`/portfolio/${id}`, { method: 'PATCH', body }),
   deletePortfolios: (ids) => request('/portfolio/delete', { method: 'POST', body: { ids } }),
 
+  // ---------- 品牌推广(SB)素材(按站点共用一份) ----------
+  sbAssets: (marketplace) => request(`/sb-assets?marketplace=${encodeURIComponent(marketplace)}`),
+  saveSbAssets: (marketplace, data, fileName) =>
+    request('/sb-assets', { method: 'POST', body: { marketplace, data, fileName } }),
+
   // ---------- 分市场产品库与竞品分析 ----------
   products: (marketplace, dataMonth = '') => {
     const q = new URLSearchParams({ marketplace });

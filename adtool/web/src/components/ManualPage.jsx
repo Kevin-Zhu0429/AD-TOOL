@@ -3,10 +3,9 @@ import { api } from '../api.js';
 import { draftKey, dropDraft, isPristine, restoreTasks, writeDraft } from '../draft.js';
 import Icon from './Icon.jsx';
 import ManualForm from './ManualForm.jsx';
-import { parseLines, buildNegatives, downloadWorkbook, todayStamp } from '../adEngine.js';
-import { normLibData } from '../negLib.js';
+import { buildNegatives, todayStamp } from '../adEngine.js';
 import {
-  buildManualPlan, buildManualWorkbookData, DEFAULT_COEFS, MATCH_TYPES, TARGET_TYPES,
+  buildManualPlan, DEFAULT_COEFS, MATCH_TYPES, TARGET_TYPES,
 } from '../manualEngine.js';
 import './BuilderPage.css';
 import './ManualPage.css';
@@ -59,7 +58,11 @@ function newManualTask(overrides = {}) {
   };
 }
 
-export default function ManualPage({ market }) {
+/**
+ * SP 手动广告的活动列表。嵌在「开设广告」页里:词库、SKU 库、广告组合库由外层读好传进来,
+ * 生成按钮也在外层,这里只把每条活动的计划报上去(onReport)。
+ */
+export default function ManualPage({ market, data, onReport }) {
   const key = draftKey('manual', market);
   // 和自动广告页一样:填到一半切页面 / 刷新都不丢,进来先把草稿捞回来
   const [restored] = useState(() => {
@@ -67,27 +70,14 @@ export default function ManualPage({ market }) {
     if (r) seq = Math.max(seq, r.seq);
     return r;
   });
-  const [lib, setLib] = useState(null);
-  const [libError, setLibError] = useState('');
-  const [skuItems, setSkuItems] = useState(null);
-  const [portfolios, setPortfolios] = useState(null);
-  const [portfolioError, setPortfolioError] = useState('');
+  const { lib, libData, skuItems, portfolios, portfolioError } = data;
   const [tasks, setTasks] = useState(() => restored?.tasks ?? [newManualTask()]);
   const [activeId, setActiveId] = useState(() => restored?.activeId ?? null);
   const [fromDraft, setFromDraft] = useState(!!restored);
-  const [result, setResult] = useState(null);
   const taskStrip = useRef(null);
   useEffect(() => {
     taskStrip.current?.querySelector('.taskpill.on')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }, [activeId]);
-
-  useEffect(() => {
-    setResult(null);
-    setPortfolioError('');
-    api.library(market).then(setLib).catch((e) => setLibError(e.message));
-    api.skus({ marketplace: market }).then((response) => setSkuItems(response.items ?? [])).catch((e) => { setSkuItems([]); setPortfolioError((old) => [old, `SKU 库读取失败：${e.message}`].filter(Boolean).join('；')); });
-    api.portfolios(market).then((response) => setPortfolios(response.items ?? [])).catch((e) => { setPortfolios([]); setPortfolioError((old) => [old, `广告组合库读取失败：${e.message}`].filter(Boolean).join('；')); });
-  }, [market]);
 
   useEffect(() => {
     if (!activeId && tasks.length) setActiveId(tasks[0].id);
@@ -101,27 +91,18 @@ export default function ManualPage({ market }) {
     return () => clearTimeout(t);
   }, [key, tasks, activeId]);
 
-  const libData = useMemo(() => normLibData(lib), [lib]);
-
   const plans = useMemo(
     () => tasks.map((task) => ({ task, plan: buildManualPlan(task, buildNegatives(libData, task)) })),
     [tasks, libData]
   );
 
-  const totals = useMemo(() => {
-    const ok = plans.filter((x) => x.plan.ok).length;
-    const problems = plans.filter((x) => x.plan.problems.length).length;
-    const rows = plans.reduce((a, x) => a + (x.plan.ok ? x.plan.rows + 1 : 0), 0);
-    const targets = plans.reduce((a, x) => a + x.plan.targets, 0);
-    const skus = plans.reduce((a, x) => a + parseLines(x.task.skus).length, 0);
-    return { ok, problems, rows, targets, skus };
-  }, [plans]);
-
-  const blocked = totals.problems > 0 || totals.ok === 0 || skuItems === null || portfolios === null;
+  const used = !isPristine(tasks, newManualTask);
+  useEffect(() => {
+    onReport?.({ plans, used, tasks: tasks.length });
+  }, [plans, used, tasks.length, onReport]);
 
   function updateTask(id, patch) {
     setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)));
-    setResult(null);
   }
 
   function addTask() {
@@ -135,7 +116,6 @@ export default function ManualPage({ market }) {
       : newManualTask();
     setTasks((prev) => [...prev, t]);
     setActiveId(t.id);
-    setResult(null);
   }
 
   function duplicateTask(id) {
@@ -152,7 +132,6 @@ export default function ManualPage({ market }) {
       return [...prev.slice(0, i + 1), t, ...prev.slice(i + 1)];
     });
     setActiveId(t.id);
-    setResult(null);
   }
 
   function removeTask(id) {
@@ -161,44 +140,17 @@ export default function ManualPage({ market }) {
       return next.length ? next : [newManualTask()];
     });
     setActiveId(null);
-    setResult(null);
   }
 
   /** 清空这个站点的全部活动,连本地草稿一起删 */
   function resetAll() {
     if (!confirm('清空这个站点的全部活动?浏览器里存的草稿也会一起删掉。')) return;
-    api.recordActivity('manual', 'clear_local', market, { campaigns: tasks.length }).catch(() => {});
+    api.recordActivity('builder', 'clear_local', market, { manual: tasks.length }).catch(() => {});
     dropDraft(key);
     const t = newManualTask();
     setTasks([t]);
     setActiveId(t.id);
     setFromDraft(false);
-    setResult(null);
-  }
-
-  function generate() {
-    try {
-      const wb = buildManualWorkbookData(plans);
-      if (wb.bad.length) {
-        setResult({
-          kind: 'err',
-          text: `自检未通过(${wb.bad.length} 项):${wb.bad.slice(0, 5).join('；')}`,
-        });
-        return;
-      }
-      const file = `手动广告-${market}-${todayStamp()}.xlsx`;
-      downloadWorkbook(wb.aoa, file);
-      const kw = wb.placed.reduce((a, x) => a + x.plan.targets, 0);
-      api.recordActivity('manual', 'export', market, {
-        campaigns: wb.placed.length, targets: kw, rows: wb.aoa.length,
-      }).catch(() => {});
-      setResult({
-        kind: 'ok',
-        text: `已生成 ${wb.placed.length} 条广告活动、${kw} 条关键词/商品定向,共 ${wb.aoa.length} 行,自检全部通过。文件:${file}`,
-      });
-    } catch (e) {
-      setResult({ kind: 'err', text: e.message });
-    }
   }
 
   const active = tasks.find((t) => t.id === activeId) ?? tasks[0];
@@ -208,34 +160,6 @@ export default function ManualPage({ market }) {
 
   return (
     <div className="builder manual-builder">
-      <header className="bhero">
-        <div className="bhero-glow" />
-        <div className="bhero-text">
-          <h1>
-            手动广告
-            <span className="bhero-mk">{market} 站</span>
-          </h1>
-          <p className="hint">
-            关键词投放和商品投放(ASIN 定向)。关键词和 ASIN 自己粘贴,不接任何词表库;
-            填的内容会自动存在这台电脑上,切到别的页面再回来、或者刷新都还在;
-            {libError ? ` 词库读取失败:${libError}` : ` 否定词仍然联动本站词库(共 ${libCount} 条)。`}
-          </p>
-        </div>
-        <div className="bhero-stats">
-          {[
-            ['广告活动', totals.ok, 'accent'],
-            ['总行数', totals.rows, ''],
-            ['关键词/定向', totals.targets, ''],
-            ['SKU', totals.skus, ''],
-          ].map(([label, value, tone]) => (
-            <div className={`kpi${tone ? ` ${tone}` : ''}`} key={label}>
-              <b>{value}</b>
-              <span>{label}</span>
-            </div>
-          ))}
-        </div>
-      </header>
-
       <div className="bbar">
         <div className="manual-task-navigation">
         <div className="tabstrip" ref={taskStrip} tabIndex={0} role="region" aria-label="广告活动列表，可横向滚动">
@@ -280,9 +204,6 @@ export default function ManualPage({ market }) {
 
         <div className="spacer" />
 
-        {totals.problems > 0 && (
-          <span className="tag amber">{totals.problems} 条活动待处理</span>
-        )}
         {fromDraft && (
           <span className="tag gray" title="上次填的内容存在这台电脑的浏览器里,已经帮你恢复">
             草稿已恢复
@@ -291,13 +212,7 @@ export default function ManualPage({ market }) {
         <button className="btn sm ghost" onClick={resetAll} title="清空这个站点的全部活动">
           清空重来
         </button>
-        <button className="btn primary" disabled={blocked} onClick={generate}>
-          <Icon name="download" className="ico-sm" />
-          生成总表并下载
-        </button>
       </div>
-
-      {result && <div className={`note ${result.kind} bresult animate-in`}>{result.text}</div>}
 
       {active && (
         <ManualForm
