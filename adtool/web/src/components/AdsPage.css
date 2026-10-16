@@ -1,0 +1,42 @@
+/* 开设广告:SP 自动 / SP 手动 / SB 品牌切换条 + 统一的生成按钮 */
+
+.ads-switch {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.ads-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(150px, 1fr));
+  gap: 8px;
+  flex: 1 1 520px;
+  max-width: 760px;
+}
+.ads-tab {
+  position: relative;
+  display: flex; flex-direction: column; gap: 2px; align-items: flex-start;
+  padding: 9px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--text-dim);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color .14s var(--ease), background .14s var(--ease), transform .14s var(--ease);
+}
+.ads-tab:hover { border-color: var(--border); color: var(--text); transform: translateY(-1px); }
+.ads-tab b { font-size: 13.5px; color: var(--text); }
+.ads-tab span { font-size: 11px; color: var(--text-faint); }
+.ads-tab em { position: absolute; top: 8px; right: 8px; font-style: normal; }
+.ads-tab.on {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+  box-shadow: var(--hairline);
+}
+.ads-tab.on b { color: var(--accent-text); }
+
+/* 嵌在里面的任务条吸顶时贴住切换条下面 */
+.ads-page .builder, .ads-page .manual-builder { margin: 0; }
+
+@media (max-width: 720px) {
+  .ads-tabs { grid-template-columns: 1fr; }
+}

@@ -15,7 +15,7 @@ import PortfolioField from './PortfolioField.jsx';
 const PLACE_UI = ORDER.map((k) => PLACEMENTS.find(([key]) => key === k));
 
 /** 一种匹配类型 / 一种定向类型:开关 + 出价 + 粘贴框 */
-function Unit({ on, label, hint, bid, text, count, placeholder, bidPlaceholder, bidNote, onChange }) {
+export function Unit({ on, label, hint, bid, text, count, placeholder, bidPlaceholder, bidNote, onChange }) {
   return (
     <div className={`unitbox${on ? ' on' : ''}`}>
       <div className="unitbox-head">
@@ -41,7 +41,7 @@ function Unit({ on, label, hint, bid, text, count, placeholder, bidPlaceholder, 
 }
 
 /** 三合一:一个粘贴框,精准 / 词组 / 广泛各自只有开关和出价 */
-function TripleUnit({ kw, text, count, bidPlaceholder, noteOf, onUnit, onText }) {
+export function TripleUnit({ kw, text, count, bidPlaceholder, noteOf, onUnit, onText }) {
   const onCount = MATCH_TYPES.filter((mt) => kw[mt.id]?.on).length;
   return (
     <div className="unitbox triplebox on">

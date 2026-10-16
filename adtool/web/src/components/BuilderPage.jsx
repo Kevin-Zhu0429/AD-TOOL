@@ -4,10 +4,8 @@ import { draftKey, dropDraft, isPristine, restoreTasks, writeDraft } from '../dr
 import Icon from './Icon.jsx';
 import TaskForm from './TaskForm.jsx';
 import {
-  AUTO_TYPES, STRATEGIES, NAME_TOKENS, parseLines,
-  buildNegatives, buildTaskPlan, buildWorkbookData, downloadWorkbook, todayStamp,
+  AUTO_TYPES, STRATEGIES, NAME_TOKENS, buildNegatives, buildTaskPlan, todayStamp,
 } from '../adEngine.js';
-import { normLibData } from '../negLib.js';
 import './BuilderPage.css';
 
 let seq = 1;
@@ -73,7 +71,12 @@ function autoTitle(task, index) {
   return `任务 ${index + 1} · ${autos} · ${strats || '未选竞价'}`;
 }
 
-export default function BuilderPage({ market }) {
+/**
+ * SP 自动广告的任务列表(瀑布流 / 组合)。嵌在「开设广告」页里:
+ * 词库、SKU 库、广告组合库由外层统一读好传进来,生成按钮也在外层,
+ * 这里只把每个任务的计划报上去(onReport)。
+ */
+export default function BuilderPage({ market, data, onReport }) {
   const key = draftKey('builder', market);
   // 填到一半切去别的页面(或者手滑刷新)不该白填一遍 —— 进来先把草稿捞回来
   const [restored] = useState(() => {
@@ -82,23 +85,10 @@ export default function BuilderPage({ market }) {
     seq = Math.max(seq, r.seq);
     return { ...r, tasks: r.tasks.map((t) => ({ ...t, tokens: fixTokens(t.tokens) })) };
   });
-  const [lib, setLib] = useState(null);
-  const [libError, setLibError] = useState('');
-  const [skuItems, setSkuItems] = useState(null);
-  const [portfolios, setPortfolios] = useState(null);
-  const [portfolioError, setPortfolioError] = useState('');
+  const { lib, libData, skuItems, portfolios, portfolioError } = data;
   const [tasks, setTasks] = useState(() => restored?.tasks ?? [newTask()]);
   const [activeId, setActiveId] = useState(() => restored?.activeId ?? null);
   const [fromDraft, setFromDraft] = useState(!!restored);
-  const [result, setResult] = useState(null);
-
-  useEffect(() => {
-    setResult(null);
-    setPortfolioError('');
-    api.library(market).then(setLib).catch((e) => setLibError(e.message));
-    api.skus({ marketplace: market }).then((response) => setSkuItems(response.items ?? [])).catch((e) => { setSkuItems([]); setPortfolioError((old) => [old, `SKU 库读取失败：${e.message}`].filter(Boolean).join('；')); });
-    api.portfolios(market).then((response) => setPortfolios(response.items ?? [])).catch((e) => { setPortfolios([]); setPortfolioError((old) => [old, `广告组合库读取失败：${e.message}`].filter(Boolean).join('；')); });
-  }, [market]);
 
   useEffect(() => {
     if (!activeId && tasks.length) setActiveId(tasks[0].id);
@@ -113,9 +103,6 @@ export default function BuilderPage({ market }) {
     return () => clearTimeout(t);
   }, [key, tasks, activeId]);
 
-  /** 词库数据整理成引擎要的形状:定义 + 各类行 + 本站点的套用设置 */
-  const libData = useMemo(() => normLibData(lib), [lib]);
-
   /** 每个任务各自算一遍计划,词库按任务开关决定带不带 */
   const plans = useMemo(() => {
     return tasks.map((task) => {
@@ -124,21 +111,13 @@ export default function BuilderPage({ market }) {
     });
   }, [tasks, libData]);
 
-  const totals = useMemo(() => {
-    const campaigns = plans.reduce((a, x) => a + x.plan.campaigns.length, 0);
-    const problems = plans.filter((x) => x.plan.problems.length).length;
-    const rows = plans.reduce(
-      (a, x) => a + x.plan.campaigns.length * (x.plan.blockRows + 1), 0
-    );
-    const skus = plans.reduce((a, x) => a + parseLines(x.task.skus).length, 0);
-    return { campaigns, problems, rows, skus };
-  }, [plans]);
-
-  const blocked = totals.problems > 0 || totals.campaigns === 0 || skuItems === null || portfolios === null;
+  const used = !isPristine(tasks, newTask);
+  useEffect(() => {
+    onReport?.({ plans, used, tasks: tasks.length });
+  }, [plans, used, tasks.length, onReport]);
 
   function updateTask(id, patch) {
     setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)));
-    setResult(null);
   }
 
   function addTask() {
@@ -149,7 +128,6 @@ export default function BuilderPage({ market }) {
       : newTask();
     setTasks((prev) => [...prev, t]);
     setActiveId(t.id);
-    setResult(null);
   }
 
   function duplicateTask(id) {
@@ -161,7 +139,6 @@ export default function BuilderPage({ market }) {
       return [...prev.slice(0, i + 1), t, ...prev.slice(i + 1)];
     });
     setActiveId(t.id);
-    setResult(null);
   }
 
   function removeTask(id) {
@@ -170,7 +147,6 @@ export default function BuilderPage({ market }) {
       return next.length ? next : [newTask()];
     });
     setActiveId(null);
-    setResult(null);
   }
 
   /** 清空这个站点的全部任务,连本地草稿一起删 */
@@ -182,31 +158,6 @@ export default function BuilderPage({ market }) {
     setTasks([t]);
     setActiveId(t.id);
     setFromDraft(false);
-    setResult(null);
-  }
-
-  function generate() {
-    try {
-      const wb = buildWorkbookData(plans);
-      if (wb.bad.length) {
-        setResult({
-          kind: 'err',
-          text: `自检未通过(${wb.bad.length} 项):${wb.bad.slice(0, 5).join('；')}`,
-        });
-        return;
-      }
-      const file = `批量开广告-${market}-${todayStamp()}.xlsx`;
-      downloadWorkbook(wb.aoa, file);
-      api.recordActivity('builder', 'export', market, {
-        campaigns: wb.placed.length, tasks: tasks.length, rows: wb.aoa.length,
-      }).catch(() => {});
-      setResult({
-        kind: 'ok',
-        text: `已生成 ${wb.placed.length} 条广告活动,来自 ${tasks.length} 个任务,共 ${wb.aoa.length} 行,三道自检全部通过。文件:${file}`,
-      });
-    } catch (e) {
-      setResult({ kind: 'err', text: e.message });
-    }
   }
 
   const active = tasks.find((t) => t.id === activeId) ?? tasks[0];
@@ -216,35 +167,6 @@ export default function BuilderPage({ market }) {
 
   return (
     <div className="builder">
-      {/* ---------- 页头 ---------- */}
-      <header className="bhero">
-        <div className="bhero-glow" />
-        <div className="bhero-text">
-          <h1>
-            开设广告
-            <span className="bhero-mk">{market} 站</span>
-          </h1>
-          <p className="hint">
-            一页填完:SKU、组合、命名、参数、否定,右边实时预览。填的内容会自动存在这台电脑上,
-            切到别的页面再回来、或者刷新都还在。
-            {libError ? ` 词库读取失败:${libError}` : ` 本站点词库共 ${libCount} 条,可在每个任务里选择是否套用。`}
-          </p>
-        </div>
-        <div className="bhero-stats">
-          {[
-            ['广告活动', totals.campaigns, 'accent'],
-            ['总行数', totals.rows, ''],
-            ['SKU', totals.skus, ''],
-            ['任务', tasks.length, ''],
-          ].map(([label, value, tone]) => (
-            <div className={`kpi${tone ? ` ${tone}` : ''}`} key={label}>
-              <b>{value}</b>
-              <span>{label}</span>
-            </div>
-          ))}
-        </div>
-      </header>
-
       {/* ---------- 吸顶操作条 ---------- */}
       <div className="bbar">
         <div className="tabstrip">
@@ -286,9 +208,6 @@ export default function BuilderPage({ market }) {
 
         <div className="spacer" />
 
-        {totals.problems > 0 && (
-          <span className="tag amber">{totals.problems} 个任务待处理</span>
-        )}
         {fromDraft && (
           <span className="tag gray" title="上次填的内容存在这台电脑的浏览器里,已经帮你恢复">
             草稿已恢复
@@ -297,13 +216,7 @@ export default function BuilderPage({ market }) {
         <button className="btn sm ghost" onClick={resetAll} title="清空这个站点的全部任务">
           清空重来
         </button>
-        <button className="btn primary" disabled={blocked} onClick={generate}>
-          <Icon name="download" className="ico-sm" />
-          生成总表并下载
-        </button>
       </div>
-
-      {result && <div className={`note ${result.kind} bresult animate-in`}>{result.text}</div>}
 
       {/* ---------- 一页式表单 ---------- */}
       {active && (

@@ -11,3 +11,17 @@ export function downloadWorkbook(aoa, filename) {
   XLSX.utils.book_append_sheet(wb, ns, SHEET);
   XLSX.writeFile(wb, filename, { bookType: 'xlsx' });
 }
+
+/**
+ * 一个文件里放多页:[{ name, aoa, widths? }]。
+ * 「开设广告」页 SP(商品推广活动)和 SB(品牌推广多个广告组广告活动)各一页,一次上传后台。
+ */
+export function downloadSheets(sheets, filename) {
+  const wb = XLSX.utils.book_new();
+  for (const { name, aoa, widths } of sheets) {
+    const ns = XLSX.utils.aoa_to_sheet(aoa);
+    ns['!cols'] = (widths ?? COL_WIDTHS).map((wch) => ({ wch }));
+    XLSX.utils.book_append_sheet(wb, ns, name);
+  }
+  XLSX.writeFile(wb, filename, { bookType: 'xlsx' });
+}

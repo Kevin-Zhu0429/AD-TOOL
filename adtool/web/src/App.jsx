@@ -6,8 +6,7 @@ import Changelog, { VersionBadge } from './components/Changelog.jsx';
 import LoginPage from './components/LoginPage.jsx';
 import AppShell from './components/AppShell.jsx';
 import HomePage from './components/HomePage.jsx';
-const BuilderPage = lazy(() => import('./components/BuilderPage.jsx'));
-const ManualPage = lazy(() => import('./components/ManualPage.jsx'));
+const AdsPage = lazy(() => import('./components/AdsPage.jsx'));
 const OptimizerPage = lazy(() => import('./components/OptimizerPage.jsx'));
 const LibraryPage = lazy(() => import('./components/LibraryPage.jsx'));
 const SkuPage = lazy(() => import('./components/SkuPage.jsx'));
@@ -30,6 +29,8 @@ export default function App() {
   // 广告优化工作台首次打开后保持挂载，避免切到其他页面时原生工作台被卸载、改动丢失。
   const [optimizerOpened, setOptimizerOpened] = useState(false);
   const [market, setMarket] = useState('ES');
+  // 开设广告页打开时停在哪个类型(从首页旧的「手动广告」入口进来就停在 SP 手动)
+  const [adsTab, setAdsTab] = useState('');
   // 更新日志:有没看过的版本就登录后自动弹一次,关掉记成看过
   const [logOpen, setLogOpen] = useState(false);
   const [logAuto, setLogAuto] = useState(false);
@@ -53,7 +54,7 @@ export default function App() {
 
   useEffect(() => {
     const labels = {
-      home: '首页', builder: '自动广告', manual: '手动广告', optimizer: '广告优化',
+      home: '首页', builder: '开设广告', manual: '开设广告', optimizer: '广告优化',
       library: '否定词库', skus: 'SKU 库', portfolios: '广告组合库', aba: 'ABA 报告',
       abaPublic: 'ABA报告（公共）', products: '产品情报', tools: '小工具', agedFees: '超龄仓储费', listings: 'Listing 管理', admin: '账号管理', profile: '个人资料',
     };
@@ -68,6 +69,13 @@ export default function App() {
   }
 
   function navigate(nextPage) {
+    // 手动广告已经并进开设广告页,老入口直接跳到对应的标签
+    if (nextPage === 'manual') {
+      setAdsTab('manual');
+      nextPage = 'builder';
+    } else if (nextPage === 'builder') {
+      setAdsTab('');
+    }
     if (nextPage === 'optimizer') setOptimizerOpened(true);
     if (nextPage !== page) {
       api.recordActivity(nextPage, 'open', market).catch(() => {});
@@ -108,9 +116,7 @@ export default function App() {
   // 切站点要重新拉词库,用 market 做 key 强制重挂载
   const body =
     page === 'builder' ? (
-      <BuilderPage key={market} market={market} />
-    ) : page === 'manual' && user.manualAds ? (
-      <ManualPage key={market} market={market} />
+      <AdsPage key={market} market={market} user={user} initialTab={adsTab} />
     ) : page === 'optimizer' && user.adOpt ? (
       null
     ) : page === 'skus' ? (

@@ -182,7 +182,7 @@ export function LibraryNegatives({ task, lib, plan, onChange }) {
 }
 
 /** 本任务临时否定:两级否定关键词 + 否定商品定向,可以从 D 类打印机库直接挑词进来 */
-export function ExtraNegatives({ task, negCount, asinCount, lib, market, onChange }) {
+export function ExtraNegatives({ task, negCount, asinCount, lib, market, onChange, noAsin = false }) {
   const setNeg = (patch) => onChange({ extraNeg: { ...task.extraNeg, ...patch } });
   const [pick, setPick] = useState(false);
   const [pickNote, setPickNote] = useState('');
@@ -240,17 +240,21 @@ export function ExtraNegatives({ task, negCount, asinCount, lib, market, onChang
         </label>
       </div>
 
-      <div className="negsec">否定商品定向(ASIN)</div>
-      <textarea
-        className="inp resize-none" rows={3} placeholder={'B08T1HR5CS\nB087DH9GT3'}
-        value={task.extraNeg.negAsin}
-        onChange={(e) => setNeg({ negAsin: e.target.value })}
-      />
+      {!noAsin && (
+        <>
+          <div className="negsec">否定商品定向(ASIN)</div>
+          <textarea
+            className="inp resize-none" rows={3} placeholder={'B08T1HR5CS\nB087DH9GT3'}
+            value={task.extraNeg.negAsin}
+            onChange={(e) => setNeg({ negAsin: e.target.value })}
+          />
+        </>
+      )}
       <div className="row wrap" style={{ marginTop: 9 }}>
         <span className="stat">否定词 <b>{negCount}</b></span>
-        <span className="stat">ASIN <b>{asinCount}</b></span>
+        {!noAsin && <span className="stat">ASIN <b>{asinCount}</b></span>}
         <div className="spacer" />
-        <span className="hint">纯 ASIN 即可,自动补成 asin=&quot;B0…&quot;</span>
+        {!noAsin && <span className="hint">纯 ASIN 即可,自动补成 asin=&quot;B0…&quot;</span>}
       </div>
     </>
   );
