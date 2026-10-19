@@ -96,7 +96,7 @@ export default function AbaAsinView({ market, userId, publicReport = false, repo
           if (cell) cell.z = '0.00%';
         });
       });
-      worksheet['!cols'] = columns.map((column) => ({ wch: ['periods', 'links', 'market_conflicts', 'alignment_reason'].includes(column.key) ? 48 : column.key === 'sku' ? 28 : column.key === 'recognition' ? 26 : column.key === 'query' ? 42 : column.key === 'asin' ? 16 : 14 }));
+      worksheet['!cols'] = columns.map((column) => ({ wch: ['periods', 'links', 'market_conflicts', 'alignment_reason', 'alignment_sources'].includes(column.key) ? 48 : column.key === 'sku' ? 28 : column.key === 'recognition' ? 26 : column.key === 'query' ? 42 : column.key === 'asin' ? 16 : 14 }));
       worksheet['!autofilter'] = { ref: `A1:${XLSX.utils.encode_col(columns.length - 1)}${rows.length + 1}` };
       const workbook = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);

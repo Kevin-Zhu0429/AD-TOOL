@@ -186,3 +186,9 @@
 .aba-asin-alignment { display: block; white-space: normal; margin: 5px 0; font-size: 11px; line-height: 1.5; }
 .aba-asin-alignment.mismatch { color: var(--red-text); }
 .aba-asin-alignment.review { color: var(--amber-text); }
+
+.aba-alignment-sources { max-width: 520px; min-width: 250px; white-space: normal; overflow-wrap: anywhere; }
+.aba-alignment-source { padding: 8px 0; border-bottom: 1px solid var(--border); line-height: 1.6; color: var(--text); }
+.aba-alignment-source:last-child { border-bottom: 0; }
+.aba-alignment-source p { margin: 3px 0; }
+.aba-alignment-source ul { margin: 4px 0; padding-left: 18px; }

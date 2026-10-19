@@ -8,6 +8,7 @@ export const ASIN_GROUP_EXPORT_COLUMNS = [
   ...ASIN_COLUMNS.slice(2),
   { key: 'alignment_status', label: '机型与 SKU 对应', text: true },
   { key: 'alignment_reason', label: '型号核对说明', text: true },
+  { key: 'alignment_sources', label: '待核对来源与原因', text: true },
 ];
 
 export function skusForAsinRow(row, data, params = {}) {
@@ -62,6 +63,16 @@ function splitMarketTotals(entries, average) {
   });
 }
 
+function alignmentSourceText(alignment) {
+  return (alignment?.issues ?? []).map((issue) => [
+    `ASIN：${issue.asin} · ${ASIN_ALIGNMENT_LABELS[issue.status]}`,
+    `机型对应型号：${issue.expectedModels.join(' / ') || '词库未明确对应型号'}`,
+    ...issue.skus.map((sku) => `SKU：${sku.sku} · 品牌：${sku.brand || '未填写'} · 库中型号：${sku.model || '未填写'} · ${ASIN_ALIGNMENT_LABELS[sku.status]}`),
+    ...(issue.skus.length ? [] : ['关联 SKU：未关联']),
+    `原因：${issue.reason}`,
+  ].join('\n')).join('\n\n');
+}
+
 export function buildAsinGroupExport(data, params = {}) {
   const entries = (data.items ?? []).flatMap((group) => {
     const queryRows = group.query_rows?.length ? group.query_rows : [{ ...group, query: '' }];
@@ -75,6 +86,7 @@ export function buildAsinGroupExport(data, params = {}) {
     if (column.key === 'asin') return identity.asin;
     if (column.key === 'alignment_status') return ASIN_ALIGNMENT_LABELS[queryRow.alignment?.status] ?? '';
     if (column.key === 'alignment_reason') return queryRow.alignment?.reason ?? '';
+    if (column.key === 'alignment_sources') return alignmentSourceText(queryRow.alignment);
     const value = column.key in markets[index] ? markets[index][column.key] : queryRow[column.key];
     if (value === null || value === undefined) return '';
     return column.rate ? value / 100 : value;
@@ -104,6 +116,7 @@ export function buildAsinQueryExport(data, params = {}) {
       average_weeks: row.average_weeks ?? row.periods?.length ?? '',
       alignment_status: ASIN_ALIGNMENT_LABELS[row.alignment?.status] ?? '',
       alignment_reason: row.alignment?.reason ?? '',
+      alignment_sources: alignmentSourceText(row.alignment),
       market_conflicts: (row.market_conflicts ?? []).map((c) => `${c.week_end} · ${c.query} · ${c.label}：${c.values.map((v) => `${v.asin} = ${v.value}`).join('；')}`).join('\n')
         + (row.conflict_count > 20 ? '\n仅列出前 20 项待核对数据' : ''),
     };

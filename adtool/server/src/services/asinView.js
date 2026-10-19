@@ -67,7 +67,18 @@ export function buildAsinView(db, userId, market, query, scope = 'private') {
       if (wordType === 'cartridge' && matching.hasPrinter) continue;
       if (query.group && matching.group.key !== query.group) continue;
       const alignmentKey = JSON.stringify([report.asin, row.query]);
-      if (!alignments.has(alignmentKey)) alignments.set(alignmentKey, asinQueryAlignment(matching, skusByAsin.get(report.asin) ?? []));
+      if (!alignments.has(alignmentKey)) {
+        const sourceSkus = skusByAsin.get(report.asin) ?? [];
+        const checked = asinQueryAlignment(matching, sourceSkus);
+        checked.issues = ['mismatch', 'review', 'insufficient'].includes(checked.status) ? [{
+          asin: report.asin, status: checked.status, reason: checked.reason,
+          expectedModels: checked.expectedModels, sourceModels: checked.sourceModels,
+          skus: [...new Map(sourceSkus.map((s) => [JSON.stringify([s.sku, s.brand, s.model, s.setGroup]),
+            { sku: s.sku, brand: s.brand, model: s.model, setGroup: s.setGroup,
+              status: asinQueryAlignment(matching, [s]).status }])).values()],
+        }] : [];
+        alignments.set(alignmentKey, checked);
+      }
       const alignment = alignments.get(alignmentKey);
       if (alignment.status === 'mismatch') alignmentSummary.mismatchRecords++;
       if (['review', 'insufficient'].includes(alignment.status)) alignmentSummary.reviewRecords++;
