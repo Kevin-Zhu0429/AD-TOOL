@@ -82,7 +82,7 @@ try {
       const cells = XLSX.utils.sheet_to_json(book.Sheets[book.SheetNames[0]], { header: 1, defval: '' });
       assert.equal(cells[1][cells[0].indexOf('机型与 SKU 对应')], '型号不匹配');
       assert.equal(cells[1][3], 'B000004304');
-      assert.equal(cells[1][10], 5); // purchases stay on 304, never transferred to the 305 ASIN
+      assert.equal(cells[1][cells[0].indexOf('ASIN 购买')], 5); // purchases stay on 304, never transferred to the 305 ASIN
     }
     await choose('机型与 SKU', 'all');
     assert.equal(await view.locator('.aba-table tbody tr').count(), 2);

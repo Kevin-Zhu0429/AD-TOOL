@@ -38,6 +38,12 @@ try {
       assert.ok(cells.length > 1);
       assert.ok(cells.slice(1).every((r) => r[0] === 'CENTRAL-ES-305' && r[3] === 'B000000305'));
       assert.doesNotMatch(JSON.stringify(cells), /PERSONAL-WRONG|CENTRAL-DE-305/);
+      if (display === 'printers') {
+        for (const [oldLabel, newLabel] of [['市场 IMP', '市场IMP(原始总量)'], ['市场点击 TT', '市场点击TT(原始总量)'],
+          ['市场购买 TT', '市场购买TT(原始总量)'], ['市场 CVR', '市场CVR(原始总量)']])
+          assert.equal(cells[0].indexOf(newLabel), cells[0].indexOf(oldLabel) + 1);
+        assert.ok(cells.slice(1).every((r) => typeof r[cells[0].indexOf('市场IMP(原始总量)')] === 'number'));
+      }
     }
   };
   await page.goto(base);
@@ -61,6 +67,10 @@ try {
   await library.getByRole('alert').waitFor(); assert.match(await library.innerText(), /整批未保存/);
   assert.equal((await (await page.request.get(base + '/api/aba-skus')).json()).enabled, false);
   const es = ['西班牙', 'CE', 'CENTRAL-ES-305', 'B000000305', '305', 'BK'];
+  await library.locator('input[type=file]').setInputFiles(workbook({ ES: [es, ['ES', 'CE', 'CONFLICT-SKU', 'B000000305', '305', 'BK']] }));
+  await library.getByRole('alert').waitFor();
+  assert.match(await library.getByRole('alert').innerText(), /CENTRAL-ES-305.*CONFLICT-SKU/);
+  assert.equal((await (await page.request.get(base + '/api/aba-skus')).json()).enabled, false);
   await library.locator('input[type=file]').setInputFiles(workbook({ ES: [es, ...Array.from({ length: 26 }, (_, i) => ['ES', 'CY', 'EXTRA-' + i, 'B' + String(1000 + i).padStart(9, '0'), '305', 'BKC'])],
     DE: [['DE', 'CE', 'CENTRAL-DE-305', 'B000000306', '305', 'BK']], US: [['US', 'CE', 'CENTRAL-US-305', 'B000000307', '305', 'BK']], Duplicate: [es] }));
   await library.locator('.aba-sku-preview').waitFor();
@@ -89,10 +99,11 @@ try {
   await library.getByText('CENTRAL-DE-305', { exact: true }).waitFor();
   await library.locator('input[type=file]').setInputFiles(workbook({ ES: [['ES', 'CE', 'CENTRAL-ES-305', 'B000000305', '305XL', '2C']] }));
   await library.locator('.aba-sku-preview').waitFor();
-  assert.match(await library.locator('.aba-sku-preview').innerText(), /新增 0 条、更新 1 条/);
+  assert.match(await library.locator('.aba-sku-preview').innerText(), /新增 0 条、更新 1 条、移除 28 条/);
   await library.getByRole('button', { name: '保存到 ABA 专用库', exact: true }).click();
   await library.getByText(/保存完成：新增 0 条，更新 1 条/).waitFor();
-  assert.equal((await (await page.request.get(base + '/api/aba-skus')).json()).libraryTotal, 29);
+  assert.equal((await (await page.request.get(base + '/api/aba-skus')).json()).libraryTotal, 1);
+  await change('SKU 库国家', '');
   assert.equal((await (await page.request.get(base + '/api/sku')).json()).items.length, 0, 'upload never writes owner personal SKUs');
   await checkReportExports(page, view, '/api/aba-public/asin');
   await library.locator(':scope > summary').scrollIntoViewIfNeeded();
@@ -117,5 +128,5 @@ try {
   assert.equal(result.items.find((r) => r.asin === 'B000000305' && /2820/.test(r.query)).alignment.status, 'matched');
   assert.equal((await userContext.request.post(base + '/api/aba-skus/import', { data: { rows: [] } })).status(), 403);
   assert.deepEqual(errors, []);
-  console.log('ABA SKU library browser passed: template, multi-sheet all-market import, preview, atomic failure/retry, incremental preservation, pagination/search, dedicated private/public matching, read-only role, keyboard and narrow dark layout.');
+  console.log('ABA SKU library browser passed: template, multi-sheet all-market import, preview, atomic failure/retry, full replacement and removal preview, pagination/search, dedicated private/public matching, read-only role, keyboard and narrow dark layout.');
 } finally { await browser?.close(); await vite?.close(); await backend.close(); }

@@ -14,9 +14,10 @@ export function buildAsinView(db, userId, market, query, scope = 'private') {
   const library = abaSkuStatus(db);
   const useReportBrand = shared && !library.enabled;
   const skuItems = library.enabled
-    ? db.prepare("SELECT 'aba:' || id AS id, asin, sku, brand, model, set_group AS setGroup FROM aba_sku_items WHERE country=? AND asin IN ("
-      + (shared ? 'SELECT asin FROM aba_public_reports WHERE marketplace=?' : 'SELECT asin FROM aba_asin_reports WHERE user_id=? AND marketplace=?')
-      + ') ORDER BY sku').all(...(shared ? [market, market] : [market, userId, market]))
+    ? db.prepare("SELECT 'aba:' || s.id AS id, s.asin, s.sku, s.brand, s.model, s.set_group AS setGroup FROM aba_sku_items s WHERE s.country=? AND EXISTS ("
+      + (shared ? 'SELECT 1 FROM aba_public_reports r WHERE r.marketplace=? AND r.asin=s.asin AND lower(trim(r.brand))=s.brand_key'
+        : 'SELECT 1 FROM aba_asin_reports r WHERE r.user_id=? AND r.marketplace=? AND r.asin=s.asin')
+      + ') ORDER BY s.sku').all(...(shared ? [market, market] : [market, userId, market]))
     : shared
     ? db.prepare('SELECT MIN(id) AS id, asin, sku, brand, model, set_group AS setGroup FROM sku_items WHERE country=? AND asin IS NOT NULL AND asin IN (SELECT asin FROM aba_public_reports WHERE marketplace=?) GROUP BY asin, sku, brand, model, set_group ORDER BY sku').all(market, market)
     : db.prepare(`SELECT id, asin, sku, brand, model, set_group AS setGroup FROM sku_items
@@ -38,7 +39,8 @@ export function buildAsinView(db, userId, market, query, scope = 'private') {
   const brandAsins = new Set(useReportBrand ? modelReports.filter((r) => !brand || brandKey(r) === brand).map((r) => r.asin)
     : modelSkus.filter((s) => !brand || (brandKey(s) || '__unassigned__') === brand).map((s) => s.asin));
   const filteredSkus = modelSkus.filter((s) => !brand || (useReportBrand ? brandAsins.has(s.asin) : (brandKey(s) || '__unassigned__') === brand));
-  const brandReports = modelReports.filter((r) => !brand || brandAsins.has(r.asin));
+  const brandReports = modelReports.filter((r) => !brand || (brandAsins.has(r.asin)
+    && (!shared || !library.enabled || brandKey(r) === brand)));
   const asin = String(query.asin ?? '').toUpperCase();
   const skuId = String(query.skuId ?? '');
   const skuAsin = skuId ? filteredSkus.find((s) => String(s.id) === skuId)?.asin : null;
@@ -73,10 +75,16 @@ export function buildAsinView(db, userId, market, query, scope = 'private') {
       if (wordType === 'printer' && !matching.hasPrinter) continue;
       if (wordType === 'cartridge' && matching.hasPrinter) continue;
       if (query.group && matching.group.key !== query.group) continue;
-      const alignmentKey = JSON.stringify([report.asin, row.query]);
+      const alignmentKey = JSON.stringify([report.asin, shared && library.enabled ? brandKey(report) : '', row.query]);
       if (!alignments.has(alignmentKey)) {
-        const sourceSkus = skusByAsin.get(report.asin) ?? [];
+        const sourceSkus = (skusByAsin.get(report.asin) ?? []).filter((s) => !library.enabled
+          || (shared ? brandKey(s) === brandKey(report) : !brand || brandKey(s) === brand));
+        const ambiguous = library.enabled && !shared && !brand && new Set(sourceSkus.map(brandKey)).size > 1;
         const checked = asinQueryAlignment(matching, sourceSkus);
+        if (ambiguous) {
+          checked.status = 'review';
+          checked.reason = '此国家的 ASIN 对应多个品牌，请先选择品牌再核对 SKU';
+        }
         if (library.enabled && checked.status === 'insufficient' && !sourceSkus.length)
           checked.reason = 'ABA 专用 SKU 库未收录此国家的该 ASIN，请由超级管理员补充';
         checked.issues = ['mismatch', 'review', 'insufficient'].includes(checked.status) ? [{
@@ -95,7 +103,8 @@ export function buildAsinView(db, userId, market, query, scope = 'private') {
         || (alignmentFilter === 'mismatch' && alignment.status !== 'mismatch')) {
         alignmentSummary.excludedRecords++; continue;
       }
-      rows.push({ ...row, asin: report.asin, week_start: report.week_start, week_end: report.week_end,
+      rows.push({ ...row, asin: report.asin, source_brand: library.enabled ? (shared ? report.brand : brand || null) : null,
+        week_start: report.week_start, week_end: report.week_end,
         week_number: report.week_number, recognition: matching.group.kind === 'other' ? '墨盒 KW 词' : matching.group.label,
         candidates: matching.candidates, group: matching.group, alignment });
     }

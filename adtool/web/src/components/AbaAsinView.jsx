@@ -101,7 +101,7 @@ export default function AbaAsinView({ market, userId, publicReport = false, repo
           if (cell) cell.z = '0.00%';
         });
       });
-      worksheet['!cols'] = columns.map((column) => ({ wch: ['periods', 'links', 'market_conflicts', 'alignment_reason', 'alignment_sources'].includes(column.key) ? 48 : column.key === 'sku' ? 28 : column.key === 'recognition' ? 26 : column.key === 'query' ? 42 : column.key === 'asin' ? 16 : 14 }));
+      worksheet['!cols'] = columns.map((column) => ({ wch: ['periods', 'links', 'market_conflicts', 'alignment_reason', 'alignment_sources'].includes(column.key) ? 48 : column.key.endsWith('_original') ? 28 : column.key === 'sku' ? 28 : column.key === 'recognition' ? 26 : column.key === 'query' ? 42 : column.key === 'asin' ? 16 : 14 }));
       worksheet['!autofilter'] = { ref: `A1:${XLSX.utils.encode_col(columns.length - 1)}${rows.length + 1}` };
       const workbook = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
@@ -118,7 +118,7 @@ export default function AbaAsinView({ market, userId, publicReport = false, repo
     }
   }
   return <div className="aba-asin-view">
-    <AbaSkuLibrary status={data?.skuLibrary} onSaved={() => setRevision((n) => n + 1)} />
+    <AbaSkuLibrary status={data?.skuLibrary} onSaved={() => { change({ skuId: '' }); setRevision((n) => n + 1); }} />
     {!publicReport && <AbaReportUpload market={market} kind="asin" onSaved={saved} />}
     <section className="aba-filters" aria-label="ASIN 报告筛选">
       <div className="aba-toolbar aba-asin-selectors">
@@ -150,6 +150,7 @@ export default function AbaAsinView({ market, userId, publicReport = false, repo
         <div className="aba-table-heading"><div><h2>{data.view === 'printers' ? 'ASIN 机型分类汇总' : 'ASIN 搜索查询明细'}</h2><p className="hint">{data.aggregation === 'average' ? '按搜索词实际出现周数计算周平均，可展开分类核对明细。' : data.view === 'printers' ? '按机型汇总全部所选周，展开查看搜索词及来源 ASIN / SKU；未识别到机型的词归为墨盒 KW 词。' : data.merged ? '同 ASIN、同搜索词跨周合并，百分比按合计次数重算。' : '每行一个 ASIN 的一条搜索词周记录。'} {data.seriesMerged ? '当前筛选内跨 ASIN 合并：同词同周市场数据只计一次，ASIN 指标相加；市场数值冲突时显示待核对。' : '不同 ASIN 的市场数据有重叠，分别展示。'}</p></div><div className="aba-table-actions">{data.view === 'printers' && <label className="aba-model-toggle"><input type="checkbox" checked={hideCodes} onChange={(event) => setHideCodes(event.target.checked)} />隐藏 ASIN / SKU</label>}<button className="btn" disabled={exporting || !data.items.length} aria-busy={exporting} onClick={exportResults} title="导出当前筛选的全部结果，不受页码限制">{exporting ? '正在导出…' : '导出 Excel'}</button></div></div>
         {exportError && <p className="aba-export-feedback aba-error-text" role="alert">{exportError}</p>}
         {data.aggregation === 'average' && <p className="hint aba-model-note">周平均：每个搜索词的数量按实际出现周数平均，未出现的周不计入；同词跨套组先合并再平均。机型分类汇总为各词周平均之和，百分比按当前显示的数量重算。</p>}
+        {data.view === 'printers' && <p className="hint aba-model-note">Excel 保留原指标；新增四列“原始总量”为每个搜索词按实际出现周数计算的完整市场周平均，不按 ASIN / SKU 分摊，同词在不同行重复展示，不可直接相加。市场来源冲突或缺失时，对应新列留空。</p>}
         <AbaAsinTable data={data} params={tableParams} key={JSON.stringify(tableParams)} hideIdentity={data.view === 'printers' && hideCodes} onSort={(sort) => change({ sort, direction: data.sort === sort && data.direction === 'desc' ? 'asc' : 'desc' })}
           empty={<div className="aba-table-empty"><h3>{!data.reports.length ? '还没有 ASIN 报告' : !selected.length ? '请选择至少一周' : allMismatchesExcluded ? '不匹配数据已全部排除' : data.alignmentFilter === 'mismatch' ? '没有型号不匹配的记录' : data.selectedReportCount && !data.recordCount && !filters.q && filters.wordType === 'all' ? '所选报告没有搜索词数据' : '没有匹配的搜索查询'}</h3><p className="hint">{allMismatchesExcluded ? '可将“机型与 SKU”切换为“保留不匹配数据”或“仅型号不匹配”，核对原始记录。' : publicReport ? '报告由 API 同步，可查看上方同步进度，或调整日期、ASIN、SKU 和搜索条件。' : '可上传 CSV 或合并 XLSX，或调整日期、ASIN、SKU 和搜索条件。'}</p>{search && <button className="btn" onClick={clearSearch}>清除搜索</button>}</div>} />
         <AbaPagination data={data} onChange={change} />

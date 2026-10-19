@@ -41,7 +41,9 @@ export default function AbaSkuLibrary({ status, onSaved }) {
         ['国家可填写 ES、DE、FR、IT、UK、US、CA、AU、AE 或对应中文国家名。'],
         ['一张表可包含全部市场，也可按工作表分国家；每张数据表都保留模板表头。'],
         ['墨盒型号填写 305 / 305XL 等墨盒系列，不填写 ENVY6000 等打印机机型。'],
-        ['按国家＋品牌＋SKU 新增或更新，表外旧记录保留；同一文件中的冲突会阻止整批保存。'],
+        ['每次上传全部市场完整表，以国家＋品牌＋ASIN 唯一匹配一个 SKU；重复映射冲突会阻止整批保存。'],
+        ['成功保存后，表外映射移出当前库并停止后续拉取，已保存的历史报告保留。'],
+        ['公共报告每次同步从最新成功保存的表读取各国家、品牌的 ASIN；正在执行的任务使用启动时清单。'],
         ['首次保存后，普通和公共 ABA 统一使用此库，不再读取个人 SKU 库。'],
       ]), '填写说明');
       XLSX.writeFile(book, 'ABA专用SKU库模板.xlsx');
@@ -66,22 +68,22 @@ export default function AbaSkuLibrary({ status, onSaved }) {
     try {
       const result = await api.importAbaSkus(pending.rows, pending.filename);
       if (!mounted.current) return;
-      setMessage(`保存完成：新增 ${result.added} 条，更新 ${result.updated} 条。表外旧记录保留，普通和公共 ABA 已统一使用专用库。`);
+      setMessage(`保存完成：新增 ${result.added} 条，更新 ${result.updated} 条，移除 ${result.removed} 条。下次同步使用最新清单，历史报告保留。`);
       setPending(null); setRevision((n) => n + 1); onSaved();
     } catch (err) { if (mounted.current) setError(`${err.message}。文件预览仍保留，可重试；如请求中断，可先刷新库确认结果。`); }
     finally { busyRef.current = false; if (mounted.current) setBusy(''); }
   }
   return <details className="aba-sku-library" open={open} onToggle={(e) => setOpen(e.currentTarget.open)}>
     <summary>ABA 专用 SKU 库（全部市场）<span className="hint">{status?.enabled || data?.enabled ? ` · 已启用 · ${data?.libraryTotal ?? status?.total} 条` : ' · 首次上传后启用'}</span></summary>
-    <p className="hint">超级管理员统一维护，普通与公共 ABA 共用。用于 ASIN、品牌、墨盒型号和 SKU 的关联及校验；广告与库存使用的个人 SKU 库独立维护。</p>
+    <p className="hint">超级管理员统一维护，普通与公共 ABA 共用。按国家、品牌、ASIN 唯一关联 SKU；公共报告下次同步从最新完整表读取 ASIN 清单。广告与库存使用的个人 SKU 库独立维护。</p>
     <p className="hint">{data?.enabled ? `已收录 ${data.libraryTotal} 条 · ${data.countries.map((c) => `${c.country} ${c.count} 条`).join(' · ')} · 最近上传 ${data.filename}` : '尚未启用专用库，报告暂沿用原关联。首次成功保存后，全部市场统一切换；未收录的 ASIN 会提示补充，不再回退个人 SKU 库。'}</p>
     {data?.canManage ? <div className="aba-sku-upload">
       <div className="aba-toolbar"><button className="btn" disabled={!!busy} onClick={template}>下载 SKU 模板</button>
         <button className="btn" disabled={!!busy} onClick={() => fileRef.current?.click()}>选择全部市场 SKU 表</button>
         <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" hidden onChange={(e) => choose(e.target.files?.[0])} />
       </div>
-      <p className="hint">必填：国家、品牌、SKU、ASIN、墨盒型号；颜色 / 套组选填。支持多工作表，最多 50,000 条、30 MB。按国家＋品牌＋SKU 新增或更新，保留表外旧记录。</p>
-      {pending && <div className="aba-sku-preview"><strong>{pending.filename}</strong><p>已检查 {pending.preview.count} 条 · 预计新增 {pending.preview.added} 条、更新 {pending.preview.updated} 条 · 相同重复行 {pending.preview.duplicates} 条</p><p className="hint">{pending.preview.counts.map((c) => `${c.country}：${c.count} 条`).join(' · ')}</p>
+      <p className="hint">每次上传全部市场完整表。必填：国家、品牌、SKU、ASIN、墨盒型号；颜色 / 套组选填。支持多工作表，最多 50,000 条、30 MB。同国家、品牌、ASIN 只能对应一个 SKU；表外映射会移除并停止后续拉取，历史报告保留。</p>
+      {pending && <div className="aba-sku-preview"><strong>{pending.filename}</strong><p>已检查 {pending.preview.count} 条 · 预计新增 {pending.preview.added} 条、更新 {pending.preview.updated} 条、移除 {pending.preview.removed} 条 · 相同重复行 {pending.preview.duplicates} 条</p><p className="hint">{pending.preview.counts.map((c) => `${c.country}：${c.count} 条`).join(' · ')}</p>
         <button className="btn primary" disabled={!!busy} onClick={save}>保存到 ABA 专用库</button>{' '}<button className="btn ghost" disabled={!!busy} onClick={() => setPending(null)}>取消本次上传</button>
       </div>}
     </div> : data && <p className="hint">仅超级管理员可上传和更新；发现资料缺失时，请联系超级管理员统一补充。</p>}

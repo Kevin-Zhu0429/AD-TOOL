@@ -45,6 +45,18 @@ export function createPublicSync({ db, save, onSaved = () => {}, targets = catal
   db.prepare('INSERT OR IGNORE INTO aba_public_schedule(id,next_due) VALUES(1,?)').run(nextTuesday(now()));
   let busy = false;
   const instance = randomUUID(); // 每个执行器独立；真实锁由 SQLite 事务管理。
+  function currentTargets() {
+    if (!db.prepare('SELECT enabled FROM aba_sku_library WHERE id=1').get()?.enabled) return targets;
+    const groups = new Map();
+    for (const row of db.prepare('SELECT country,brand,brand_key,asin FROM aba_sku_items ORDER BY country,brand_key,asin').all()) {
+      const key = JSON.stringify([row.country, row.brand_key]);
+      if (!groups.has(key)) groups.set(key, { marketplace: row.country, brand: row.brand, asins: new Set() });
+      groups.get(key).asins.add(row.asin);
+    }
+    return [...groups.values()].map((group) => ({ ...group, asins: [...group.asins] }));
+  }
+  const targetKey = (marketplace, brand, asin) => JSON.stringify([marketplace, brand.toLowerCase(), asin]);
+  const activeKeys = () => new Set(currentTargets().flatMap((t) => t.asins.map((asin) => targetKey(t.marketplace, t.brand, asin))));
   const accountFor = (task) => accounts().find((a) => a.brand.toLowerCase() === task.brand.toLowerCase()
     && a.markets.includes(task.marketplace) && a.region === AMAZON_MARKETPLACES[task.marketplace]?.region);
   const latestJob = () => db.prepare('SELECT * FROM aba_public_jobs ORDER BY id DESC LIMIT 1').get() ?? null;
@@ -56,6 +68,7 @@ export function createPublicSync({ db, save, onSaved = () => {}, targets = catal
     return { total: items.length, asinTotal: items.reduce((n, item) => n + item.asinCount, 0), items };
   }
   function status() {
+    const targets = currentTargets();
     const job = latestJob();
     const tasks = job ? db.prepare('SELECT id,marketplace,brand,week_start,week_end,asins_json,stage,polls,attempts,rows_saved,error,next_at FROM aba_public_tasks WHERE job_id=? ORDER BY id').all(job.id).map(({ asins_json, ...t }) => ({ ...t, asinCount: JSON.parse(asins_json).length })) : [];
     const summary = {
@@ -67,7 +80,7 @@ export function createPublicSync({ db, save, onSaved = () => {}, targets = catal
     };
     const missing = targets.filter((t) => !accountFor(t)).map((t) => t.marketplace + ' / ' + t.brand + ' 缺少对应亚马逊品牌授权');
     return {
-      markets: [...new Set(targets.map((t) => t.marketplace))],
+      markets: [...new Set([...targets.map((t) => t.marketplace), ...db.prepare('SELECT DISTINCT marketplace FROM aba_public_reports').all().map((r) => r.marketplace)])],
       targets: targets.map((t) => ({ marketplace: t.marketplace, brand: t.brand, count: t.asins.length })),
       nextDue: db.prepare('SELECT next_due FROM aba_public_schedule WHERE id=1').get().next_due,
       retry: db.prepare(`SELECT source_job_id AS sourceJobId,due_at AS dueAt,state,retry_job_id AS jobId
@@ -93,7 +106,9 @@ export function createPublicSync({ db, save, onSaved = () => {}, targets = catal
         .run(slot ? 'scheduled' : 'manual', slot, actorId, at, at);
       const exists = db.prepare('SELECT 1 FROM aba_public_reports WHERE marketplace=? AND asin=? AND week_end=?');
       const insert = db.prepare('INSERT INTO aba_public_tasks(job_id,marketplace,brand,week_start,week_end,asins_json) VALUES(?,?,?,?,?,?)');
-      for (const period of periods) for (const target of targets) {
+      // Snapshot the latest successful library once per job; an upload never mutates running tasks.
+      const selectedTargets = currentTargets();
+      for (const period of periods) for (const target of selectedTargets) {
         const missing = target.asins.filter((asin) => period.week_end === latest || !exists.get(target.marketplace, asin, period.week_end));
         for (const batch of asinBatches(missing))
           insert.run(id, target.marketplace, target.brand, period.week_start, period.week_end, JSON.stringify(batch));
@@ -113,11 +128,13 @@ export function createPublicSync({ db, save, onSaved = () => {}, targets = catal
       const plan = db.prepare("SELECT * FROM aba_public_retries WHERE state='pending' AND due_at<=? ORDER BY due_at LIMIT 1").get(now());
       if (!plan) return;
       const failed = db.prepare("SELECT * FROM aba_public_tasks WHERE job_id=? AND stage='failed'").all(plan.source_job_id);
+      const active = activeKeys();
       // 在补拉时刻之前若管理员已同步成功，不再请求那些 ASIN；按成功任务而非旧报告判断。
       const recovered = new Set(db.prepare("SELECT marketplace,brand,week_end,asins_json FROM aba_public_tasks WHERE job_id>? AND stage='done'")
         .all(plan.source_job_id).flatMap((t) => JSON.parse(t.asins_json).map((asin) => [t.marketplace, t.brand, t.week_end, asin].join(':'))));
       const pending = failed.map((task) => ({ ...task, asins: JSON.parse(task.asins_json)
-        .filter((asin) => !recovered.has([task.marketplace, task.brand, task.week_end, asin].join(':'))) })).filter((task) => task.asins.length);
+        .filter((asin) => active.has(targetKey(task.marketplace, task.brand, asin))
+          && !recovered.has([task.marketplace, task.brand, task.week_end, asin].join(':'))) })).filter((task) => task.asins.length);
       if (!pending.length) {
         db.prepare("UPDATE aba_public_retries SET state='cancelled' WHERE source_job_id=?").run(plan.source_job_id);
         return;
@@ -141,8 +158,10 @@ export function createPublicSync({ db, save, onSaved = () => {}, targets = catal
         const put = db.prepare(`INSERT INTO aba_public_actions(marketplace,brand,week_start,week_end,asin,error,created_at,updated_at)
           VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(marketplace,brand,week_end,asin)
           DO UPDATE SET error=excluded.error,updated_at=excluded.updated_at`);
+        const active = activeKeys();
         for (const task of failed) for (const asin of JSON.parse(task.asins_json))
-          put.run(task.marketplace, task.brand, task.week_start, task.week_end, asin, task.error, at, at);
+          if (active.has(targetKey(task.marketplace, task.brand, asin)))
+            put.run(task.marketplace, task.brand, task.week_start, task.week_end, asin, task.error, at, at);
       } else if (failed.length) {
         // 定时任务锚定周二 12:00，因此补拉为周三 12:00；手动任务锚定启动时刻。
         db.prepare('INSERT OR IGNORE INTO aba_public_retries(source_job_id,due_at) VALUES(?,?)')

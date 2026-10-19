@@ -301,8 +301,8 @@ try {
   assert.equal(seriesExportRows.length, 3);
   assert.equal(oneExportRows.length, 2);
   assert.equal(twoExportRows.length, 1);
-  assert.ok(oneExportRows.every((row) => row[8] === 200 && row[9] === 10 && row[10] === 5));
-  assert.ok(twoExportRows.every((row) => row[8] === 100 && row[9] === 20 && row[10] === 2));
+  assert.ok(oneExportRows.every((row) => row[12] === 200 && row[13] === 10 && row[14] === 5));
+  assert.ok(twoExportRows.every((row) => row[12] === 100 && row[13] === 20 && row[14] === 2));
   await view.getByRole('button', { name: '展开 305 HP DESKJET2820', exact: true }).click();
   const seriesChildren = view.getByRole('region', { name: '305 HP DESKJET2820 下的搜索词', exact: true });
   await seriesChildren.locator('.aba-table').waitFor();

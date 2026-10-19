@@ -5,7 +5,7 @@ import { asinFixture } from './abaAsinFixture.js';
 import { publicFixture, publicTask } from './abaPublicFixture.js';
 import { savePublicReports } from '../src/services/publicAsinData.js';
 
-test('ABA shared SKU library: owner-only atomic multi-market upsert, private/public matching and personal-library independence', async (t) => {
+test('ABA shared SKU library: owner-only atomic full replacement, unique mapping, private/public matching and personal-library independence', async (t) => {
   const server = await startAbaTestServer(); t.after(() => server.close());
   const call = async (path, cookie, body) => {
     const response = await fetch(server.url + '/api' + path, { method: body ? 'POST' : 'GET', headers: { cookie: cookie ?? '', ...(body ? { 'Content-Type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined });
@@ -25,11 +25,13 @@ test('ABA shared SKU library: owner-only atomic multi-market upsert, private/pub
   assert.equal((await call('/aba-skus/import', owner, { rows: [row, { ...row, country: 'XX' }] })).status, 400);
   assert.equal((await call('/aba-skus', owner)).data.libraryTotal, 0);
   assert.equal((await call('/aba-skus/import', owner, { rows: [row, { ...row, model: '304' }] })).status, 400);
+  const conflict = await call('/aba-skus/preview', owner, { rows: [row, { ...row, sku: 'CONFLICTING-SKU' }] });
+  assert.equal(conflict.status, 400); assert.match(conflict.data.error, /CENTRAL-305.*CONFLICTING-SKU/);
   assert.equal((await call('/aba-skus/import', owner, { rows: [{ ...row, asin: '' }] })).status, 400);
   const imported = await call('/aba-skus/import', owner, { rows: [row, { ...row, country: 'DE' }, { ...row, country: 'US' }], filename: 'all.xlsx', replace: true });
   assert.equal(imported.data.added, 3); assert.equal(imported.data.library.enabled, true);
-  assert.equal((await call('/aba-skus/import', owner, { rows: [{ ...row, setGroup: 'BKC' }] })).data.updated, 1);
-  assert.equal((await call('/aba-skus', owner)).data.libraryTotal, 3, 'table-external countries remain');
+  assert.equal((await call('/aba-skus/import', owner, { rows: [{ ...row, setGroup: 'BKC' }, { ...row, country: 'DE' }, { ...row, country: 'US' }] })).data.updated, 3);
+  assert.equal((await call('/aba-skus', owner)).data.libraryTotal, 3);
   assert.equal((await call('/aba-skus/import', owner, { rows: [{ ...row, model: '304' }, { ...row, country: 'DE', asin: 'bad' }] })).status, 400);
   assert.equal((await call('/aba-skus?country=ES', owner)).data.items[0].model, '305', 'a later invalid row cannot partially change an existing mapping');
   assert.deepEqual((await call('/aba-skus/preview', owner, { rows: [{ ...row, country: '阿联酋' }] })).data.countries, ['AE']);
@@ -62,4 +64,23 @@ test('ABA shared SKU library: owner-only atomic multi-market upsert, private/pub
   assert.equal((await call('/aba-public/asin?marketplace=FR', operator)).data.skuSource, 'aba');
   assert.equal(server.db.prepare("SELECT COUNT(*) n FROM audit_log WHERE entity='aba_sku_items' AND action='import'").get().n, 2);
   assert.equal((await call('/sku', operator)).data.items.some((r) => r.sku === 'PERSONAL-WRONG'), true);
+  const oldId = (await call('/aba-skus?country=ES', owner)).data.items[0].id;
+  const reportsBefore = server.db.prepare('SELECT COUNT(*) n FROM aba_public_reports').get().n;
+  const replacePreview = await call('/aba-skus/preview', owner, { rows: [{ ...row, sku: 'REPLACED-SKU' }] });
+  assert.equal(replacePreview.data.updated, 1); assert.equal(replacePreview.data.removed, 2);
+  assert.equal((await call('/aba-skus', owner)).data.libraryTotal, 3, 'preview does not replace');
+  const replacement = await call('/aba-skus/import', owner, { rows: [{ ...row, sku: 'REPLACED-SKU' }] });
+  assert.equal(replacement.data.removed, 2);
+  const active = (await call('/aba-skus', owner)).data;
+  assert.equal(active.libraryTotal, 1); assert.equal(active.items[0].sku, 'REPLACED-SKU');
+  assert.equal(active.items[0].id, oldId, 'renaming the SKU updates the ASIN identity without creating another mapping');
+  assert.equal(server.db.prepare('SELECT COUNT(*) n FROM aba_public_reports').get().n, reportsBefore);
+  assert.equal((await call('/aba-public/asin?marketplace=ES&year=', operator)).data.skuItems[0].sku, 'REPLACED-SKU');
+  await call('/aba-skus/import', owner, { rows: [{ ...row, sku: 'RIGHT-CE' }, { ...row, brand: 'PG', sku: 'OTHER-BRAND', model: '304' }] });
+  const publicData = (await call('/aba-public/asin?marketplace=ES&year=&q=2820', operator)).data;
+  assert.deepEqual(publicData.skuItems.map((s) => s.sku), ['RIGHT-CE'], 'public mappings require the report brand as well as its country');
+  assert.equal(publicData.items.find((r) => r.asin === row.asin).alignment.status, 'matched');
+  const selectedBrand = (await call('/aba/asin?marketplace=ES&year=&q=2820&brand=ce', operator)).data;
+  assert.deepEqual(selectedBrand.skuItems.map((s) => s.sku), ['RIGHT-CE']);
+  assert.equal(selectedBrand.items[0].alignment.status, 'matched', 'other-brand models cannot create a false mismatch');
 });

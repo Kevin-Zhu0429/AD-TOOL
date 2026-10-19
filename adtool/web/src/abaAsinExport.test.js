@@ -80,17 +80,17 @@ test('printer-group export puts each search term, ASIN and SKU mapping on its ow
   ]);
   assert.deepEqual(exported.rows[3].slice(0, 4), ['305-BK', 'HP DESKJET2700', 'hp 305 ink', 'B000000305']);
   assert.ok(exported.rows.every((item) => !String(item[0]).includes('\n') && !String(item[3]).includes('\n')));
-  assert.equal(exported.rows[0][7], 0.2);
-  assert.equal(exported.rows[0][9], 10);
+  assert.equal(exported.rows[0][10], 0.2);
+  assert.equal(exported.rows[0][13], 10);
   assert.equal(exported.rows[0][4], 1000 / 3);
-  assert.equal(exported.rows[0][5], 100 / 3);
-  assert.equal(exported.rows[0][6], 20 / 3);
+  assert.equal(exported.rows[0][6], 100 / 3);
+  assert.equal(exported.rows[0][8], 20 / 3);
   assert.equal(exported.rows[2][4], 300);
   assert.equal(exported.rows[3][4], 150);
-  assert.equal(exported.rows[4][6], 10);
-  assert.equal(exported.rows[2][9], 20);
-  assert.equal(exported.rows[0][11], 0.5);
-  assert.equal(exported.rows[0][12], 0.25);
+  assert.equal(exported.rows[4][8], 10);
+  assert.equal(exported.rows[2][13], 20);
+  assert.equal(exported.rows[0][15], 0.5);
+  assert.equal(exported.rows[0][16], 0.25);
 });
 
 test('printer-group export keeps unlinked SKU cell empty and respects selected model SKU scope', () => {
@@ -117,11 +117,11 @@ test('printer-group export splits market totals across every SKU row of a search
   };
   const { rows } = buildAsinGroupExport(data);
   assert.equal(rows.length, 3);
-  for (const [column, total] of [[4, 900], [5, 90], [6, 9]]) {
+  for (const [column, total] of [[4, 900], [6, 90], [8, 9]]) {
     assert.ok(rows.every((row) => row[column] === total / 3));
     assert.ok(Math.abs(rows.reduce((sum, row) => sum + row[column], 0) - total) < 1e-9);
   }
-  assert.ok(rows.every((row) => row[7] === 0.1 && row[8] === 30));
+  assert.ok(rows.every((row) => row[10] === 0.1 && row[12] === 30));
 });
 
 test('printer-group export splits each week only across SKUs whose ASIN has that week', () => {
@@ -136,11 +136,47 @@ test('printer-group export splits each week only across SKUs whose ASIN has that
   const skuItems = [{ id: 1, asin: 'B0AAA00000', sku: '305-BK' }, { id: 2, asin: 'B0BBB00000', sku: '305-CL' }];
   for (const series of [false, true]) {
     const sum = buildAsinGroupExport({ items: aggregateAsinView(source, { series, view: 'printers', includeQueries: true }), skuItems, aggregation: 'sum' });
-    assert.deepEqual(sum.rows.map((item) => [item[0], item[4], item[5], item[6]]), [['305-BK', 1600, 160, 16], ['305-CL', 600, 60, 6]]);
+    assert.deepEqual(sum.rows.map((item) => [item[0], item[4], item[6], item[8]]), [['305-BK', 1600, 160, 16], ['305-CL', 600, 60, 6]]);
     const average = buildAsinGroupExport({ items: aggregateAsinView(source, { series, view: 'printers', average: true, includeQueries: true }), skuItems, aggregation: 'average' });
     assert.deepEqual(average.rows.map((item) => [item[0], item[4]]), [['305-BK', 800], ['305-CL', 300]]);
   }
   const website = aggregateAsinView(source, { series: true, view: 'printers' })[0];
   assert.equal(website.market_impressions, 2200);
   assert.equal(aggregateAsinView(source, { series: true, view: 'printers', average: true })[0].market_impressions, 1100);
+});
+
+test('original-total columns are interleaved complete query market averages, independent of ASIN/SKU row counts', () => {
+  const row = (asin, week_end, clicks, purchases) => ({ asin, report_id: asin + week_end,
+    query: 'same query', recognition: 'HP 2700', group: { key: 'hp2700' }, candidates: [],
+    week_start: week_end, week_end, week_number: 1, query_volume: 100,
+    market_impressions: clicks * 10, market_clicks: clicks, market_purchases: purchases,
+    asin_impressions: 10, asin_clicks: 2, asin_purchases: 1 });
+  const source = [row('A', '2026-09-19', 100, 10), row('B', '2026-09-19', 100, 10), row('A', '2026-09-26', 200, 40)];
+  const skuItems = [{ id: 1, asin: 'A', sku: 'A1' }, { id: 2, asin: 'A', sku: 'A2' }, { id: 3, asin: 'B', sku: 'B1' }];
+  for (const average of [true, false]) {
+    const result = buildAsinExport({ view: 'printers', aggregation: average ? 'average' : 'sum', skuItems,
+      items: aggregateAsinView(source, { view: 'printers', average, includeQueries: true }) });
+    const field = (key) => result.columns.findIndex((c) => c.key === key);
+    for (const key of ['market_impressions', 'market_clicks', 'market_purchases', 'market_cvr'])
+      assert.equal(field(key + '_original'), field(key) + 1);
+    assert.deepEqual(result.columns.filter((c) => c.key.endsWith('_original')).map((c) => c.label),
+      ['市场IMP(原始总量)', '市场点击TT(原始总量)', '市场购买TT(原始总量)', '市场CVR(原始总量)']);
+    assert.equal(result.rows.length, 3);
+    for (const cells of result.rows) {
+      assert.equal(cells[field('market_impressions_original')], 1500);
+      assert.equal(cells[field('market_clicks_original')], 150);
+      assert.equal(cells[field('market_purchases_original')], 25);
+      assert.ok(Math.abs(cells[field('market_cvr_original')] - 25 / 150) < 1e-12);
+    }
+    assert.ok(result.rows[0][field('market_impressions')] < 1500, 'legacy allocation stays available');
+  }
+  source[1].market_purchases = 11;
+  const conflict = buildAsinExport({ view: 'printers', skuItems,
+    items: aggregateAsinView(source, { view: 'printers', average: true, includeQueries: true }) });
+  const field = (key) => conflict.columns.findIndex((c) => c.key === key);
+  assert.ok(conflict.rows.every((cells) => cells[field('market_purchases_original')] === '' && cells[field('market_cvr_original')] === ''));
+  assert.ok(conflict.rows.every((cells) => cells[field('market_clicks_original')] === 150), 'conflicts do not blank unaffected metrics');
+  const zero = buildAsinExport({ view: 'printers', items: [{ recognition: 'other', query_rows: [{ query: 'zero', asin: 'A',
+    market_weeks: [{ week_end: '2026-09-19', market_clicks: 0, market_purchases: 0, market_impressions: 0 }] }] }] });
+  assert.equal(zero.rows[0][zero.columns.findIndex((c) => c.key === 'market_cvr_original')], '');
 });

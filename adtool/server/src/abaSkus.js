@@ -32,7 +32,7 @@ abaSkuRouter.post('/import', requireRole('owner'), async (req, res) => {
   // Audit only a successfully committed import; worker errors retain the original library.
   try {
     const result = await runTask('abaSkuImport', { rows: req.body?.rows, filename: req.body?.filename, userId: req.session.user.id });
-    audit(req.session.user.id, null, 'import', 'aba_sku_items', null, { added: result.added, updated: result.updated, countries: result.countries });
+    audit(req.session.user.id, null, 'import', 'aba_sku_items', null, { added: result.added, updated: result.updated, removed: result.removed, countries: result.countries });
     res.json(result);
   } catch (error) { res.status(error.status || 500).json({ error: error.status ? error.message : '保存请求未能完成，请刷新库确认结果后重试' }); }
 });

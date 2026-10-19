@@ -98,8 +98,14 @@ try {
     const download = page.waitForEvent('download'); await view.getByRole('button', { name: '导出 Excel', exact: true }).click();
     const book = XLSX.readFile(await (await download).path());
     const cells = XLSX.utils.sheet_to_json(book.Sheets[book.SheetNames[0]], { header: 1, defval: '' });
-    assert.equal(cells.length, 4); close(cells.slice(1).reduce((n, r) => n + r[9], 0), 88 / 3);
+    assert.equal(cells.length, 4); close(cells.slice(1).reduce((n, r) => n + r[cells[0].indexOf('ASIN 点击')], 0), 88 / 3);
     assert.equal(cells.slice(1).reduce((n, r) => n + r[4], 0), 1200);
+    const original = cells[0].indexOf('市场IMP(原始总量)');
+    assert.ok(original > 0);
+    for (const row of cells.slice(1)) {
+      assert.equal(row[original], row[2] === 'hp envy6000 rare ink' ? 200 : 1000);
+      close(row[cells[0].indexOf('市场CVR(原始总量)')], 0.2);
+    }
     assert.deepEqual(new Set(cells.slice(1).map((r) => r[3])), new Set([one, two]));
     await page.screenshot({ path: fileURLToPath(new URL('../../.tmp/asin-grouping-' + scope + '.png', import.meta.url)), fullPage: true });
     await page.setViewportSize({ width: 390, height: 844 });

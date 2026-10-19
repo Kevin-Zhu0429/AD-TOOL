@@ -9,6 +9,7 @@ import { publicFixture, publicTask } from './abaPublicFixture.js';
 import { startAbaTestServer } from './abaHarness.js';
 import { asinFirst } from './abaAsinFixture.js';
 import { gzipSync } from 'node:zlib';
+import { importAbaSkus } from '../src/services/abaSkuLibrary.js';
 
 function memoryDb() {
   const db = new Database(':memory:');
@@ -48,6 +49,43 @@ function delayedSync(db, { manual = false } = {}) {
     available: () => { unavailable = false; }, creates: () => serial,
     drain: async (sync) => { for (let i = 0; i < 40; i++) { await sync.tick(); if (sync.status().job?.state !== 'running') return; } throw new Error('queue did not finish'); } };
 }
+
+test('public sync snapshots the latest full SKU library, removes deleted targets from retries and retains history', async () => {
+  const db = memoryDb();
+  const fixture = delayedSync(db, { manual: true });
+  const sku = (brand, asin, name) => ({ country: 'ES', brand, asin, sku: name, model: '305', setGroup: 'BK' });
+  const a = sku('CE', 'B000000305', 'A'), b = sku('CC', 'B000000306', 'B');
+  try {
+    savePublicReports(db, { task: { ...publicTask, brand: 'CC', asins_json: JSON.stringify([b.asin]) },
+      payload: publicFixture({ ...publicTask, brand: 'CC', asins_json: JSON.stringify([b.asin]) }), marketplaceId: AMAZON_MARKETPLACES.ES.id });
+    importAbaSkus(db, { rows: [a, b], userId: null, filename: 'first.xlsx' });
+    const sync = createPublicSync(fixture.options);
+    const first = sync.start();
+    assert.deepEqual(sync.status().targets.map((t) => t.brand), ['CC', 'CE']);
+    const snapshot = db.prepare('SELECT asins_json FROM aba_public_tasks WHERE job_id=?').all(first.jobId);
+    importAbaSkus(db, { rows: [{ ...a, sku: 'A-RENAMED' }, sku('CE', 'B000000399', 'NEW')], userId: null, filename: 'second.xlsx' });
+    assert.deepEqual(db.prepare('SELECT asins_json FROM aba_public_tasks WHERE job_id=?').all(first.jobId), snapshot);
+    assert.deepEqual(sync.status().targets, [{ marketplace: 'ES', brand: 'CE', count: 2 }]);
+    db.prepare("UPDATE aba_public_tasks SET stage='failed' WHERE job_id=?").run(first.jobId);
+    db.prepare("UPDATE aba_public_jobs SET state='failed' WHERE id=?").run(first.jobId);
+    db.prepare('INSERT INTO aba_public_retries(source_job_id,due_at) VALUES(?,?)').run(first.jobId, fixture.now());
+    await sync.tick();
+    const retry = sync.status();
+    assert.equal(retry.job.trigger_kind, 'retry');
+    assert.ok(retry.tasks.every((t) => t.brand === 'CE'));
+    assert.ok(db.prepare('SELECT asins_json FROM aba_public_tasks WHERE job_id=?').all(retry.job.id).every((t) => t.asins_json === '["B000000305"]'));
+    db.prepare("UPDATE aba_public_tasks SET stage='done'").run();
+    db.prepare("UPDATE aba_public_jobs SET state='done'").run();
+    const next = sync.start();
+    const nextTasks = db.prepare('SELECT marketplace,brand,asins_json FROM aba_public_tasks WHERE job_id=?').all(next.jobId);
+    assert.ok(nextTasks.every((t) => t.marketplace === 'ES' && t.brand === 'CE' && !t.asins_json.includes(b.asin)));
+    assert.ok(nextTasks.some((t) => t.asins_json.includes('B000000399')));
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM aba_public_reports WHERE asin=?').get(b.asin).n, 1);
+    importAbaSkus(db, { rows: [{ ...a, country: 'DE' }], userId: null, filename: 'country-change.xlsx' });
+    assert.deepEqual(sync.status().targets, [{ marketplace: 'DE', brand: 'CE', count: 1 }]);
+    assert.ok(sync.status().markets.includes('ES'), 'historical markets remain accessible');
+  } finally { db.close(); }
+});
 
 test('Tuesday failures retry only failed reports Wednesday at Beijing noon, persist and resolve without notices', async () => {
   const db = memoryDb();

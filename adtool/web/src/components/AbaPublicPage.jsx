@@ -79,7 +79,7 @@ export default function AbaPublicPage({ user }) {
     <nav className="aba-public-countries" aria-label="公共报告国家切换">
       {markets.map((code) => <button key={code} type="button" aria-pressed={market === code} className={'aba-public-country' + (market === code ? ' selected' : '')} onClick={() => setMarket(code)}><strong>{COUNTRIES[code] || code}</strong><span>{code} 站</span></button>)}
     </nav>
-    <p className="hint aba-public-catalog">{counts.length ? counts.map((t) => t.brand + ' ' + t.count + ' 个 ASIN').join(' · ') : '正在读取国家与品牌清单…'}</p>
+    <p className="hint aba-public-catalog">{counts.length ? counts.map((t) => t.brand + ' ' + t.count + ' 个 ASIN').join(' · ') : status ? '当前国家已无有效同步 ASIN，仍可查看历史报告。' : '正在读取国家与品牌清单…'}</p>
     <section className="aba-public-sync" aria-label="公共报告同步进度">
       <div className="aba-public-sync-head"><h2>{job ? job.trigger_kind === 'retry' && job.state === 'running' ? '自动补拉进行中' : STATES[job.state] : status ? '尚未同步公共报告' : '正在读取同步状态…'}</h2><span className="hint">每周二 12:00（北京时间）自动同步 · 下次 {time(status?.nextDue)}</span></div>
       <p className="hint">首次拉取前四个完整周，此后拉取上一完整周；失败或遗漏的历史报告会补拉。亚马逊报告按周日到周六统计。</p>

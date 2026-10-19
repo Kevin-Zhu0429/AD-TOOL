@@ -1,6 +1,6 @@
 import { ASIN_COLUMNS, ASIN_ALIGNMENT_LABELS } from '../../shared/abaAsin.js';
 
-export const ASIN_GROUP_EXPORT_COLUMNS = [
+const BASE_ASIN_EXPORT_COLUMNS = [
   { key: 'sku', label: 'SKU', text: true },
   { key: 'recognition', label: '机型分类', text: true },
   { key: 'query', label: '搜索词', text: true },
@@ -10,12 +10,27 @@ export const ASIN_GROUP_EXPORT_COLUMNS = [
   { key: 'alignment_reason', label: '型号核对说明', text: true },
   { key: 'alignment_sources', label: '待核对来源与原因', text: true },
 ];
+const originalMarketLabels = {
+  market_impressions: '市场IMP(原始总量)', market_clicks: '市场点击TT(原始总量)',
+  market_purchases: '市场购买TT(原始总量)', market_cvr: '市场CVR(原始总量)',
+};
+export const ASIN_GROUP_EXPORT_COLUMNS = BASE_ASIN_EXPORT_COLUMNS.flatMap((column) => originalMarketLabels[column.key]
+  ? [column, { key: `${column.key}_original`, label: originalMarketLabels[column.key], rate: column.rate }]
+  : [column]);
 
 export function skusForAsinRow(row, data, params = {}) {
   const asins = row.asins ?? [row.asin];
-  return (data.skuItems ?? []).filter((sku) => asins.includes(sku.asin)
+  const items = (data.skuItems ?? []).filter((sku) => asins.includes(sku.asin)
+    && (!row.source_brand || asins.length > 1 || String(sku.brand ?? '').toLowerCase() === String(row.source_brand).toLowerCase())
     && (!params.skuId || String(sku.id) === String(params.skuId))
     && (!data.selectedModel || data.selectedModel.skuIds.includes(sku.id)));
+  if (data.skuSource !== 'aba') return items;
+  const brands = new Map();
+  for (const sku of items) {
+    if (!brands.has(sku.asin)) brands.set(sku.asin, new Set());
+    brands.get(sku.asin).add(String(sku.brand ?? '').toLowerCase());
+  }
+  return items.filter((sku) => brands.get(sku.asin).size === 1);
 }
 
 function identitiesForAsinRow(row, data, params) {
@@ -63,6 +78,34 @@ function splitMarketTotals(entries, average) {
   });
 }
 
+/** One complete market average per exact query: deduplicate ASIN sources before averaging weeks. */
+function originalMarketAverages(items) {
+  const terms = new Map();
+  for (const group of items) for (const row of group.query_rows?.length ? group.query_rows : [{ ...group, query: '' }]) {
+    const key = JSON.stringify([group.recognition, row.query]);
+    if (!terms.has(key)) terms.set(key, new Map());
+    const weeks = terms.get(key);
+    for (const week of marketWeeks(row)) {
+      if (!weeks.has(week.week_end)) weeks.set(week.week_end, []);
+      weeks.get(week.week_end).push(week);
+    }
+  }
+  return new Map([...terms].map(([key, weeks]) => {
+    const values = Object.fromEntries(SHARED_MARKET_KEYS.map((metric) => {
+      let total = 0;
+      for (const sources of weeks.values()) {
+        const distinct = new Set(sources.map((source) => source[metric]));
+        if (distinct.size !== 1 || distinct.has(null) || distinct.has(undefined)) return [`${metric}_original`, null];
+        total += sources[0][metric];
+      }
+      return [`${metric}_original`, total / weeks.size];
+    }));
+    values.market_cvr_original = values.market_purchases_original != null && values.market_clicks_original > 0
+      ? values.market_purchases_original / values.market_clicks_original * 100 : null;
+    return [key, values];
+  }));
+}
+
 function alignmentSourceText(alignment) {
   return (alignment?.issues ?? []).map((issue) => [
     `ASIN：${issue.asin} · ${ASIN_ALIGNMENT_LABELS[issue.status]}`,
@@ -80,14 +123,16 @@ export function buildAsinGroupExport(data, params = {}) {
       .map((identity) => ({ group, queryRow, identity, termKey: JSON.stringify([group.recognition, queryRow.query]) })));
   });
   const markets = splitMarketTotals(entries, data.aggregation === 'average');
-  const rows = entries.map(({ group, queryRow, identity }, index) => ASIN_GROUP_EXPORT_COLUMNS.map((column) => {
+  const originals = originalMarketAverages(data.items ?? []);
+  const rows = entries.map(({ group, queryRow, identity, termKey }, index) => ASIN_GROUP_EXPORT_COLUMNS.map((column) => {
     if (column.key === 'sku') return identity.sku;
     if (column.key === 'recognition') return group.recognition;
     if (column.key === 'asin') return identity.asin;
     if (column.key === 'alignment_status') return ASIN_ALIGNMENT_LABELS[queryRow.alignment?.status] ?? '';
     if (column.key === 'alignment_reason') return queryRow.alignment?.reason ?? '';
     if (column.key === 'alignment_sources') return alignmentSourceText(queryRow.alignment);
-    const value = column.key in markets[index] ? markets[index][column.key] : queryRow[column.key];
+    const value = column.key in (originals.get(termKey) ?? {}) ? originals.get(termKey)[column.key]
+      : column.key in markets[index] ? markets[index][column.key] : queryRow[column.key];
     if (value === null || value === undefined) return '';
     return column.rate ? value / 100 : value;
   }));
@@ -95,7 +140,7 @@ export function buildAsinGroupExport(data, params = {}) {
 }
 
 export const ASIN_QUERY_EXPORT_COLUMNS = [
-  ...ASIN_GROUP_EXPORT_COLUMNS.map((column) => column.key === 'recognition' ? { ...column, label: '机型识别' } : column),
+  ...BASE_ASIN_EXPORT_COLUMNS.map((column) => column.key === 'recognition' ? { ...column, label: '机型识别' } : column),
   { key: 'links', label: 'ASIN / SKU 对应', text: true },
   { key: 'periods', label: '报告周', text: true },
   { key: 'aggregation', label: '统计方式', text: true },
