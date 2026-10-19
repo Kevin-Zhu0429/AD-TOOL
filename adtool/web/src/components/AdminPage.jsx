@@ -20,7 +20,9 @@ const ENTITY_LABELS = {
   portfolio_items: '广告组合库', products: '产品库', product: '产品', product_month: '产品月份',
   product_settings: '产品设置', aba_reports: 'ABA 品牌报告', aba_asin_reports: 'ABA ASIN 报告', aba_public_reports: 'ABA报告（公共）',
   captain_inventory: '库存同步', captain_channel: '库存店铺', captain_channel_group: '库存店铺组',
-  module_home: '首页', module_builder: '自动广告', module_manual: '手动广告',
+  sb_brand_assets: 'SB 品牌素材',
+  // 2026-10-16 起自动 / 手动 / SB 合并成「开设广告」,都记在 builder 下;manual 只剩合并前的旧记录
+  module_home: '首页', module_builder: '开设广告', module_manual: '手动广告(合并前)',
   module_optimizer: '广告优化', module_library: '否定词库', module_skus: 'SKU 库',
   module_portfolios: '广告组合库', module_aba: 'ABA 报告', module_abaPublic: 'ABA报告（公共）', module_products: '产品情报',
   module_tools: '小工具', module_admin: '账号管理', module_profile: '个人资料',
@@ -29,6 +31,7 @@ const DETAIL_LABELS = {
   added: '新增', updated: '更新', removed: '移除', count: '数量', reports: '报告',
   campaigns: '活动', tasks: '任务', rows: '行数', targets: '关键词/定向', files: '文件',
   sheets: '工作表', groups: '分类', field: '字段', role: '角色', markets: '站点',
+  auto: 'SP 自动', manual: 'SP 手动', sb: 'SB 品牌', brands: '品牌', logos: '徽标', videos: '视频',
 };
 
 const AUDIT_PERIODS = [
@@ -336,7 +339,7 @@ export default function AdminPage({ user, markets }) {
       <div className="admin-head">
         <h1>账号管理</h1>
         <p className="hint">
-          只有超级管理员能看到这一页。手动广告、广告优化、产品情报都按账号开通,
+          只有超级管理员能看到这一页。手动广告(含 SB 品牌)、广告优化、产品情报都按账号开通,
           未勾选的人看不到对应页面和更新日志。
         </p>
       </div>
@@ -403,10 +406,10 @@ export default function AdminPage({ user, markets }) {
                       type="checkbox" checked={form.manualAds}
                       onChange={(e) => setForm({ ...form, manualAds: e.target.checked })}
                     />
-                    <span style={{ fontSize: 12.5 }}>手动广告使用权(试用中)</span>
+                    <span style={{ fontSize: 12.5 }}>手动广告 / SB 品牌使用权(试用中)</span>
                   </label>
                   <p className="hint" style={{ marginTop: -4 }}>
-                    不勾的人看不到「手动广告」这一页,只能用自动广告。
+                    不勾的人在「开设广告」里只能用 SP 自动,看不到 SP 手动和 SB 品牌。
                   </p>
                   <label className="row">
                     <input
@@ -506,15 +509,15 @@ export default function AdminPage({ user, markets }) {
                         {u.role === 'owner' ? (
                           <span className="tag blue">天然有</span>
                         ) : (
-                          <label className="row" title="能不能看到「手动广告」这一页">
+                          <label className="row" title="「开设广告」里能不能用 SP 手动和 SB 品牌">
                             <input
                               type="checkbox" checked={!!u.manualAds}
                               onChange={(e) =>
                                 act(
                                   () => api.updateUser(u.id, { manualAds: e.target.checked }),
                                   e.target.checked
-                                    ? `${u.display_name} 现在能用手动广告`
-                                    : `${u.display_name} 的手动广告权限已收回`
+                                    ? `${u.display_name} 现在能用 SP 手动和 SB 品牌`
+                                    : `${u.display_name} 的 SP 手动和 SB 品牌权限已收回`
                                 )
                               }
                             />
