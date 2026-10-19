@@ -42,8 +42,9 @@ export function asinQueryAlignment(matching, skus = []) {
   if (matching.group?.kind !== 'printer' || !expectedModels.length
     || (matching.printers ?? []).some((p) => !/[a-z]/i.test(String(p.key ?? '').split('|')[1] ?? '')))
     return result('review', '搜索词有多个候选或机型对应关系不明确，请核对词库');
-  if (!skus.length || skus.some((s) => !String(s.model ?? '').trim()))
-    return result('insufficient', '来源 ASIN 未完整关联 SKU 型号，请补充 SKU 库资料');
+  if (!skus.length) return result('insufficient', '来源 ASIN 未关联 SKU，请在当前站点 SKU 库补充关联');
+  if (skus.some((s) => !String(s.model ?? '').trim()))
+    return result('insufficient', '来源 ASIN 的部分 SKU 未填写型号，请在 SKU 库补充型号');
   const expected = new Set(expectedModels.map(modelKey));
   const sourceKeys = [...new Set(sourceModels.flatMap((model) => model.split(/[,，、;；/|]+/)).map(modelKey))];
   if (sourceKeys.some((key) => !expected.has(key) && !/^\d+$/.test(key)))
@@ -61,9 +62,12 @@ function mergeAlignment(a, b) {
   if (!b) return a;
   const sourceModels = [...new Set([...a.sourceModels, ...b.sourceModels])];
   const expectedModels = [...new Set([...a.expectedModels, ...b.expectedModels])];
-  if (a.status !== b.status) return { status: 'review', sourceModels, expectedModels, reason: '部分来源 SKU 的型号对应关系需要核对，请展开明细查看' };
-  return { ...a, sourceModels, expectedModels,
-    reason: a.status === 'mismatch' ? `机型对应 ${expectedModels.join(' / ')}，来源 SKU 是 ${sourceModels.join(' / ')}，型号不匹配` : a.reason };
+  const issues = [...new Map([...(a.issues ?? []), ...(b.issues ?? [])]
+    .map((issue) => [JSON.stringify(issue), issue])).values()];
+  if (a.status !== b.status) return { status: 'review', sourceModels, expectedModels, issues, reason: '部分来源的对应关系需要核对，可查看下方具体原因' };
+  return { ...a, sourceModels, expectedModels, issues,
+    reason: a.status === 'mismatch' ? `机型对应 ${expectedModels.join(' / ')}，来源 SKU 是 ${sourceModels.join(' / ')}，型号不匹配`
+      : issues.length > 1 ? `有 ${issues.length} 项来源需要核对，可查看下方具体原因` : a.reason };
 }
 
 export function asinModelOptions(skuItems, reportAsins) {

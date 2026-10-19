@@ -53,7 +53,7 @@ try {
   assert.equal(await view.locator('.aba-table th').count(), 11);
   const printer = () => rows().filter({ hasText: 'hp deskjet 2820e' });
   assert.match(await printer().innerText(), /25.00%[\s\S]*53.33%[\s\S]*26.67%/);
-  await printer().locator('summary').click();
+  await printer().locator('summary').filter({ hasText: '合并 2 周' }).click();
   assert.match(await printer().innerText(), /第 36 周[\s\S]*第 35 周/);
   assert.match(await printer().innerText(), /未关联 SKU/);
   const imported = await page.request.post(new URL('/api/sku/rows', page.url()).href, { data: { rows: [

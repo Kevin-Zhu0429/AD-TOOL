@@ -4,6 +4,7 @@ import { buildAsinExport } from '../abaAsinExport.js';
 import AbaAsinTable from './AbaAsinTable.jsx';
 import { AbaPagination } from './AbaTable.jsx';
 import AbaReportUpload from './AbaReportUpload.jsx';
+import AbaSkuLibrary from './AbaSkuLibrary.jsx';
 
 const number = new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 0 });
 const defaults = { brand: '', aggregation: 'sum', alignment: 'normal', model: '', view: 'queries', month: '', asin: '', skuId: '', q: '', wordType: 'all', merge: '1', sort: 'market_impressions', direction: 'desc', page: 1, pageSize: 100 };
@@ -64,6 +65,10 @@ export default function AbaAsinView({ market, userId, publicReport = false, repo
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
   }, [filters, market, revision, publicReport, reportRevision]);
+  useEffect(() => {
+    if (data?.skuSource === 'aba' && filters.skuId && !String(filters.skuId).startsWith('aba:'))
+      setFilters((old) => ({ ...old, skuId: '', page: 1 }));
+  }, [data?.skuSource, filters.skuId]);
   const clearSearch = () => { setSearch(''); change({ q: '' }); searchRef.current?.focus(); };
   const selected = filters.weeks === undefined ? data?.selectedWeeks ?? [] : filters.weeks.split(',').filter(Boolean);
   const skus = (data?.skuItems ?? []).filter((s) => (!filters.asin || s.asin === filters.asin) && data.asins.includes(s.asin));
@@ -96,7 +101,7 @@ export default function AbaAsinView({ market, userId, publicReport = false, repo
           if (cell) cell.z = '0.00%';
         });
       });
-      worksheet['!cols'] = columns.map((column) => ({ wch: ['periods', 'links', 'market_conflicts', 'alignment_reason'].includes(column.key) ? 48 : column.key === 'sku' ? 28 : column.key === 'recognition' ? 26 : column.key === 'query' ? 42 : column.key === 'asin' ? 16 : 14 }));
+      worksheet['!cols'] = columns.map((column) => ({ wch: ['periods', 'links', 'market_conflicts', 'alignment_reason', 'alignment_sources'].includes(column.key) ? 48 : column.key === 'sku' ? 28 : column.key === 'recognition' ? 26 : column.key === 'query' ? 42 : column.key === 'asin' ? 16 : 14 }));
       worksheet['!autofilter'] = { ref: `A1:${XLSX.utils.encode_col(columns.length - 1)}${rows.length + 1}` };
       const workbook = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
@@ -113,6 +118,7 @@ export default function AbaAsinView({ market, userId, publicReport = false, repo
     }
   }
   return <div className="aba-asin-view">
+    <AbaSkuLibrary status={data?.skuLibrary} onSaved={() => setRevision((n) => n + 1)} />
     {!publicReport && <AbaReportUpload market={market} kind="asin" onSaved={saved} />}
     <section className="aba-filters" aria-label="ASIN 报告筛选">
       <div className="aba-toolbar aba-asin-selectors">
@@ -123,8 +129,8 @@ export default function AbaAsinView({ market, userId, publicReport = false, repo
         <label>ASIN<select className="inp" aria-label="ASIN" value={filters.asin} onChange={(e) => change({ asin: e.target.value, skuId: '', weeks: undefined })}><option value="">{filters.model ? '全部套组 ASIN（合并）' : filters.view === 'printers' ? '全部 ASIN（合并机型）' : '全部 ASIN（分行展示）'}</option>{data?.asins.map((asin) => <option key={asin} value={asin}>{asin}</option>)}</select></label>
         <label className="aba-asin-sku-select">关联 SKU<select className="inp" aria-label="关联 SKU" value={filters.skuId} onChange={(e) => change({ skuId: e.target.value, weeks: undefined })}><option value="">全部关联 SKU</option>{skus.map((s) => <option key={s.id} value={s.id}>{skuLabel(s)}</option>)}</select></label>
       </div>
-      <p className="hint aba-model-note">{publicReport ? `年份、月份按报告结束日归属，周数按亚马逊周口径计算。SKU 关联全部账号在 ${market} 站的记录；` : `年份、月份按报告结束日归属，周数取自原始 CSV 的 C1 或合并表的 AJ 列。SKU 仅关联当前账号在 ${market} 站的记录；`}按墨盒型号 → 品牌 → ASIN → SKU 逐级筛选，型号列出各品牌已关联的型号；机型分类汇总按同一机型合并当前筛选内的全部 ASIN；查询明细选择型号后合并颜色套组；同一 ASIN 对应多个 SKU 只计一次。未关联型号的 ASIN 可单独查看。</p>
-      {!!data?.unlinkedAsins?.length && <details className="aba-prices"><summary>{data.unlinkedAsins.length} 个 ASIN 未关联墨盒型号，点击查看</summary><p className="hint">{publicReport ? '可由对应负责人在该国家的 SKU 库补充 ASIN、品牌和型号，公共报告会关联全部账号的记录。' : '请在当前账号、当前站点的 SKU 库补充 ASIN、品牌和型号，保存后重新加载报告。'}未关联时仍可从 ASIN 筛选查看。</p>{data.unlinkedAsins.map((asin) => <span key={asin}>{asin}</span>)}</details>}
+      <p className="hint aba-model-note">{data?.skuSource === 'aba' ? `SKU 关联由超级管理员统一维护的 ABA 专用 SKU 库，只读取 ${market} 站；年份、月份按报告结束日归属。` : publicReport ? `年份、月份按报告结束日归属，周数按亚马逊周口径计算。SKU 关联全部账号在 ${market} 站的记录；` : `年份、月份按报告结束日归属，周数取自原始 CSV 的 C1 或合并表的 AJ 列。SKU 仅关联当前账号在 ${market} 站的记录；`}按墨盒型号 → 品牌 → ASIN → SKU 逐级筛选，型号列出各品牌已关联的型号；机型分类汇总按同一机型合并当前筛选内的全部 ASIN；查询明细选择型号后合并颜色套组；同一 ASIN 对应多个 SKU 只计一次。未关联型号的 ASIN 可单独查看。</p>
+      {!!data?.unlinkedAsins?.length && <details className="aba-prices"><summary>{data.unlinkedAsins.length} 个 ASIN {data.skuSource === 'aba' ? '未收录于专用 SKU 库' : '未关联墨盒型号'}，点击查看</summary><p className="hint">{data?.skuSource === 'aba' ? '请由超级管理员在上方 ABA 专用 SKU 库补充该国家的 ASIN、品牌和墨盒型号。专用库启用后不再使用个人 SKU 库。' : publicReport ? '可由对应负责人在该国家的 SKU 库补充 ASIN、品牌和型号，公共报告会关联全部账号的记录。' : '请在当前账号、当前站点的 SKU 库补充 ASIN、品牌和型号，保存后重新加载报告。'}未关联时仍可从 ASIN 筛选查看。</p>{data.unlinkedAsins.map((asin) => <span key={asin}>{asin}</span>)}</details>}
       <div className="aba-toolbar">
         <div className="aba-search"><label htmlFor="aba-asin-search">搜索查询 / 墨盒型号</label><div className="aba-search-control"><input id="aba-asin-search" ref={searchRef} className="inp" value={search} placeholder="如 305，包含对应机型词" onChange={(e) => setSearch(e.target.value)} onCompositionStart={() => setComposing(true)} onCompositionEnd={() => setComposing(false)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) change({ q: search }); }} />{search && <button className="btn ghost" aria-label="清除搜索" onClick={clearSearch}>清除</button>}</div></div>
         <label>词类型<select className="inp" aria-label="词类型" value={filters.wordType} onChange={(e) => change({ wordType: e.target.value })}><option value="all">全部搜索词</option><option value="printer">仅机型词</option><option value="cartridge">仅墨盒 KW 词</option></select></label>

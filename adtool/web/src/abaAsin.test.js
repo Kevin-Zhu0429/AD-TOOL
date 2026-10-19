@@ -34,6 +34,22 @@ test('ASIN identity and week come only from A1/C1, even when filename conflicts'
   assert.equal(r.rows[0].asin_purchases, 5);
   assert.equal(parseAsinReport(asinFixture({ rows: [] }), 'empty.csv', 'ES').rows.length, 0);
 });
+
+test('merged review retains exact problem ASIN/SKU details, deduplicates weeks and excludes healthy sources', () => {
+  const report = parseAsinReport(asinFirst.text, asinFirst.name, 'ES');
+  const base = { ...report, ...report.rows[0], candidates: [], recognition: 'HP 2820', group: { key: '2820' } };
+  const good = { status: 'matched', sourceModels: ['305'], expectedModels: ['305'], reason: '匹配', issues: [] };
+  const issue = { asin: 'B000000306', status: 'review', expectedModels: ['305'], sourceModels: ['304', '305'], reason: '同一 ASIN 关联型号不一致',
+    skus: [{ sku: 'WRONG-304', model: '304', brand: 'CE', status: 'mismatch' }, { sku: 'RIGHT-305', model: '305', brand: 'CE', status: 'matched' }] };
+  const uncertain = { ...good, status: 'review', sourceModels: ['304', '305'], reason: issue.reason, issues: [issue] };
+  const rows = [{ ...base, alignment: good }, { ...base, asin: issue.asin, alignment: uncertain },
+    { ...base, asin: issue.asin, alignment: uncertain, week_end: '2026-09-05' }];
+  const result = aggregateAsinView(rows, { view: 'printers' })[0];
+  assert.equal(result.alignment.status, 'review');
+  assert.deepEqual(result.alignment.issues, [issue]);
+  assert.equal(aggregateAsinView(rows, { series: true })[0].alignment.issues.length, 1);
+  assert.deepEqual(result.alignment.issues[0].skus.map((s) => [s.sku, s.status]), [['WRONG-304', 'mismatch'], ['RIGHT-305', 'matched']]);
+});
 test('ASIN parser rejects missing identity, invalid period, duplicates and malformed count/date', () => {
   for (const text of [asinFirst.text.replace('ASIN=', '品牌='), asinFirst.text.replace('B000000305', '305'),
     asinFirst.text.replace('周 35 |', '周 99 |'), asinFirst.text.replaceAll('2026-08-29', '2026-02-30'),

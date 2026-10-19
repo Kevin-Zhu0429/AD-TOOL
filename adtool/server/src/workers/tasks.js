@@ -2,6 +2,7 @@
 // 大多返回 JSON 字符串 —— 主线程拿到后直接发给浏览器,不用再解析一遍大对象。
 // 任务抛出带 status 的错误(比如 400 文件格式不对)会原样变成接口的错误响应。
 // WORKER_POOL_SIZE=0 时主线程也直接调用这里,行为一致。
+import { prepareAbaSkus, importAbaSkus } from '../services/abaSkuLibrary.js';
 import { buildAbaView, abaPage } from '../services/abaView.js';
 import { buildAsinView, asinPage } from '../services/asinView.js';
 import { savePublicReports } from '../services/publicAsinData.js';
@@ -58,6 +59,8 @@ export function viewKey(kind, { userId, market, query, generation }) {
 }
 
 const tasks = {
+  abaSkuPreview(db, payload) { return prepareAbaSkus(db, payload.rows).summary; },
+  abaSkuImport(db, payload) { return importAbaSkus(db, payload); },
   publicAsinSave(db, payload) { return savePublicReports(db, payload); },
   publicAsinView(db, payload) {
     const full = cached(viewKey('publicAsin', payload), () => buildAsinView(db, null, payload.market, payload.query, 'public'), { store: payload.query.export !== '1' });

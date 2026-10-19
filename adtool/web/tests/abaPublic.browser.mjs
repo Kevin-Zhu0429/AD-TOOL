@@ -50,7 +50,7 @@ try {
   const idle = () => view.locator('.aba-results[aria-busy="false"]').waitFor();
   await checkAsinExports(page, view, '/api/aba-public/asin');
   await page.locator('.verbadge').click();
-  assert.match(await page.locator('.logrel').first().innerText(), /2\.10\.1[\s\S]*修复 ABA 同一机型被拆成多行汇总[\s\S]*型号不匹配/);
+  assert.match(await page.locator('.logrel').first().innerText(), /2\.11\.0[\s\S]*ABA 新增独立的全市场共享 SKU 库[\s\S]*专用库/);
   await page.getByRole('button', { name: '知道了', exact: true }).click();
   assert.equal(await view.locator('input[type="file"]').count(), 0);
   assert.equal(await page.getByRole('button', { name: '手动同步', exact: true }).count(), 0);

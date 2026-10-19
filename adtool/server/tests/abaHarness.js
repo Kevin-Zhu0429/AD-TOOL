@@ -14,6 +14,7 @@ export async function startAbaTestServer() {
   const { authRouter } = await import('../src/auth.js');
   const { abaRouter } = await import('../src/aba.js');
   const { abaPublicRouter } = await import('../src/abaPublic.js');
+  const { abaSkuRouter } = await import('../src/abaSkus.js');
   const { skuRouter } = await import('../src/skus.js');
   const { portfolioRouter } = await import('../src/portfolios.js');
   const { sbAssetsRouter } = await import('../src/sbAssets.js');
@@ -36,6 +37,7 @@ export async function startAbaTestServer() {
   app.use('/api/aba', abaRouter);
   app.use('/api/aba-public', abaPublicRouter);
   app.use('/api/sku', skuRouter);
+  app.use('/api/aba-skus', abaSkuRouter);
   app.use('/api/portfolio', portfolioRouter);
   app.use('/api/sb-assets', sbAssetsRouter);
   app.use('/api/captain', captainRouter);

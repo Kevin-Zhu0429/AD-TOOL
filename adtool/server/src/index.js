@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { abaSkuRouter } from './abaSkus.js';
 import express from 'express';
 import compression from 'compression';
 import session from 'express-session';
@@ -62,6 +63,7 @@ mountMcp(app);
 app.use('/api/auth', authRouter);
 app.use('/api/neg', negRouter);
 app.use('/api/sku', skuRouter);
+app.use('/api/aba-skus', abaSkuRouter);
 app.use('/api/portfolio', portfolioRouter);
 app.use('/api/sb-assets', sbAssetsRouter);
 app.use('/api/products', productRouter);
