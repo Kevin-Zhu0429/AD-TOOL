@@ -84,7 +84,7 @@ export function buildAsinView(db, userId, market, query, scope = 'private') {
   const view = query.view === 'printers' ? 'printers' : 'queries';
   const merged = average || view === 'printers' || query.merge !== '0';
   const exportAll = query.export === '1';
-  const items = aggregateAsinView(rows, { series: !!model, view, mergeWeeks: merged, average, modelLabel: selectedModel?.label, includeQueries: exportAll });
+  const items = aggregateAsinView(rows, { series: !!model || !!query.group, view, mergeWeeks: merged, average, modelLabel: selectedModel?.label, includeQueries: exportAll });
   const sort = ASIN_COLUMNS.some((c) => c.key === query.sort) || (view === 'printers' && query.sort === 'query_count') ? query.sort : 'market_impressions';
   const direction = query.direction === 'asc' ? 'asc' : 'desc';
   items.sort((a, b) => {
@@ -93,7 +93,7 @@ export function buildAsinView(db, userId, market, query, scope = 'private') {
     const difference = typeof a[sort] === 'string' ? a[sort].localeCompare(b[sort], 'zh-CN') : (a[sort] ?? 0) - (b[sort] ?? 0);
     return (direction === 'asc' ? difference : -difference) || a.key.localeCompare(b.key);
   });
-  return { reports, years, year, months, month, modelOptions, selectedModel, brands, brand, seriesMerged: !!model,
+  return { reports, years, year, months, month, modelOptions, selectedModel, brands, brand, seriesMerged: !!model || view === 'printers' || !!query.group,
     unlinkedAsins: [...new Set(dated.filter((r) => !skuItems.some((s) => s.asin === r.asin && String(s.model ?? '').trim())).map((r) => r.asin))],
     asins: [...new Set(brandReports.map((r) => r.asin))], skuItems: filteredSkus, weeks, selectedWeeks,
     selectedReportCount: selected.size, hasModelLibrary: !!dRows.length, total: items.length, recordCount: rows.length,

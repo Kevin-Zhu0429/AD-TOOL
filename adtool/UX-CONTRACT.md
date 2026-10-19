@@ -270,3 +270,11 @@
 - `loginPage` 是独立授权表单的唯一所有者；样式变量由 `web/src/index.css` 通过 `/mcp-auth.css` 提供。
 - 登录错误保持用户名，密码始终不回填；内联错误供辅助技术读取，密码默认隐藏并可显隐，提交期间防重复操作。
 - 验证：`server/tests/mcp.test.js` 和 `web/tests/mcp.browser.mjs`。
+
+
+## ABA 机型分类跨 ASIN 合并修复（2026-10-19）
+
+- 业务来源：用户反馈同一机型在公共 ABA 分类汇总出现多行，要求按机型合并。分类汇总按当前全部筛选内的机型身份分组，不再要求先选墨盒型号；不同品牌的同一机型也合并。查询明细的默认分 ASIN 展示保持原意。
+- 复用 `aggregateAsinView`、`aggregateAsinSeries`、`AbaAsinTable`、`AbaPagination` 和原生筛选器。分类内展开按同一机型跨 ASIN 合并搜索词，保留来源清单与 SKU。已选国家、品牌、型号、ASIN、SKU、报告周、词类型和型号不匹配选项都继续约束数据范围。
+- 同词同周市场指标去重，冲突继续标记待核对，ASIN 指标相加。周平均按跨 ASIN 后每个搜索词实际出现的周数计算，分类为各词平均之和；导出的每个来源贡献使用同一分母，缺周不能另用来源自己的分母抬高结果。
+- 验证：`web/tests/asinGrouping.browser.mjs` 覆盖普通与公共报告、未选型号、不同品牌/ASIN、三周缺周、市场去重、周平均、展开、真实 XLSX、来源筛选和窄屏。`web/src/abaAsin.test.js` 验证默认分类合并与冲突传播。

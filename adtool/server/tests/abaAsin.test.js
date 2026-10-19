@@ -239,7 +239,7 @@ test('ASIN reports: authenticated storage, raw metrics, SKU linkage and filter b
     const grouped = await get(scope + '&alignment=mismatch&view=printers&export=1');
     assert.equal(grouped.items[0].query_rows[0].alignment.status, 'mismatch');
     const child = await get(scope + '&alignment=mismatch&group=' + encodeURIComponent(grouped.items[0].group.key));
-    assert.equal(child.items[0].asin, 'B000004304');
+    assert.deepEqual(child.items[0].asins, ['B000004304']);
     assert.equal((await get(scope + '&alignment=all')).total, 3);
     assert.equal(server.db.prepare(`SELECT SUM(q.asin_purchases) n FROM aba_asin_queries q JOIN aba_asin_reports r ON r.id=q.report_id WHERE r.asin='B000004304'`).get().n, 10);
     assert.equal((await get(scope + '&alignment=all', b)).total, 0);

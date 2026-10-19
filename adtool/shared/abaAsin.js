@@ -131,10 +131,11 @@ function aggregateAsinQueries(rows, { series, mergeWeeks, average, modelLabel })
 }
 
 export function aggregateAsinView(rows, { series = false, view = 'queries', mergeWeeks = true, average = false, modelLabel = '', includeQueries = false } = {}) {
-  const queries = aggregateAsinQueries(rows, { series, mergeWeeks, average, modelLabel });
+  const mergeSources = series || view === 'printers';
+  const queries = aggregateAsinQueries(rows, { series: mergeSources, mergeWeeks, average, modelLabel });
   if (view !== 'printers') return queries.map(asinRates);
-  const groupKey = (row) => JSON.stringify([series ? '' : row.asin, row.group.key]);
-  const groups = series ? aggregateAsinSeries(rows, { view, modelLabel }) : groupAsinRows(rows);
+  const groupKey = (row) => row.group.key;
+  const groups = aggregateAsinSeries(rows, { view, modelLabel });
   if (average) {
     const totals = new Map();
     for (const row of queries) {
@@ -147,9 +148,19 @@ export function aggregateAsinView(rows, { series = false, view = 'queries', merg
   }
   if (includeQueries) {
     const queryRows = new Map();
-    const exportQueries = series
+    const exportQueries = mergeSources
       ? aggregateAsinQueries(rows, { series: false, mergeWeeks, average, modelLabel }).map(asinRates)
       : queries.map(asinRates);
+    // Each ASIN contributes to the same observed-week average as the merged query.
+    if (average && mergeSources) {
+      const queryWeeks = new Map(queries.map((row) => [row.query, row.average_weeks]));
+      for (const row of exportQueries) {
+        const weeks = queryWeeks.get(row.query);
+        for (const key of ASIN_COUNT_KEYS) if (row[key] != null) row[key] *= row.average_weeks / weeks;
+        row.average_weeks = weeks;
+        Object.assign(row, asinRates(row));
+      }
+    }
     // Exports split each week's market totals across the SKUs that have that week.
     const marketWeeks = new Map();
     for (const row of rows) {
