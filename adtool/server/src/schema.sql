@@ -493,3 +493,27 @@ CREATE TABLE IF NOT EXISTS listing_items (
   fetched_at INTEGER NOT NULL,
   PRIMARY KEY (seller_id, country, sku)
 );
+
+
+-- ABA matching data is maintained centrally, independently of personal inventory / advertising SKUs.
+CREATE TABLE IF NOT EXISTS aba_sku_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  country TEXT NOT NULL,
+  brand TEXT NOT NULL,
+  brand_key TEXT NOT NULL,
+  sku TEXT NOT NULL,
+  sku_key TEXT NOT NULL,
+  asin TEXT NOT NULL,
+  model TEXT NOT NULL,
+  set_group TEXT,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(country, brand_key, sku_key)
+);
+CREATE INDEX IF NOT EXISTS idx_aba_sku_country_asin ON aba_sku_items(country, asin);
+CREATE TABLE IF NOT EXISTS aba_sku_library (
+  id INTEGER PRIMARY KEY CHECK(id=1),
+  enabled INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT,
+  filename TEXT,
+  updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+);

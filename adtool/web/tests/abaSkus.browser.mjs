@@ -1,0 +1,121 @@
+import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+import { createServer } from 'vite';
+import { startAbaTestServer } from '../../server/tests/abaHarness.js';
+import { asinFirst } from '../../server/tests/abaAsinFixture.js';
+import { publicFixture, publicTask } from '../../server/tests/abaPublicFixture.js';
+import { savePublicReports } from '../../server/src/services/publicAsinData.js';
+const require = createRequire(import.meta.url);
+const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
+const XLSX = require('xlsx');
+const backend = await startAbaTestServer();
+let vite, browser;
+try {
+  savePublicReports(backend.db, { task: publicTask, payload: publicFixture(publicTask), marketplaceId: 'A1RKKUPIHCS9HS' });
+  vite = await createServer({ root: fileURLToPath(new URL('../', import.meta.url)), server: { host: '127.0.0.1', port: 0, proxy: { '/api': { target: backend.url, changeOrigin: true } } } });
+  await vite.listen();
+  browser = await chromium.launch({ channel: 'msedge', headless: true });
+  const base = 'http://127.0.0.1:' + vite.httpServer.address().port;
+  const userContext = await browser.newContext();
+  await userContext.request.post(base + '/api/auth/login', { data: { username: 'aba-test', password: 'local-test-password' } });
+  await userContext.request.post(base + '/api/aba/asin/import', { data: { marketplace: 'ES', files: [asinFirst] } });
+  await userContext.request.post(base + '/api/sku/rows', { data: { rows: [{ country: 'ES', brand: 'CE', sku: 'PERSONAL-WRONG', asin: 'B000000305', model: '304' }] } });
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce' });
+  const errors = []; page.on('pageerror', (e) => errors.push(e.message));
+  const checkReportExports = async (currentPage, currentView, endpoint) => {
+    await Promise.all([currentPage.waitForResponse((r) => r.url().includes(endpoint + '?') && r.url().includes('model=305') && r.status() === 200),
+      currentView.getByLabel('墨盒型号', { exact: true }).selectOption('305')]);
+    await currentView.locator('.aba-results[aria-busy="false"]').waitFor();
+    for (const display of ['queries', 'printers']) {
+      if (await currentView.getByLabel('显示方式', { exact: true }).inputValue() !== display) {
+        await Promise.all([currentPage.waitForResponse((r) => r.url().includes(endpoint + '?') && r.status() === 200), currentView.getByLabel('显示方式', { exact: true }).selectOption(display)]);
+        await currentView.locator('.aba-results[aria-busy="false"]').waitFor();
+      }
+      const file = currentPage.waitForEvent('download'); await currentView.getByRole('button', { name: '导出 Excel', exact: true }).click();
+      const book = XLSX.readFile(await (await file).path());
+      const cells = XLSX.utils.sheet_to_json(book.Sheets[book.SheetNames[0]], { header: 1, defval: '' });
+      assert.ok(cells.length > 1);
+      assert.ok(cells.slice(1).every((r) => r[0] === 'CENTRAL-ES-305' && r[3] === 'B000000305'));
+      assert.doesNotMatch(JSON.stringify(cells), /PERSONAL-WRONG|CENTRAL-DE-305/);
+    }
+  };
+  await page.goto(base);
+  await page.getByLabel('用户名').fill('aba-other'); await page.getByLabel('密码', { exact: true }).fill('local-test-password');
+  await page.getByRole('button', { name: '登录', exact: true }).click();
+  await page.locator('.topnav').getByRole('button', { name: 'ABA报告（公共）', exact: true }).click();
+  const view = page.locator('.aba-asin-view'), library = view.locator('.aba-sku-library');
+  await view.locator('.aba-results[aria-busy="false"]').waitFor();
+  await library.locator(':scope > summary').focus(); await page.keyboard.press('Enter');
+  await library.getByRole('button', { name: '下载 SKU 模板', exact: true }).waitFor();
+  const templateFile = page.waitForEvent('download'); await library.getByRole('button', { name: '下载 SKU 模板', exact: true }).click();
+  const template = XLSX.readFile(await (await templateFile).path());
+  const header = XLSX.utils.sheet_to_json(template.Sheets['ABA SKU库'], { header: 1 })[0];
+  assert.deepEqual(header, ['国家', '品牌', 'SKU', 'ASIN', '墨盒型号', '颜色 / 套组']);
+  const workbook = (sheets) => {
+    const book = XLSX.utils.book_new();
+    for (const [name, rows] of Object.entries(sheets)) XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet([header, ...rows]), name);
+    return { name: '全部市场SKU.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: XLSX.write(book, { type: 'buffer', bookType: 'xlsx' }) };
+  };
+  await library.locator('input[type=file]').setInputFiles(workbook({ ES: [['ES', 'CE', 'BAD', 'bad', '305', '']] }));
+  await library.getByRole('alert').waitFor(); assert.match(await library.innerText(), /整批未保存/);
+  assert.equal((await (await page.request.get(base + '/api/aba-skus')).json()).enabled, false);
+  const es = ['西班牙', 'CE', 'CENTRAL-ES-305', 'B000000305', '305', 'BK'];
+  await library.locator('input[type=file]').setInputFiles(workbook({ ES: [es, ...Array.from({ length: 26 }, (_, i) => ['ES', 'CY', 'EXTRA-' + i, 'B' + String(1000 + i).padStart(9, '0'), '305', 'BKC'])],
+    DE: [['DE', 'CE', 'CENTRAL-DE-305', 'B000000306', '305', 'BK']], US: [['US', 'CE', 'CENTRAL-US-305', 'B000000307', '305', 'BK']], Duplicate: [es] }));
+  await library.locator('.aba-sku-preview').waitFor();
+  assert.match(await library.locator('.aba-sku-preview').innerText(), /29 条.*新增 29 条.*重复行 1 条/s);
+  await page.route('**/api/aba-skus/import', (route) => route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: '保存暂不可用' }) }));
+  await library.getByRole('button', { name: '保存到 ABA 专用库', exact: true }).click();
+  await library.getByRole('alert').waitFor(); assert.match(await library.getByRole('alert').innerText(), /预览仍保留/);
+  assert.equal(await library.locator('.aba-sku-preview').count(), 1);
+  await page.unroute('**/api/aba-skus/import');
+  await library.getByRole('button', { name: '保存到 ABA 专用库', exact: true }).click();
+  await library.getByText(/保存完成：新增 29 条/).waitFor();
+  await library.getByText('1 / 2 页', { exact: true }).waitFor();
+  await library.getByRole('button', { name: '下一页', exact: true }).click();
+  await library.getByText('2 / 2 页', { exact: true }).waitFor();
+  assert.equal(await library.locator('tbody tr').count(), 4);
+  const change = async (label, value) => {
+    await Promise.all([page.waitForResponse((r) => r.url().includes('/api/aba-skus?') && r.status() === 200), library.getByLabel(label, { exact: true }).selectOption(value)]);
+    await library.locator('tbody').waitFor();
+  };
+  await change('SKU 库国家', 'DE'); assert.equal(await library.locator('tbody tr').count(), 1);
+  assert.match(await library.locator('tbody').innerText(), /CENTRAL-DE-305/);
+  await library.getByLabel('搜索 ABA 专用 SKU', { exact: true }).fill('missing');
+  await library.getByText(/当前筛选下没有 SKU/).waitFor();
+  await library.getByRole('button', { name: '清除 SKU 搜索', exact: true }).click();
+  assert.equal(await library.getByLabel('搜索 ABA 专用 SKU', { exact: true }).evaluate((e) => e === document.activeElement), true);
+  await library.getByText('CENTRAL-DE-305', { exact: true }).waitFor();
+  await library.locator('input[type=file]').setInputFiles(workbook({ ES: [['ES', 'CE', 'CENTRAL-ES-305', 'B000000305', '305XL', '2C']] }));
+  await library.locator('.aba-sku-preview').waitFor();
+  assert.match(await library.locator('.aba-sku-preview').innerText(), /新增 0 条、更新 1 条/);
+  await library.getByRole('button', { name: '保存到 ABA 专用库', exact: true }).click();
+  await library.getByText(/保存完成：新增 0 条，更新 1 条/).waitFor();
+  assert.equal((await (await page.request.get(base + '/api/aba-skus')).json()).libraryTotal, 29);
+  assert.equal((await (await page.request.get(base + '/api/sku')).json()).items.length, 0, 'upload never writes owner personal SKUs');
+  await checkReportExports(page, view, '/api/aba-public/asin');
+  await library.locator(':scope > summary').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: fileURLToPath(new URL('../../.tmp/aba-sku-library-owner.png', import.meta.url)), fullPage: true });
+  await page.getByRole('button', { name: '切换主题', exact: true }).click(); await page.setViewportSize({ width: 390, height: 844 });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  await library.locator(':scope > summary').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: fileURLToPath(new URL('../../.tmp/aba-sku-library-narrow-dark.png', import.meta.url)), fullPage: true });
+  const operatorPage = await userContext.newPage(); await operatorPage.goto(base);
+  await operatorPage.locator('.topnav').getByRole('button', { name: 'ABA 报告', exact: true }).click();
+  await operatorPage.getByRole('button', { name: 'ASIN 视图', exact: true }).click();
+  const operatorView = operatorPage.locator('.aba-asin-view');
+  await operatorView.locator('.aba-results[aria-busy="false"]').waitFor();
+  assert.match(await operatorView.locator('.aba-results').innerText(), /CENTRAL-ES-305/);
+  assert.doesNotMatch(await operatorView.locator('.aba-results').innerText(), /PERSONAL-WRONG/);
+  await checkReportExports(operatorPage, operatorView, '/api/aba/asin');
+  await operatorView.locator('.aba-sku-library > summary').click();
+  await operatorView.getByText(/仅超级管理员可上传和更新/).waitFor();
+  assert.equal(await operatorView.getByRole('button', { name: '选择全部市场 SKU 表', exact: true }).count(), 0);
+  const result = await (await userContext.request.get(base + '/api/aba/asin?marketplace=ES&year=')).json();
+  assert.equal(result.skuSource, 'aba');
+  assert.equal(result.items.find((r) => r.asin === 'B000000305' && /2820/.test(r.query)).alignment.status, 'matched');
+  assert.equal((await userContext.request.post(base + '/api/aba-skus/import', { data: { rows: [] } })).status(), 403);
+  assert.deepEqual(errors, []);
+  console.log('ABA SKU library browser passed: template, multi-sheet all-market import, preview, atomic failure/retry, incremental preservation, pagination/search, dedicated private/public matching, read-only role, keyboard and narrow dark layout.');
+} finally { await browser?.close(); await vite?.close(); await backend.close(); }

@@ -89,6 +89,9 @@ function auditQuery({ userId, action, entity, days, from, to, before } = {}) {
 }
 
 export const api = {
+  abaSkus: (params, signal) => request(`/aba-skus?${new URLSearchParams(params)}`, { signal }),
+  previewAbaSkus: (rows) => request('/aba-skus/preview', { method: 'POST', body: { rows } }),
+  importAbaSkus: (rows, filename) => request('/aba-skus/import', { method: 'POST', body: { rows, filename } }),
   agedFees: (batchId) => request(`/aged-fees${batchId ? `?batchId=${encodeURIComponent(batchId)}` : ''}`),
   importAgedFees,
   updateAgedFeeRow: (id, correction) => request(`/aged-fees/rows/${id}`, { method: 'PATCH', body: correction }),

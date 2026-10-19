@@ -1,3 +1,4 @@
+import { abaSkuStatus } from './abaSkuLibrary.js';
 // ABA ASIN 周报的查询、匹配、聚合、排序。只依赖传进来的 db,主线程和 worker 线程都能调用。
 import { regionOf } from '../libs.js';
 import { ABA_PAGE_SIZES, abaMatcher } from '../../../shared/aba.js';
@@ -10,7 +11,13 @@ export function buildAsinView(db, userId, market, query, scope = 'private') {
     ? db.prepare('SELECT id, asin, brand, week_start, week_end, week_number, updated_at, row_count FROM aba_public_reports WHERE marketplace=? ORDER BY week_end DESC, asin').all(market)
     : db.prepare(`SELECT r.id, r.asin, r.week_start, r.week_end, r.week_number, r.updated_at, r.row_count
     FROM aba_asin_reports r WHERE r.user_id=? AND r.marketplace=? ORDER BY r.week_end DESC, r.asin`).all(userId, market);
-  const skuItems = shared
+  const library = abaSkuStatus(db);
+  const useReportBrand = shared && !library.enabled;
+  const skuItems = library.enabled
+    ? db.prepare("SELECT 'aba:' || id AS id, asin, sku, brand, model, set_group AS setGroup FROM aba_sku_items WHERE country=? AND asin IN ("
+      + (shared ? 'SELECT asin FROM aba_public_reports WHERE marketplace=?' : 'SELECT asin FROM aba_asin_reports WHERE user_id=? AND marketplace=?')
+      + ') ORDER BY sku').all(...(shared ? [market, market] : [market, userId, market]))
+    : shared
     ? db.prepare('SELECT MIN(id) AS id, asin, sku, brand, model, set_group AS setGroup FROM sku_items WHERE country=? AND asin IS NOT NULL AND asin IN (SELECT asin FROM aba_public_reports WHERE marketplace=?) GROUP BY asin, sku, brand, model, set_group ORDER BY sku').all(market, market)
     : db.prepare(`SELECT id, asin, sku, brand, model, set_group AS setGroup FROM sku_items
     WHERE user_id=? AND country=? AND asin IS NOT NULL ORDER BY sku`).all(userId, market);
@@ -26,11 +33,11 @@ export function buildAsinView(db, userId, market, query, scope = 'private') {
   const modelReports = dated.filter((r) => !model || selectedModel?.asins.includes(r.asin));
   const modelSkus = skuItems.filter((s) => modelReports.some((r) => r.asin === s.asin) && (!model || selectedModel?.skuIds.includes(s.id)));
   const brandKey = (s) => String(s.brand ?? '').trim().toLowerCase();
-  const brands = [...new Map((shared ? modelReports : modelSkus).map((s) => [brandKey(s) || '__unassigned__', { key: brandKey(s) || '__unassigned__', label: String(s.brand ?? '').trim() || '未填写品牌' }])).values()].sort((a, b) => a.label.localeCompare(b.label, 'zh-CN'));
+  const brands = [...new Map((useReportBrand ? modelReports : modelSkus).map((s) => [brandKey(s) || '__unassigned__', { key: brandKey(s) || '__unassigned__', label: String(s.brand ?? '').trim() || '未填写品牌' }])).values()].sort((a, b) => a.label.localeCompare(b.label, 'zh-CN'));
   const brand = String(query.brand ?? '');
-  const brandAsins = new Set(shared ? modelReports.filter((r) => !brand || brandKey(r) === brand).map((r) => r.asin)
+  const brandAsins = new Set(useReportBrand ? modelReports.filter((r) => !brand || brandKey(r) === brand).map((r) => r.asin)
     : modelSkus.filter((s) => !brand || (brandKey(s) || '__unassigned__') === brand).map((s) => s.asin));
-  const filteredSkus = modelSkus.filter((s) => !brand || (shared ? brandAsins.has(s.asin) : (brandKey(s) || '__unassigned__') === brand));
+  const filteredSkus = modelSkus.filter((s) => !brand || (useReportBrand ? brandAsins.has(s.asin) : (brandKey(s) || '__unassigned__') === brand));
   const brandReports = modelReports.filter((r) => !brand || brandAsins.has(r.asin));
   const asin = String(query.asin ?? '').toUpperCase();
   const skuId = String(query.skuId ?? '');
@@ -70,6 +77,8 @@ export function buildAsinView(db, userId, market, query, scope = 'private') {
       if (!alignments.has(alignmentKey)) {
         const sourceSkus = skusByAsin.get(report.asin) ?? [];
         const checked = asinQueryAlignment(matching, sourceSkus);
+        if (library.enabled && checked.status === 'insufficient' && !sourceSkus.length)
+          checked.reason = 'ABA 专用 SKU 库未收录此国家的该 ASIN，请由超级管理员补充';
         checked.issues = ['mismatch', 'review', 'insufficient'].includes(checked.status) ? [{
           asin: report.asin, status: checked.status, reason: checked.reason,
           expectedModels: checked.expectedModels, sourceModels: checked.sourceModels,
@@ -104,7 +113,7 @@ export function buildAsinView(db, userId, market, query, scope = 'private') {
     const difference = typeof a[sort] === 'string' ? a[sort].localeCompare(b[sort], 'zh-CN') : (a[sort] ?? 0) - (b[sort] ?? 0);
     return (direction === 'asc' ? difference : -difference) || a.key.localeCompare(b.key);
   });
-  return { reports, years, year, months, month, modelOptions, selectedModel, brands, brand, seriesMerged: !!model || view === 'printers' || !!query.group,
+  return { skuSource: library.enabled ? 'aba' : 'legacy', skuLibrary: library, reports, years, year, months, month, modelOptions, selectedModel, brands, brand, seriesMerged: !!model || view === 'printers' || !!query.group,
     unlinkedAsins: [...new Set(dated.filter((r) => !skuItems.some((s) => s.asin === r.asin && String(s.model ?? '').trim())).map((r) => r.asin))],
     asins: [...new Set(brandReports.map((r) => r.asin))], skuItems: filteredSkus, weeks, selectedWeeks,
     selectedReportCount: selected.size, hasModelLibrary: !!dRows.length, total: items.length, recordCount: rows.length,

@@ -72,7 +72,7 @@ export default function AbaPublicPage({ user }) {
   const counts = status?.targets?.filter((t) => t.marketplace === market) ?? [];
   const activeTasks = job?.state === 'running' ? tasks.filter((task) => !['queued', 'done', 'failed'].includes(task.stage)) : [];
   return <div className="aba-page aba-public-page">
-    <header className="aba-public-heading"><div><h1>ABA报告（公共）</h1><p className="hint">全部账号共享报告 · 型号与 SKU 关联全部账号的 SKU 库</p></div>
+    <header className="aba-public-heading"><div><h1>ABA报告（公共）</h1><p className="hint">全部账号共享报告 · 型号与 SKU 可由 ABA 专用共享库统一维护</p></div>
       <div className="aba-public-actions">{user.role === 'owner' ? <button className="btn primary" disabled={!status || starting || job?.state === 'running'} aria-busy={starting || job?.state === 'running'} onClick={synchronize}>{starting ? '正在启动…' : job?.state === 'running' ? '正在同步…' : job?.state === 'failed' || job?.state === 'partial' ? '重试同步' : '手动同步'}</button> : <span className="hint">由超级管理员手动同步</span>}
         <button className="btn" onClick={() => setRetry((n) => n + 1)}>刷新进度</button></div>
     </header>

@@ -16,7 +16,7 @@ const ACTION_LABELS = {
   sync: '同步', sync_partial: '部分同步', enable: '启用', disable: '停用', clear_local: '本机清空',
 };
 const ENTITY_LABELS = {
-  user: '账号', lib_items: '否定词库', neg_cat_config: '词库设置', sku_items: 'SKU 库',
+  user: '账号', lib_items: '否定词库', neg_cat_config: '词库设置', sku_items: 'SKU 库', aba_sku_items: 'ABA 专用 SKU 库',
   portfolio_items: '广告组合库', products: '产品库', product: '产品', product_month: '产品月份',
   product_settings: '产品设置', aba_reports: 'ABA 品牌报告', aba_asin_reports: 'ABA ASIN 报告', aba_public_reports: 'ABA报告（公共）',
   captain_inventory: '库存同步', captain_channel: '库存店铺', captain_channel_group: '库存店铺组',
