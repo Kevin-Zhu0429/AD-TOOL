@@ -118,7 +118,7 @@ test('daily agent report, lessons, reviews and change timeline', async (t) => {
     assert.equal(db.prepare('SELECT COUNT(*) AS n FROM pet_agent_weekly').get().n, 1);
     const context = agent.agentContext({ today: '2026-10-12' }).weekly;
     assert.equal(context.due, false);
-    assert.deepEqual([context.latest.headline, context.latest.kpis[0].tone], ['重写', 'bad']);
+    assert.deepEqual([context.latest.headline, context.latest.kpis[0].tone, context.latest.markdown], ['重写', 'bad', '# 周报 v2']);
     const login = async (username) => (await fetch(`${url}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, password: 'pet-test-password' }) })).headers.get('set-cookie').split(';')[0];
     const operator = await login('pet-user');

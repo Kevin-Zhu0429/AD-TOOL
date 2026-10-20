@@ -359,7 +359,7 @@ function weeklyContext(today) {
   const week = lastFullWeek(today);
   const latest = getWeekly();
   return { lastWeekStart: week.weekStart, lastWeekEnd: week.weekEnd, due: !db.prepare('SELECT 1 FROM pet_agent_weekly WHERE week_start=?').get(week.weekStart),
-    latest: latest && { weekStart: latest.weekStart, weekEnd: latest.weekEnd, headline: latest.headline, kpis: latest.kpis } };
+    latest: latest && { weekStart: latest.weekStart, weekEnd: latest.weekEnd, headline: latest.headline, kpis: latest.kpis, markdown: latest.markdown } };
 }
 
 /**
@@ -411,7 +411,7 @@ export function agentContext({ today = todayOf() } = {}) {
       '同一个结论在 2 条以上改动上得到验证才把 confidence 提到 medium,3 条以上且没有反例才 high;和已有经验矛盾时更新那条(带 id),不要新开一条。',
       '业务报告(访问量、转化率)一般晚 2 天,ABA 按周;单天波动不下结论,看 7 天。',
       '广告改动只提议(propose_ad_changes,编号来自 Miguelpet query_ads),不要在分析时直接改;店主确认后由执行任务用 claim_confirmed_ad_changes 领取再执行。',
-      'weekly.due 为 true 时(上周的周报还没写),写完日报再写上周(周一到周日)的周报,用 save_weekly_report 存进网站;weekly.latest 是上一份周报的结论和「下周要做的事」可参照。',
+      'weekly.due 为 true 时(上周的周报还没写),写完日报再写上周(周一到周日)的周报,用 save_weekly_report 存进网站;weekly.latest 是上一份周报(markdown 是全文,里面有当时定的「下周要做的事」),写新周报时对照着看做了没有。',
     ],
   };
 }
