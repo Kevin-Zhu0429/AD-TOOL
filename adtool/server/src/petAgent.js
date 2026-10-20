@@ -147,6 +147,60 @@ export function runCalendar({ days = 14, today = todayOf() } = {}) {
   return Array.from({ length: days }, (_, index) => shiftDay(today, -1 - index)).map((day) => ({ day, status: have.get(day) ?? 'missing' }));
 }
 
+// ---------- 周报 ----------
+
+export const WEEKLY_LIMITS = { headline: 300, markdown: 60000, kpis: 8 };
+const KPI_TONES = ['good', 'bad', 'neutral'];
+const weekdayOf = (day) => new Date(`${day}T00:00:00Z`).getUTCDay();
+/** 最近一个已经过完的周:上周一到上周日(太平洋时间) */
+export function lastFullWeek(today = todayOf()) {
+  const start = shiftDay(today, -((weekdayOf(today) + 6) % 7) - 7);
+  return { weekStart: start, weekEnd: shiftDay(start, 6) };
+}
+
+function shapeWeekly(row, { full = true } = {}) {
+  if (!row) return null;
+  return { weekStart: row.week_start, weekEnd: row.week_end, headline: row.headline, kpis: parseJson(row.kpis_json, []),
+    ...(full ? { markdown: row.markdown } : {}), source: row.source, createdAt: row.created_at, updatedAt: row.updated_at };
+}
+
+/** Claude 写入一周的周报(周一到周日);同一周再写会覆盖 */
+export function saveWeeklyReport(input, { userId = null, source = 'claude', today = todayOf() } = {}) {
+  const weekStart = String(input.weekStart ?? lastFullWeek(today).weekStart);
+  if (!DAY_RE.test(weekStart) || Number.isNaN(Date.parse(`${weekStart}T00:00:00Z`))) throw fail('weekStart 要写成 YYYY-MM-DD');
+  if (weekdayOf(weekStart) !== 1) throw fail('weekStart 要是周一（周报按周一到周日算）');
+  const weekEnd = shiftDay(weekStart, 6);
+  if (input.weekEnd != null && input.weekEnd !== weekEnd) throw fail(`weekEnd 应该是 ${weekEnd}（周日）`);
+  if (weekEnd >= today) throw fail('只能写已经过完的一周');
+  const headline = String(input.headline ?? '').trim();
+  if (!headline) throw fail('headline 不能为空');
+  if (headline.length > WEEKLY_LIMITS.headline) throw fail(`headline 不能超过 ${WEEKLY_LIMITS.headline} 字`);
+  const markdown = String(input.markdown ?? '').replace(/\r\n/g, '\n').trim();
+  if (!markdown) throw fail('markdown 不能为空');
+  if (markdown.length > WEEKLY_LIMITS.markdown) throw fail(`周报正文不能超过 ${WEEKLY_LIMITS.markdown} 字`);
+  const kpis = (input.kpis ?? []).slice(0, WEEKLY_LIMITS.kpis).map((kpi) => {
+    const label = String(kpi?.label ?? '').trim().slice(0, 30), value = String(kpi?.value ?? '').trim().slice(0, 40);
+    if (!label || !value) throw fail('kpis 每项都要有 label 和 value');
+    return { label, value, prev: kpi.prev == null ? null : String(kpi.prev).trim().slice(0, 40) || null,
+      change: kpi.change == null ? null : String(kpi.change).trim().slice(0, 30) || null, tone: KPI_TONES.includes(kpi.tone) ? kpi.tone : 'neutral' };
+  });
+  db.prepare(`INSERT INTO pet_agent_weekly (week_start, week_end, headline, markdown, kpis_json, source, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(week_start) DO UPDATE SET week_end=excluded.week_end, headline=excluded.headline, markdown=excluded.markdown,
+    kpis_json=excluded.kpis_json, source=excluded.source, updated_at=datetime('now','localtime')`)
+    .run(weekStart, weekEnd, headline, markdown, JSON.stringify(kpis), source, userId);
+  return { weekStart, weekEnd, saved: true, url: '/#agent' };
+}
+
+export function weeklyList({ limit = 60 } = {}) {
+  return db.prepare('SELECT * FROM pet_agent_weekly ORDER BY week_start DESC LIMIT ?').all(limit).map((row) => shapeWeekly(row, { full: false }));
+}
+
+export function getWeekly(weekStart) {
+  const row = weekStart ? db.prepare('SELECT * FROM pet_agent_weekly WHERE week_start=?').get(weekStart)
+    : db.prepare('SELECT * FROM pet_agent_weekly ORDER BY week_start DESC LIMIT 1').get();
+  return shapeWeekly(row);
+}
+
 // ---------- 经验库 ----------
 
 function shapeLesson(row) {
@@ -301,6 +355,13 @@ export function changeEvents(id) {
 
 // ---------- 给 Claude 的分析上下文 ----------
 
+function weeklyContext(today) {
+  const week = lastFullWeek(today);
+  const latest = getWeekly();
+  return { lastWeekStart: week.weekStart, lastWeekEnd: week.weekEnd, due: !db.prepare('SELECT 1 FROM pet_agent_weekly WHERE week_start=?').get(week.weekStart),
+    latest: latest && { weekStart: latest.weekStart, weekEnd: latest.weekEnd, headline: latest.headline, kpis: latest.kpis } };
+}
+
 /**
  * 每次分析前先读:最近几天的日报结论、生效中的经验、该复盘的改动、冷却期内的 SKU、数据新鲜度。
  * 这样每天的分析能接上前一天,不会重复提同样的改动。
@@ -337,6 +398,7 @@ export function agentContext({ today = todayOf() } = {}) {
     today, reportDay: day, schedule: SCHEDULE.label,
     alreadyReported: !!db.prepare('SELECT 1 FROM pet_agent_reports WHERE day=?').get(day),
     recentReports: recent,
+    weekly: weeklyContext(today),
     lessons: listLessons({ status: 'active' }).map(({ id, title, body, areaLabel, changeKindLabel, style, verdictLabel, confidence, evidence, changeIds, timesUsed }) =>
       ({ id, title, body, area: areaLabel, changeKind: changeKindLabel, style, verdict: verdictLabel, confidence, evidence, changeIds, timesUsed })),
     changesToReview: toReview, cooldownSkus: [...cooldown.values()], pendingProposals: pending, confirmedAdChangesWaiting: adsToExecute,
@@ -349,6 +411,7 @@ export function agentContext({ today = todayOf() } = {}) {
       '同一个结论在 2 条以上改动上得到验证才把 confidence 提到 medium,3 条以上且没有反例才 high;和已有经验矛盾时更新那条(带 id),不要新开一条。',
       '业务报告(访问量、转化率)一般晚 2 天,ABA 按周;单天波动不下结论,看 7 天。',
       '广告改动只提议(propose_ad_changes,编号来自 Miguelpet query_ads),不要在分析时直接改;店主确认后由执行任务用 claim_confirmed_ad_changes 领取再执行。',
+      'weekly.due 为 true 时(上周的周报还没写),写完日报再写上周(周一到周日)的周报,用 save_weekly_report 存进网站;weekly.latest 是上一份周报的结论和「下周要做的事」可参照。',
     ],
   };
 }
@@ -367,6 +430,11 @@ export function createAgentRouter() {
   router.get('/reports/:day', handle((req) => {
     if (!DAY_RE.test(req.params.day)) throw fail('日期格式不对');
     return { report: getReport(req.params.day) };
+  }));
+  router.get('/weekly', handle(() => ({ reports: weeklyList() })));
+  router.get('/weekly/:weekStart', handle((req) => {
+    if (!DAY_RE.test(req.params.weekStart)) throw fail('日期格式不对');
+    return { report: getWeekly(req.params.weekStart) };
   }));
   router.get('/lessons', handle((req) => ({ lessons: listLessons({ status: ['active', 'retired', 'all'].includes(req.query.status) ? req.query.status : 'active', area: req.query.area }) })));
   router.post('/lessons/:id/status', requireRole('owner'), handle((req) => ({ lesson: setLessonStatus(req.params.id, req.body?.status, req.body?.reason) })));

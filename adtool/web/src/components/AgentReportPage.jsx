@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api.js';
+import MarkdownView from './MarkdownView.jsx';
 import './LibraryPage.css';
 import './PriceStrategyPage.css';
 import './ReturnsPage.css';
@@ -102,6 +103,45 @@ function ReportView({ report, onNav }) {
   </>;
 }
 
+const KPI_TONE = { good: 'up', bad: 'down', neutral: '' };
+const shortDay = (day) => day.slice(5).replace('-', '/');
+
+/** 周报:按周列出,正文是 Claude 写的 Markdown */
+function Weekly() {
+  const [list, setList] = useState(null);
+  const [week, setWeek] = useState('');
+  const [report, setReport] = useState(undefined);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    api.agentWeekly().then((data) => { setList(data.reports); setWeek(data.reports[0]?.weekStart ?? ''); }).catch((err) => setError(err.message));
+  }, []);
+  useEffect(() => {
+    if (!week) return;
+    setReport(undefined);
+    api.agentWeeklyReport(week).then((data) => setReport(data.report)).catch((err) => setError(err.message));
+  }, [week]);
+  if (error) return <p className="note err" role="alert">{error}</p>;
+  if (!list) return <p role="status">正在加载周报…</p>;
+  if (!list.length) return <p className="note">还没有周报。每周一的定时分析会在日报之外写一份上周（周一到周日）的周报，写好后在这里看。</p>;
+  return <>
+    <div className="agt-weeks" role="list" aria-label="选择周">
+      {list.map((item) => <button key={item.weekStart} type="button" role="listitem" className={`agt-week${item.weekStart === week ? ' on' : ''}`}
+        aria-pressed={item.weekStart === week} title={item.headline} onClick={() => setWeek(item.weekStart)}>
+        {shortDay(item.weekStart)}–{shortDay(item.weekEnd)}</button>)}
+    </div>
+    {report === undefined ? <p role="status">正在加载…</p> : !report ? <p className="note">这一周的周报找不到了。</p> : <>
+      <section className="card agt-headline">
+        <div className="agt-headline-day agt-week-range">{shortDay(report.weekStart)}<small>到 {shortDay(report.weekEnd)}</small></div>
+        <div><p className="agt-eyebrow">Claude 的周报 · 写于 {report.updatedAt?.slice(5, 16)}（北京时间）</p><h2>{report.headline}</h2></div>
+      </section>
+      {report.kpis.length > 0 && <div className="price-kpis agt-kpis">{report.kpis.map((kpi, index) => <div key={index} className="price-kpi">
+        <span>{kpi.label}</span><b>{kpi.value}</b>
+        <small className={`agt-delta ${KPI_TONE[kpi.tone] ?? ''}`}>{kpi.change ?? ''}{kpi.prev != null && <span> 前一周 {kpi.prev}</span>}</small></div>)}</div>}
+      <section className="card agt-weekly"><MarkdownView text={report.markdown} /></section>
+    </>}
+  </>;
+}
+
 function Lessons({ owner }) {
   const [status, setStatus] = useState('active');
   const [area, setArea] = useState('');
@@ -164,7 +204,7 @@ export default function AgentReportPage({ owner, onNav }) {
   const missed = calendar.filter((item) => item.status === 'missing').length;
   return <div className="lib agent-page animate-in">
     <div className="lib-head"><div><h1>AI 日报 <span className="tag blue">US 站</span></h1>
-      <p className="hint">{meta?.schedule?.label ?? '每天美国太平洋时间凌晨 2:00'}，Claude 用 Miguel_Agent（网站数据）和 Miguelpet（广告数据）分析前一天的全店情况，结论写在这里；
+      <p className="hint">{meta?.schedule?.label ?? '每天美国太平洋时间凌晨 2:00'}，Claude 用 Miguel_Agent（网站数据）和 Miguelpet（广告数据）分析前一天的全店情况，结论写在这里，每周一另写上周的周报；
         要改的 Listing 和广告放进「待确认改动」，你确认后才执行。</p></div></div>
     {error && <p className="note err" role="alert">{error}</p>}
 
@@ -177,10 +217,11 @@ export default function AgentReportPage({ owner, onNav }) {
 
     <div className="shp-tabs agt-tabs" role="tablist">
       <button type="button" role="tab" aria-selected={tab === 'report'} className={tab === 'report' ? 'on' : ''} onClick={() => setTab('report')}>每日分析</button>
+      <button type="button" role="tab" aria-selected={tab === 'weekly'} className={tab === 'weekly' ? 'on' : ''} onClick={() => setTab('weekly')}>周报</button>
       <button type="button" role="tab" aria-selected={tab === 'lessons'} className={tab === 'lessons' ? 'on' : ''} onClick={() => setTab('lessons')}>经验库</button>
     </div>
 
-    {tab === 'lessons' ? <Lessons owner={owner} /> : report === undefined ? <p role="status">正在加载日报…</p>
+    {tab === 'lessons' ? <Lessons owner={owner} /> : tab === 'weekly' ? <Weekly /> : report === undefined ? <p role="status">正在加载日报…</p>
       : report === null ? <p className="note">还没有日报。每天定时分析开启后，第二天早上就能在这里看到前一天的结论。</p>
         : <ReportView report={report} onNav={onNav} />}
   </div>;
