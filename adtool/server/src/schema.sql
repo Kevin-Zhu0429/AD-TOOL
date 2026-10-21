@@ -790,6 +790,20 @@ CREATE TABLE IF NOT EXISTS pet_change_reviews (
 );
 CREATE INDEX IF NOT EXISTS idx_pet_change_reviews ON pet_change_reviews(proposal_id, day);
 
+-- 周报:每周一的定时分析在日报之外写一份上周(周一到周日)的周报,正文是 Markdown,「AI 日报」页的「周报」标签显示
+CREATE TABLE IF NOT EXISTS pet_agent_weekly (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  week_start TEXT NOT NULL UNIQUE,
+  week_end TEXT NOT NULL,
+  headline TEXT NOT NULL,
+  markdown TEXT NOT NULL,
+  kpis_json TEXT,
+  source TEXT NOT NULL DEFAULT 'claude',
+  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+
 -- ---------- Listing 板块 ----------
 -- 店铺所有 SKU 在亚马逊上的完整 Listing 属性(Listings Items API),每天同步一次,页面打开某个 SKU 时实时再读一次
 CREATE TABLE IF NOT EXISTS pet_listing_items (

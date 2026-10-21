@@ -102,4 +102,29 @@ test('daily agent report, lessons, reviews and change timeline', async (t) => {
     assert.equal((await retire.json()).lesson.status, 'retired');
     assert.equal(agent.agentContext({ today: '2026-10-12' }).lessons.length, 0);
   });
+
+  await t.test('weekly report: Monday to Sunday, upserted, listed for every user', async () => {
+    // 10/12 是周一,上一个过完的周是 10/05–10/11
+    assert.deepEqual(agent.lastFullWeek('2026-10-12'), { weekStart: '2026-10-05', weekEnd: '2026-10-11' });
+    assert.deepEqual(agent.lastFullWeek('2026-10-18'), { weekStart: '2026-10-05', weekEnd: '2026-10-11' });
+    assert.equal(agent.agentContext({ today: '2026-10-12' }).weekly.due, true);
+    assert.throws(() => agent.saveWeeklyReport({ weekStart: '2026-10-06', headline: 'x', markdown: 'y' }, { today: '2026-10-12' }), /周一/);
+    assert.throws(() => agent.saveWeeklyReport({ weekStart: '2026-10-12', headline: 'x', markdown: 'y' }, { today: '2026-10-12' }), /过完/);
+    assert.throws(() => agent.saveWeeklyReport({ weekStart: '2026-10-05', weekEnd: '2026-10-10', headline: 'x', markdown: 'y' }, { today: '2026-10-12' }), /周日/);
+    const kpis = [{ label: '件数', value: '64', prev: '75', change: '−14.7%', tone: 'bad' }];
+    assert.deepEqual(agent.saveWeeklyReport({ headline: '少卖 15%', markdown: '# 周报\r\n\n| a | b |\n|---|---|\n| 1 | 2 |', kpis }, { today: '2026-10-12' }),
+      { weekStart: '2026-10-05', weekEnd: '2026-10-11', saved: true, url: '/#agent' });
+    agent.saveWeeklyReport({ weekStart: '2026-10-05', headline: '重写', markdown: '# 周报 v2', kpis }, { today: '2026-10-12' });
+    assert.equal(db.prepare('SELECT COUNT(*) AS n FROM pet_agent_weekly').get().n, 1);
+    const context = agent.agentContext({ today: '2026-10-12' }).weekly;
+    assert.equal(context.due, false);
+    assert.deepEqual([context.latest.headline, context.latest.kpis[0].tone, context.latest.markdown], ['重写', 'bad', '# 周报 v2']);
+    const login = async (username) => (await fetch(`${url}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password: 'pet-test-password' }) })).headers.get('set-cookie').split(';')[0];
+    const operator = await login('pet-user');
+    const list = await (await fetch(`${url}/api/agent/weekly`, { headers: { cookie: operator } })).json();
+    assert.deepEqual(list.reports.map((item) => [item.weekStart, item.headline, item.markdown]), [['2026-10-05', '重写', undefined]]);
+    const one = await (await fetch(`${url}/api/agent/weekly/2026-10-05`, { headers: { cookie: operator } })).json();
+    assert.equal(one.report.markdown, '# 周报 v2');
+  });
 });

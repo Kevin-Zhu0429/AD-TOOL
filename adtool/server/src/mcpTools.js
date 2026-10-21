@@ -17,7 +17,7 @@ import { TRAFFIC_GROUPS, trafficReport, trafficSyncStatus } from './petTraffic.j
 import { changeImpact } from './petImpact.js';
 import { returnRecords, returnsAnalysis, returnsSyncStatus } from './petReturns.js';
 import { listingAttributesForAgent } from './petListings.js';
-import { ACTION_TYPES, agentContext, AREAS, LESSON_VERDICTS, REVIEW_VERDICTS, saveDailyReport, saveLesson, SECTION_STATUS } from './petAgent.js';
+import { ACTION_TYPES, agentContext, AREAS, LESSON_VERDICTS, REVIEW_VERDICTS, saveDailyReport, saveLesson, saveWeeklyReport, SECTION_STATUS, WEEKLY_LIMITS } from './petAgent.js';
 
 // 测试可以用 PET_TODAY 固定「今天」;正式环境始终是美国太平洋时间的今天
 const todayOf = () => (process.env.NODE_ENV === 'test' && process.env.PET_TODAY) || pacificDay(new Date());
@@ -529,7 +529,7 @@ propose_listing_changes、propose_ad_changes 只把改动放进网站的「待�
 提改动前:先用 get_listing 看现在的文案;尺寸、材质、填充物等产品规格只写有依据的,拿不准就先问用户,不要编;同一款的不同尺码、颜色是不同 SKU,要分别提;改五点要给出全部条目;reason 写清依据的数据(搜索词份额、竞品对比、体检问题、毛利)。改价前看 list_skus 的保本价;正在做促销价的 SKU 改原价前台不变,要改前台价提 sale_price(促销价,带结束日期)。广告改动需要广告活动、广告组、关键词等的数字编号,来自用户给的批量表/报告,或 Miguelpet 连接器 query_ads 查到的编号。提完把 confirmUrl 告诉用户去确认。
 店主确认的广告改动(没有广告 API 时)由 Claude 用 Miguelpet 执行:claim_confirmed_ad_changes 领取 → 在 Miguelpet 里核对当前值 → prepare_change_plan + apply_change_plan → report_ad_change_result 回报。只执行领到的这些,一条一条照着改,不加别的。
 用户在对话里直接让 Claude 用 Miguelpet 改了广告(没走网站确认)时,也要记到网站:propose_ad_changes 传 alreadyApplied(或事后用 mark_ad_changes_applied 补记),记成「已生效」才会进复盘;不要留在待确认。
-每日自动分析:先 get_agent_context(经验库、该复盘的改动、冷却期 SKU、前几天的结论),再查数据,最后 save_daily_report 写日报、save_lesson 记经验;日报显示在网站「AI 日报」页。
+每日自动分析:先 get_agent_context(经验库、该复盘的改动、冷却期 SKU、前几天的结论),再查数据,最后 save_daily_report 写日报、save_lesson 记经验;日报显示在网站「AI 日报」页。上周的周报还没写时(get_agent_context 的 weekly.due)再用 save_weekly_report 写周报。
 用户是中文卖家,回答用中文;给优化建议时说明依据的数据。`;
 
 export function createPetMcpServer(deps = {}) {
@@ -773,7 +773,7 @@ export function createPetMcpServer(deps = {}) {
 
   server.registerTool('get_agent_context', {
     title: '每日分析的上下文',
-    description: '每日自动分析的第一步:经验库(生效中的经验和规则,要遵守)、前 3 天日报的结论和行动、执行后到了 7/14/28 天该复盘的改动、冷却期内不要再改 Listing 的 SKU、待确认改动数、数据新鲜度和分析规则。',
+    description: '每日自动分析的第一步:经验库(生效中的经验和规则,要遵守)、前 3 天日报的结论和行动、上周周报写了没有(weekly)、执行后到了 7/14/28 天该复盘的改动、冷却期内不要再改 Listing 的 SKU、待确认改动数、数据新鲜度和分析规则。',
     inputSchema: {},
     annotations: local,
   }, wrap(() => agentContext({ today: todayOf() })));
@@ -806,6 +806,25 @@ export function createPetMcpServer(deps = {}) {
     },
     annotations: agentWrite,
   }, wrap((args, extra) => saveDailyReport(args, { userId: userOf(extra), source: sourceOf(extra), today: todayOf() })));
+
+  server.registerTool('save_weekly_report', {
+    title: '写入周报',
+    description: '把上周(周一到周日,太平洋时间)的周报写进网站「AI 日报」页的「周报」标签(同一周再写会覆盖)。正文用 Markdown:## 小标题、表格、列表、**加粗**都能正常显示。kpis 是显示在正文上方的几个关键数(件数、销售额、广告花费、ACOS 等,和前一周比)。get_agent_context 的 weekly.due 为 true 时写。',
+    inputSchema: {
+      weekStart: z.string().regex(DAY).optional().describe('那一周的周一 YYYY-MM-DD,默认上周一'),
+      weekEnd: z.string().regex(DAY).optional().describe('那一周的周日,可不填'),
+      headline: z.string().trim().min(1).max(WEEKLY_LIMITS.headline).describe('一句话结论'),
+      markdown: z.string().trim().min(1).max(WEEKLY_LIMITS.markdown).describe('周报正文(Markdown)'),
+      kpis: z.array(z.object({
+        label: z.string().trim().min(1).max(30).describe('如「件数」「广告花费」'),
+        value: z.string().trim().min(1).max(40).describe('这周的值,带单位,如「64」「$210.53」「29.8%」'),
+        prev: z.string().trim().max(40).optional().describe('前一周的值'),
+        change: z.string().trim().max(30).optional().describe('变化,如「−14.7%」「−9.5 个点」'),
+        tone: z.enum(['good', 'bad', 'neutral']).default('neutral').describe('这个变化是好是坏(花费、ACOS 降是好)'),
+      })).max(WEEKLY_LIMITS.kpis).default([]),
+    },
+    annotations: agentWrite,
+  }, wrap((args, extra) => saveWeeklyReport(args, { userId: userOf(extra), source: sourceOf(extra), today: todayOf() })));
 
   server.registerTool('save_lesson', {
     title: '记录经验',

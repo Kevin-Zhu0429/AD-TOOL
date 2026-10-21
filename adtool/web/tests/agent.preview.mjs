@@ -1,7 +1,7 @@
 // AI 日报、改动日志示例数据截图(不是自动化测试):node web/tests/agent.preview.mjs <输出目录>
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import { createServer } from 'vite';
 import { startPetTestServer } from '../../server/tests/petHarness.js';
 
@@ -184,6 +184,39 @@ report('2026-10-11', {
   dataGaps: ['业务报告（访问量、转化率）最新到 10/10，晚 2 天是正常的', 'ABA 最新一周到 10/03', '广告数据来自 Miguelpet，归因窗口 7 天，近 3 天的广告订单还会再涨'],
 });
 
+// 周报:WEEKLY_MD 指向真实的周报 Markdown 时用它,否则用示例
+const weeklyMd = process.env.WEEKLY_MD ? await readFile(process.env.WEEKLY_MD, 'utf8') : `# 周报 10/05–10/11（对比 9/28–10/04）
+
+**一句话：** 上周卖 75 件，比前一周少 8%；方窝牛津 S/M 补货后回升，牛津防水垫子 36 寸掉得最多。
+
+## 1. 全店
+
+| 指标 | 上周 | 前一周 | 变化 |
+|---|---|---|---|
+| 件数 | 75 | 82 | −8.5% |
+| 销售额 | $2,533 | $2,790 | −9.2% |
+| 广告花费 | $277.43 | $301.10 | −7.9% |
+| ACOS | 39.3% | 41.0% | −1.7 个点 |
+
+## 2. 按款拆解
+
+| 款 | 件数（上周/前周） | 广告花费 | ACOS | 原因 |
+|---|---|---|---|---|
+| 牛津防水垫子 | 29 / 35 | $160 / $171 | 45.7% / 44.0% | 36 寸转化率从 8.5% 掉到 6.2%，10/01 改价后变差 |
+| 方窝牛津 | 12 / 9 | $0.4 / $12 | – | S/M 10/03 到货，补货后日均 0→5 件 |
+
+## 3. 下周最重要的 3 件事
+
+1. **补货：** 帆布平垫 XS 棕没有在途，这周下单。
+2. 确认待确认里的 8 条广告调整，详见 [待确认改动](#changes)。
+3. 看牛津防水垫子 36 寸改价的复盘。
+
+> 注意：方窝牛津 S 咖 42 件挂在「处理中」一周多了，请确认货件有没有标记发货。`;
+agent.saveWeeklyReport({ weekStart: '2026-10-05', headline: '上周卖 75 件，比前一周少 8%；方窝牛津补货后回升，牛津防水垫子 36 寸掉得最多。', markdown: weeklyMd,
+  kpis: [{ label: '件数', value: '75', prev: '82', change: '−8.5%', tone: 'bad' }, { label: '销售额', value: '$2,533', prev: '$2,790', change: '−9.2%', tone: 'bad' },
+    { label: '广告花费', value: '$277.43', prev: '$301.10', change: '−7.9%', tone: 'good' }, { label: 'ACOS', value: '39.3%', prev: '41.0%', change: '−1.7 个点', tone: 'good' },
+    { label: '自然件数', value: '54', prev: '60', change: '−10%', tone: 'bad' }, { label: '10 月目标进度', value: '27%', prev: '月份过了 35%', tone: 'neutral' }] }, { today: TODAY });
+
 let vite, browser;
 try {
   vite = await createServer({ root, logLevel: 'error', server: { host: '127.0.0.1', port: 0, proxy: { '/api': { target: backend.url, changeOrigin: true } } } });
@@ -202,6 +235,13 @@ try {
   await page.getByRole('tab', { name: '经验库' }).click();
   await page.locator('.agt-lessons').waitFor();
   await page.locator('.agt-lessons').screenshot({ path: `${output}/AI日报-经验库.png` });
+  await page.getByRole('tab', { name: '周报' }).click();
+  await page.locator('.agt-weekly .md').waitFor();
+  await page.setViewportSize({ width: 1600, height: 2600 });
+  await page.screenshot({ path: `${output}/AI日报-周报.png`, fullPage: true });
+  await page.setViewportSize({ width: 390, height: 4200 });
+  await page.screenshot({ path: `${output}/AI日报-周报-手机.png`, fullPage: true });
+  await page.setViewportSize({ width: 1600, height: 1100 });
   await page.getByRole('tab', { name: '每日分析' }).click();
   await page.locator('.agt-headline').waitFor();
   await page.setViewportSize({ width: 390, height: 3600 });

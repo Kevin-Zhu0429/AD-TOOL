@@ -50,6 +50,8 @@ export const api = {
   syncShipments: () => request('/shipments/sync', { method: 'POST', body: {} }),
   agentReports: () => request('/agent/reports'),
   agentReport: (day) => request(`/agent/reports/${encodeURIComponent(day)}`),
+  agentWeekly: () => request('/agent/weekly'),
+  agentWeeklyReport: (weekStart) => request(`/agent/weekly/${encodeURIComponent(weekStart)}`),
   agentLessons: (status, area) => request(`/agent/lessons?status=${encodeURIComponent(status)}&area=${encodeURIComponent(area ?? '')}`),
   agentLessonStatus: (id, status, reason) => request(`/agent/lessons/${id}/status`, { method: 'POST', body: { status, reason } }),
   changeTimeline: (days) => request(`/agent/changelog?days=${encodeURIComponent(days)}`),
