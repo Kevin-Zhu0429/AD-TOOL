@@ -196,6 +196,36 @@ test('owner pulls a whole store, validates edits, and live submit validates firs
   // 同名父体已经存在就不再新建
   assert.equal((await merge({ theme: 'SET_NAME', newParent: { sku: 'NEW-P', itemName: 'x', brand: 'y' }, children: [{ sku: 'SKU-2' }] })).status, 400);
 
+  // 上传图片:内网地址打开时拦下;设了公网地址后分片传,存成随机文件名,返回给亚马逊的公网链接
+  const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(150 * 1024, 7)]);
+  assert.equal((await call('/listings/image/start', owner, 'POST', { size: png.length })).status, 400);
+  assert.equal((await call('/listings/image/start', operator, 'POST', { size: png.length })).status, 403);
+  process.env.PUBLIC_BASE_URL = 'https://adtool.example.com/';
+  t.after(() => { delete process.env.PUBLIC_BASE_URL; });
+  const start = await call('/listings/image/start', owner, 'POST', { size: png.length });
+  assert.equal(start.status, 200, start.data.error);
+  const { uploadId, chunkBytes } = start.data;
+  for (let index = 0, offset = 0; offset < png.length; index += 1, offset += chunkBytes) {
+    const chunk = await call('/listings/image/chunk', owner, 'POST', { uploadId, index, data: png.subarray(offset, offset + chunkBytes).toString('base64') });
+    assert.equal(chunk.status, 200, chunk.data.error);
+  }
+  const finished = await call('/listings/image/finish', owner, 'POST', { uploadId });
+  assert.equal(finished.status, 200, finished.data.error);
+  assert.match(finished.data.url, /^https:\/\/adtool\.example\.com\/listing-images\/[0-9a-f-]{36}\.png$/);
+  const { LISTING_IMAGE_DIR } = await import('../src/listings.js');
+  const { readFileSync } = await import('node:fs');
+  assert.ok(readFileSync(`${LISTING_IMAGE_DIR}/${finished.data.url.split('/').pop()}`).equals(png));
+  // 不是图片的拒收
+  const bad = await call('/listings/image/start', owner, 'POST', { size: 4 });
+  await call('/listings/image/chunk', owner, 'POST', { uploadId: bad.data.uploadId, index: 0, data: Buffer.from('abcd').toString('base64') });
+  assert.equal((await call('/listings/image/finish', owner, 'POST', { uploadId: bad.data.uploadId })).status, 400);
+  // 换主图走普通提交,主图属性在可改名单里
+  before = patches().length;
+  const image = [{ marketplace_id: 'A1RKKUPIHCS9HS', media_location: finished.data.url }];
+  const imaged = await submit({ changes: { main_product_image_locator: image }, live: false });
+  assert.equal(imaged.status, 200, imaged.data.error);
+  assert.deepEqual(patches().at(-1).body.patches, [{ op: 'replace', path: '/attributes/main_product_image_locator', value: image }]);
+
   // 服务器设了 LISTINGS_LIVE_SUBMIT=false:直接拒绝,不会发到亚马逊
   process.env.LISTINGS_LIVE_SUBMIT = 'false';
   before = patches().length;

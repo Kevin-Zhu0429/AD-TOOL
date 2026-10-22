@@ -182,3 +182,34 @@ export function themeAttributes(theme, fromAmazon = []) {
   return String(theme ?? '').split('/').map((part) => part.trim().toUpperCase()).filter(Boolean)
     .map((part) => THEME_PART_ATTRIBUTE[part] ?? part.toLowerCase());
 }
+
+/** 主图 + 8 张副图的属性名,和服务器 IMAGE_ATTRIBUTES 一致 */
+export const IMAGE_SLOTS = [
+  { name: 'main_product_image_locator', label: '主图' },
+  ...Array.from({ length: 8 }, (_, index) => ({ name: `other_product_image_locator_${index + 1}`, label: `副图${index + 1}` })),
+];
+
+/** 图片链接:[{ marketplace_id, media_location }] → 'https://…' */
+export function imageOf(attributes, name) {
+  return String(attributes?.[name]?.[0]?.media_location ?? '');
+}
+
+/** 换一张图;链接清空就去掉这张 */
+export function setImage(attributes, name, url, locale) {
+  const next = { ...attributes };
+  const text = String(url ?? '').trim();
+  if (!text) {
+    delete next[name];
+    return next;
+  }
+  const base = attributes?.[name]?.[0] ?? {};
+  next[name] = [{ ...base, marketplace_id: base.marketplace_id ?? locale.marketplace_id, media_location: text }];
+  return next;
+}
+
+/** 照抄另一个 Listing 的全部图片(主图和 8 张副图),对方没有的位置这边也去掉;站点用这边的 */
+export function copyImages(attributes, source, locale) {
+  let next = { ...attributes };
+  for (const { name } of IMAGE_SLOTS) next = setImage(next, name, imageOf(source, name), locale);
+  return next;
+}

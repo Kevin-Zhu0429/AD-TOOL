@@ -5,8 +5,10 @@
 // 按要求这一块暂时不写操作日志。
 import express from 'express';
 import { randomUUID } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import { gunzipSync } from 'node:zlib';
-import { db } from './db.js';
+import { dataDir, db } from './db.js';
 import { requireRole } from './auth.js';
 import { AMAZON_MARKETPLACES, readSpApiConfig, spApiAccounts, spApiRequest } from './spApi.js';
 
@@ -287,8 +289,13 @@ export function listRow(row, marketplaceId) {
 // ---------- 改动 → JSON Patch ----------
 
 /** 目前只开放这几个属性:标题、五点、描述、搜索词、价格(含促销价和日期)、打印页数 */
+/** 主图 + 8 张副图:[{ marketplace_id, media_location: 图片公网链接 }],亚马逊自己去下载 */
+export const IMAGE_ATTRIBUTES = ['main_product_image_locator',
+  ...Array.from({ length: 8 }, (_, index) => `other_product_image_locator_${index + 1}`)];
+
 export const EDITABLE_ATTRIBUTES = new Set([
   'item_name', 'bullet_point', 'product_description', 'generic_keyword', 'purchasable_offer', 'page_yield',
+  ...IMAGE_ATTRIBUTES,
 ]);
 
 /**
@@ -721,4 +728,88 @@ listingsRouter.post('/variation/detach', wrap(async (req, res) => {
   const result = await sendPatch(store, sku, productType, patches, false);
   if (clean(result.status) === 'ACCEPTED') applyToCache(store, cached, patches);
   res.json({ mode: 'live', ...submissionOf(result), patches });
+}));
+
+// ---------- 图片上传:存到服务器,用公网链接交给亚马逊下载 ----------
+
+/** 上传的图片放 DATA_DIR/listing-images,由 index.js 在 /listing-images 下公开(亚马逊下载不带登录) */
+export const LISTING_IMAGE_DIR = path.join(dataDir, 'listing-images');
+/** 亚马逊图片上限 10MB;前置 Nginx 单次请求有大小限制,浏览器按 96KB 一片传 */
+const IMAGE_MAX_BYTES = 10 * 1024 * 1024;
+const IMAGE_CHUNK_BYTES = 96 * 1024;
+const IMAGE_UPLOAD_TTL_MS = 30 * 60 * 1000;
+const imageUploads = new Map();
+
+/** 按文件头认格式,只收亚马逊接受的 JPEG / PNG / GIF / TIFF */
+export function imageTypeOf(buffer) {
+  if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return 'jpg';
+  if (buffer.length >= 8 && buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'png';
+  if (buffer.length >= 6 && ['GIF87a', 'GIF89a'].includes(buffer.subarray(0, 6).toString('latin1'))) return 'gif';
+  if (buffer.length >= 4 && ['49492a00', '4d4d002a'].includes(buffer.subarray(0, 4).toString('hex'))) return 'tif';
+  return null;
+}
+
+/** 给亚马逊的链接前缀:.env 的 PUBLIC_BASE_URL 优先,否则用浏览器访问的地址;内网地址亚马逊下载不到,直接拦下 */
+export function publicBaseUrl(req, env = process.env) {
+  const configured = clean(env.PUBLIC_BASE_URL).replace(/\/+$/, '');
+  // 前面有 Nginx 时 req.protocol 是 http,以 Nginx 转过来的 X-Forwarded-Proto 为准
+  const proto = clean(req.get('x-forwarded-proto')).split(',')[0].trim() || req.protocol;
+  const base = configured || `${proto}://${req.get('host')}`;
+  let host;
+  try {
+    host = new URL(base).hostname;
+  } catch {
+    throw httpError(400, `PUBLIC_BASE_URL 不是有效网址：${base}`);
+  }
+  const internal = host === 'localhost' || /^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host);
+  if (internal) {
+    throw httpError(400, `现在是用内网地址（${host}）打开的网站，亚马逊下载不到这里的图片。请用公网地址（如 https://adtool.cyloral.com）打开再上传，或在 .env 里设 PUBLIC_BASE_URL`);
+  }
+  return base;
+}
+
+function sweepImageUploads(now = Date.now()) {
+  for (const [id, upload] of imageUploads) if (now - upload.startedAt > IMAGE_UPLOAD_TTL_MS) imageUploads.delete(id);
+}
+
+listingsRouter.post('/image/start', wrap(async (req, res) => {
+  sweepImageUploads();
+  const size = Number(req.body?.size);
+  if (!Number.isInteger(size) || size <= 0) throw httpError(400, '图片是空的');
+  if (size > IMAGE_MAX_BYTES) throw httpError(400, '图片超过 10MB，亚马逊不收，请压缩后再传');
+  // 先检查链接能不能给亚马逊用,免得传完才发现
+  const base = publicBaseUrl(req);
+  const uploadId = randomUUID();
+  imageUploads.set(uploadId, { size, base, chunks: [], received: 0, startedAt: Date.now() });
+  res.json({ uploadId, chunkBytes: IMAGE_CHUNK_BYTES });
+}));
+
+listingsRouter.post('/image/chunk', wrap(async (req, res) => {
+  const upload = imageUploads.get(clean(req.body?.uploadId));
+  if (!upload) throw httpError(404, '上传已过期，请重新选图片');
+  const index = Number(req.body?.index);
+  if (index !== upload.chunks.length) throw httpError(400, '图片分片顺序不对，请重新上传');
+  const data = Buffer.from(String(req.body?.data ?? ''), 'base64');
+  if (!data.length || data.length > IMAGE_CHUNK_BYTES || upload.received + data.length > upload.size) {
+    throw httpError(400, '图片分片大小不对，请重新上传');
+  }
+  upload.chunks.push(data);
+  upload.received += data.length;
+  res.json({ received: upload.received });
+}));
+
+listingsRouter.post('/image/finish', wrap(async (req, res) => {
+  const uploadId = clean(req.body?.uploadId);
+  const upload = imageUploads.get(uploadId);
+  if (!upload) throw httpError(404, '上传已过期，请重新选图片');
+  imageUploads.delete(uploadId);
+  if (upload.received !== upload.size) throw httpError(400, '图片没传完整，请重新上传');
+  const buffer = Buffer.concat(upload.chunks);
+  const type = imageTypeOf(buffer);
+  if (!type) throw httpError(400, '只支持 JPG、PNG、GIF、TIFF 图片');
+  fs.mkdirSync(LISTING_IMAGE_DIR, { recursive: true });
+  // 文件名随机,别人猜不到;同一个链接永远是同一张图,亚马逊重新下载也不会变
+  const name = `${randomUUID()}.${type}`;
+  fs.writeFileSync(path.join(LISTING_IMAGE_DIR, name), buffer);
+  res.json({ url: `${upload.base}/listing-images/${name}`, bytes: buffer.length });
 }));

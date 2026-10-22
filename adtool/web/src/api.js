@@ -23,6 +23,20 @@ async function request(path, options = {}) {
   return data;
 }
 
+/** 本地图片分片传到服务器(前置 Nginx 限制单次请求大小),返回亚马逊能下载的公网链接 */
+async function uploadListingImage(file, onProgress) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const { uploadId, chunkBytes } = await request('/listings/image/start', { method: 'POST', body: { size: bytes.length } });
+  for (let index = 0, offset = 0; offset < bytes.length; index += 1, offset += chunkBytes) {
+    const piece = bytes.subarray(offset, offset + chunkBytes);
+    let binary = '';
+    for (let i = 0; i < piece.length; i += 0x8000) binary += String.fromCharCode(...piece.subarray(i, i + 0x8000));
+    await request('/listings/image/chunk', { method: 'POST', body: { uploadId, index, data: btoa(binary) } });
+    onProgress?.(Math.min(1, (offset + piece.length) / bytes.length));
+  }
+  return request('/listings/image/finish', { method: 'POST', body: { uploadId } });
+}
+
 async function importAgedFees(rows, date, scenario, sourceFile, onProgress) {
   const chunks = splitAgedFeeRows(rows);
   let uploadId;
@@ -164,6 +178,7 @@ export const api = {
   submitListing: (body) => request('/listings/item/submit', { method: 'POST', body }),
   mergeVariation: (body) => request('/listings/variation/merge', { method: 'POST', body }),
   detachVariation: (body) => request('/listings/variation/detach', { method: 'POST', body }),
+  uploadListingImage,
   // ---------- 亚马逊 SP-API 库存同步(接口路径沿用 captain) ----------
   captainStatus: () => request('/captain/status'),
   syncCaptainInventory: (options) => followSyncJob('/captain/sync', { ...options, start: true }),

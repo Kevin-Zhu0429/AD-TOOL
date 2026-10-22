@@ -42,3 +42,14 @@
 @media (max-width: 700px) { .variation-candidate { grid-template-columns: 1fr; gap: 2px; } }
 .variation-new-parent .variation-wide { grid-column: span 2; }
 @media (max-width: 700px) { .variation-new-parent .variation-wide { grid-column: auto; } }
+
+.listings-images { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; }
+.listings-image { display: flex; flex-direction: column; gap: 4px; padding: 6px; border: 1px solid var(--border); border-radius: 8px; min-width: 0; }
+.listings-image.changed { border-color: var(--accent, #2563eb); }
+.listings-image-box { height: 96px; background: #fff; border-radius: 6px; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.listings-image-box img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.listings-image .inp { font-size: 11px; min-width: 0; }
+.listings-copy-images { flex-wrap: wrap; gap: 8px; }
+.listings-copy-images .inp { width: auto; min-width: 140px; }
+.listings-image .row { gap: 4px; flex-wrap: nowrap; }
+.listings-image b { white-space: nowrap; font-size: 12px; }

@@ -19,7 +19,7 @@ import { abaRouter } from './aba.js';
 import { abaPublicRouter, startPublicAbaScheduler } from './abaPublic.js';
 import { captainRouter } from './captain.js';
 import { agedFeesRouter } from './agedFees.js';
-import { listingsRouter } from './listings.js';
+import { LISTING_IMAGE_DIR, listingsRouter } from './listings.js';
 import { bumpOnWrite } from './workers/pool.js';
 import { mountMcp } from './mcp.js';
 
@@ -72,6 +72,10 @@ app.use('/api/aba-public', abaPublicRouter);
 app.use('/api/captain', captainRouter);
 app.use('/api/aged-fees', agedFeesRouter);
 app.use('/api/listings', listingsRouter);
+
+// Listing 管理上传的商品图:亚马逊按链接来下载,不带登录;文件名是随机的,内容不会变,可以长缓存
+app.use('/listing-images', express.static(LISTING_IMAGE_DIR, { immutable: true, maxAge: '1y', index: false, dotfiles: 'deny' }));
+app.use('/listing-images', (req, res) => res.status(404).end());
 
 app.get('/api/health', (req, res) => {
   res.json({ ok: true, time: new Date().toISOString() });

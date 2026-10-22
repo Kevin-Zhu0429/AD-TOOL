@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api.js';
 import {
-  diffAttributes, localeOf, pageYieldOf, priceOf, salePriceOf, setPageYield, setPrice, setSalePrice, setTextValues, textValues,
+  IMAGE_SLOTS, copyImages, diffAttributes, imageOf, localeOf, setImage, pageYieldOf, priceOf, salePriceOf, setPageYield, setPrice, setSalePrice, setTextValues, textValues,
 } from '../listingEdit.js';
 import VariationPanel from './VariationPanel.jsx';
 import './ListingsPage.css';
@@ -218,6 +218,7 @@ export default function ListingsPage() {
           store={store}
           sku={openSku}
           liveSubmit={config.liveSubmit}
+          stores={config.stores ?? []}
           onClose={() => setOpenSku('')}
           onRefreshed={() => loadItems().catch(() => {})}
         />
@@ -226,7 +227,7 @@ export default function ListingsPage() {
   );
 }
 
-function ListingEditor({ store, sku, liveSubmit, onClose, onRefreshed }) {
+function ListingEditor({ store, sku, liveSubmit, stores, onClose, onRefreshed }) {
   const [data, setData] = useState(null);
   const [edited, setEdited] = useState(null);
   const [busy, setBusy] = useState('');
@@ -315,6 +316,8 @@ function ListingEditor({ store, sku, liveSubmit, onClose, onRefreshed }) {
     );
   };
 
+  const imageChanged = IMAGE_SLOTS.some(({ name }) => changes[name] !== undefined);
+
   return (
     <div className="listings-drawer-mask" onClick={onClose}>
       <aside className="listings-drawer animate-in" onClick={(e) => e.stopPropagation()}>
@@ -370,6 +373,11 @@ function ListingEditor({ store, sku, liveSubmit, onClose, onRefreshed }) {
               {textField('product_description', '商品描述', { rows: 5 })}
               {textField('generic_keyword', '后台搜索词', { rows: 2 })}
             </section>
+
+            <ImageSection
+              store={store} sku={sku} stores={stores} edited={edited} changes={changes} locale={locale} changed={imageChanged}
+              onChange={(update) => setEdited((current) => update(current))}
+            />
 
             <section className="stack">
               <h3>价格</h3>
@@ -447,5 +455,105 @@ function ListingEditor({ store, sku, liveSubmit, onClose, onRefreshed }) {
         </footer>
       </aside>
     </div>
+  );
+}
+
+/** 主图和 8 张副图:粘贴链接、从电脑上传(存到服务器用公网链接给亚马逊),或照抄另一个 SKU 的全部图片 */
+function ImageSection({ store, sku, stores, edited, changes, locale, changed, onChange }) {
+  const [uploading, setUploading] = useState('');
+  const [error, setError] = useState('');
+  const [copyFrom, setCopyFrom] = useState({ store: storeKey(store), sku: '' });
+  const [copying, setCopying] = useState(false);
+  const fileInput = useRef(null);
+  const target = useRef('');
+
+  async function upload(file) {
+    const name = target.current;
+    if (!file || !name) return;
+    setError('');
+    setUploading(`${name}:0`);
+    try {
+      const { url } = await api.uploadListingImage(file, (ratio) => setUploading(`${name}:${Math.round(ratio * 100)}`));
+      onChange((current) => setImage(current, name, url, locale));
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setUploading('');
+    }
+  }
+
+  async function copy() {
+    const [brand, country] = copyFrom.store.split('|');
+    const from = copyFrom.sku.trim();
+    if (!from) return;
+    setError('');
+    setCopying(true);
+    try {
+      const source = await api.listingItem({ brand, country }, from);
+      const attributes = source.item.attributes ?? {};
+      if (!imageOf(attributes, 'main_product_image_locator')) throw new Error(`${brand}-${country} 的 ${from} 本地缓存里没有图片，先在那个店铺拉取或点「从亚马逊刷新」`);
+      onChange((current) => copyImages(current, attributes, locale));
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setCopying(false);
+    }
+  }
+
+  return (
+    <section className="stack">
+      <h3>图片 {changed && <em className="hint">（有改动）</em>}</h3>
+      <div className="listings-images">
+        {IMAGE_SLOTS.map(({ name, label }) => {
+          const url = imageOf(edited, name);
+          const busy = uploading.startsWith(`${name}:`);
+          return (
+            <div key={name} className={`listings-image${changes[name] !== undefined ? ' changed' : ''}`}>
+              <div className="listings-image-box">
+                {url ? <a href={url} target="_blank" rel="noreferrer"><img src={url} alt={label} loading="lazy" /></a> : <span className="hint">无</span>}
+              </div>
+              <div className="row">
+                <b>{label}</b>
+                <div className="spacer" />
+                <button
+                  className="btn sm" disabled={!!uploading}
+                  onClick={() => { target.current = name; fileInput.current?.click(); }}
+                >{busy ? `${uploading.split(':')[1]}%` : '上传'}</button>
+                {url && name !== 'main_product_image_locator' && (
+                  <button className="btn sm ghost" title="去掉这张" aria-label={`去掉${label}`} disabled={!!uploading} onClick={() => onChange((current) => setImage(current, name, '', locale))}>✕</button>
+                )}
+              </div>
+              <input
+                className="inp mono" placeholder="粘贴图片链接 https://…" value={url}
+                onChange={(e) => onChange((current) => setImage(current, name, e.target.value, locale))}
+              />
+            </div>
+          );
+        })}
+      </div>
+      <input
+        ref={fileInput} type="file" accept="image/jpeg,image/png,image/gif,image/tiff" hidden
+        onChange={(e) => { const file = e.target.files?.[0]; e.target.value = ''; upload(file); }}
+      />
+      <div className="row listings-copy-images">
+        <span>照抄另一个 SKU 的全部图片</span>
+        <select className="inp" value={copyFrom.store} onChange={(e) => setCopyFrom({ ...copyFrom, store: e.target.value })}>
+          {stores.map((row) => <option key={storeKey(row)} value={storeKey(row)}>{row.brand} - {row.country}</option>)}
+        </select>
+        <input
+          className="inp mono" placeholder="SKU" value={copyFrom.sku}
+          onChange={(e) => setCopyFrom({ ...copyFrom, sku: e.target.value })}
+          onKeyDown={(e) => e.key === 'Enter' && copy()}
+        />
+        <button className="btn sm" disabled={copying || !copyFrom.sku.trim() || copyFrom.sku.trim() === sku && copyFrom.store === storeKey(store)} onClick={copy}>
+          {copying ? '读取中…' : '照抄'}
+        </button>
+      </div>
+      <div className="hint">
+        亚马逊按链接自己下载图片，提交后一般几十分钟到几小时前台才换。主图要白底、最长边至少 1000 像素，JPG / PNG 最稳。
+        上传的图片存在本网站，链接用公网地址，要用公网地址打开网站才能上传。
+      </div>
+      {error && <div className="note err">{error}</div>}
+    </section>
   );
 }

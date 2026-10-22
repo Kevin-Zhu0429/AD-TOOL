@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  diffAttributes, localeOf, parentCategoryField, themeAttributes, pageYieldOf, priceOf, salePriceOf, setPageYield, setPrice, setSalePrice, setTextValues, textValues,
+  copyImages, imageOf, setImage, diffAttributes, localeOf, parentCategoryField, themeAttributes, pageYieldOf, priceOf, salePriceOf, setPageYield, setPrice, setSalePrice, setTextValues, textValues,
 } from './listingEdit.js';
 
 const M = 'A1RKKUPIHCS9HS';
@@ -74,4 +74,24 @@ test('变体主题换算成子体要带的属性，亚马逊给了就用亚马�
   assert.equal(parentCategoryField('ES').fallback, '34285014031');
   assert.equal(parentCategoryField('US').attribute, 'item_type_keyword');
   assert.deepEqual(themeAttributes('COLOR', ['color', 'item_package_quantity']), ['color', 'item_package_quantity']);
+});
+
+test('换图只改链接、保留站点;照抄别的站点的图,站点用这边的,对方没有的副图这边去掉', () => {
+  const mine = {
+    main_product_image_locator: [{ marketplace_id: M, media_location: 'https://m.media-amazon.com/es-main.jpg' }],
+    other_product_image_locator_1: [{ marketplace_id: M, media_location: 'https://m.media-amazon.com/es-1.jpg' }],
+    other_product_image_locator_2: [{ marketplace_id: M, media_location: 'https://m.media-amazon.com/es-2.jpg' }],
+  };
+  const replaced = setImage(mine, 'main_product_image_locator', 'https://adtool.example.com/listing-images/a.jpg', locale);
+  assert.deepEqual(replaced.main_product_image_locator, [{ marketplace_id: M, media_location: 'https://adtool.example.com/listing-images/a.jpg' }]);
+  assert.equal(setImage(mine, 'other_product_image_locator_2', ' ', locale).other_product_image_locator_2, undefined);
+  const us = {
+    main_product_image_locator: [{ marketplace_id: 'ATVPDKIKX0DER', media_location: 'https://m.media-amazon.com/us-main.jpg' }],
+    other_product_image_locator_1: [{ marketplace_id: 'ATVPDKIKX0DER', media_location: 'https://m.media-amazon.com/us-1.jpg' }],
+  };
+  const copied = copyImages(mine, us, locale);
+  assert.deepEqual(copied.main_product_image_locator, [{ marketplace_id: M, media_location: 'https://m.media-amazon.com/us-main.jpg' }]);
+  assert.equal(imageOf(copied, 'other_product_image_locator_1'), 'https://m.media-amazon.com/us-1.jpg');
+  assert.equal(copied.other_product_image_locator_2, undefined);
+  assert.deepEqual(Object.keys(diffAttributes(mine, copied)).sort(), ['main_product_image_locator', 'other_product_image_locator_1', 'other_product_image_locator_2']);
 });
