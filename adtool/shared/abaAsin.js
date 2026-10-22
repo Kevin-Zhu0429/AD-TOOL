@@ -40,7 +40,7 @@ export function asinQueryAlignment(matching, skus = []) {
   const result = (status, reason) => ({ status, sourceModels, expectedModels, reason });
   if (!matching.hasPrinter) return result('unrecognized', '搜索词未明确识别机型');
   if (matching.group?.kind !== 'printer' || !expectedModels.length
-    || (matching.printers ?? []).some((p) => !/[a-z]/i.test(String(p.key ?? '').split('|')[1] ?? '')))
+    || (!matching.resolvedBySku && (matching.printers ?? []).some((p) => !/[a-z]/i.test(String(p.key ?? '').split('|')[1] ?? ''))))
     return result('review', '搜索词有多个候选或机型对应关系不明确，请核对词库');
   if (!skus.length) return result('insufficient', '来源 ASIN 未关联 SKU，请在当前站点 SKU 库补充关联');
   if (skus.some((s) => !String(s.model ?? '').trim()))
@@ -50,12 +50,31 @@ export function asinQueryAlignment(matching, skus = []) {
   if (sourceKeys.some((key) => !expected.has(key) && !/^\d+$/.test(key)))
     return result('review', `来源 SKU 型号格式或对应关系不明确：${sourceModels.join(' / ')}，请核对 SKU 库`);
   const supported = sourceKeys.filter((key) => expected.has(key));
-  if (supported.length === sourceKeys.length) return result('matched', `机型兼容 ${expectedModels.join(' / ')}，来源 SKU 型号匹配`);
+  if (supported.length === sourceKeys.length) return result('matched', `${matching.resolvedBySku ? '已按来源 SKU 型号确定机型；' : ''}机型兼容 ${expectedModels.join(' / ')}，来源 SKU 型号匹配`);
   if (supported.length) return result('review', `同一来源 ASIN 关联的 SKU 型号不一致：${sourceModels.join(' / ')}，请核对 SKU 库`);
   return result('mismatch', `机型对应 ${expectedModels.join(' / ')}，来源 SKU 是 ${sourceModels.join(' / ')}，型号不匹配`);
 }
 
 export const ASIN_ALIGNMENT_LABELS = { matched: '型号匹配', mismatch: '型号不匹配', review: '对应关系待核对', insufficient: 'SKU 资料不足', unrecognized: '未识别机型' };
+
+/** Resolve one source ASIN to one candidate; never duplicate its counts across printers. */
+export function resolveAsinPrinter(matching, skus = []) {
+  if (matching.group?.kind !== 'review' || (matching.printers ?? []).length < 2 || !skus.length) return matching;
+  let resolved;
+  for (const sku of skus) {
+    if (!String(sku.model ?? '').trim()) return matching;
+    const keys = String(sku.model).split(/[,，、;；/|]+/).map(modelKey);
+    if (!keys.length || keys.some((key) => !key)) return matching;
+    const candidates = matching.printers.filter((printer) => {
+      const terms = new Set(printer.terms.flatMap((term) => String(term).split(/[,，、;；/|]+/)).map(modelKey).filter(Boolean));
+      return keys.every((key) => terms.has(key));
+    });
+    if (candidates.length !== 1 || (resolved && resolved.key !== candidates[0].key)) return matching;
+    resolved = candidates[0];
+  }
+  return { ...matching, printers: [resolved], candidates: [`${resolved.label} → ${resolved.terms.join(' / ')}`],
+    group: { key: resolved.key, label: resolved.label, kind: 'printer' }, resolvedBySku: true };
+}
 
 function mergeAlignment(a, b) {
   if (!a || a === b) return b;
@@ -91,13 +110,14 @@ export function aggregateAsinSeries(rows, { view = 'queries', mergeWeeks = true,
   const labels = { query_volume: '搜索查询量', market_impressions: '市场 IMP', market_clicks: '市场点击 TT', market_purchases: '市场购买 TT' };
   const groups = new Map();
   for (const row of rows) {
-    const key = JSON.stringify([view === 'printers' ? row.group.key : row.query, view === 'printers' || mergeWeeks ? '' : row.week_end]);
+    const key = JSON.stringify([row.group.key, view === 'printers' ? '' : row.query, view === 'printers' || mergeWeeks ? '' : row.week_end]);
     if (!groups.has(key)) groups.set(key, { ...row, key, asin: '', series_model: modelLabel,
-      query: view === 'printers' ? row.recognition : row.query, asins: new Set(), periods: new Map(), candidates: new Set(), queries: new Set(), market: new Map(),
+      query: view === 'printers' ? row.recognition : row.query, asins: new Set(), sourceBrands: new Map(), periods: new Map(), candidates: new Set(), queries: new Set(), market: new Map(),
       ...Object.fromEntries(ASIN_COUNT_KEYS.map((k) => [k, 0])) });
     const group = groups.get(key);
     group.alignment = mergeAlignment(group.alignment, row.alignment);
     group.asins.add(row.asin); group.queries.add(row.query);
+    if (row.source_brand) group.sourceBrands.set(JSON.stringify([row.asin, row.source_brand.toLowerCase()]), { asin: row.asin, brand: row.source_brand });
     row.candidates.forEach((c) => group.candidates.add(c));
     group.periods.set(row.week_end, { week_start: row.week_start, week_end: row.week_end, week_number: row.week_number });
     ['asin_impressions', 'asin_clicks', 'asin_purchases'].forEach((k) => { group[k] += row[k]; });
@@ -105,7 +125,7 @@ export function aggregateAsinSeries(rows, { view = 'queries', mergeWeeks = true,
     if (!group.market.has(marketKey)) group.market.set(marketKey, { query: row.query, week_end: row.week_end, values: [] });
     group.market.get(marketKey).values.push(row);
   }
-  return [...groups.values()].map(({ market, periods, candidates, queries, asins, ...row }) => {
+  return [...groups.values()].map(({ market, periods, candidates, queries, asins, sourceBrands, ...row }) => {
     const conflicts = [];
     for (const record of market.values()) {
       for (const field of marketKeys) {
@@ -116,7 +136,7 @@ export function aggregateAsinSeries(rows, { view = 'queries', mergeWeeks = true,
         } else if (row[field] !== null) row[field] += record.values[0][field];
       }
     }
-    return { ...row, asins: [...asins].sort(), query_count: queries.size,
+    return { ...row, asins: [...asins].sort(), source_brands: [...sourceBrands.values()], query_count: queries.size,
       periods: [...periods.values()].sort((a, b) => b.week_end.localeCompare(a.week_end)), candidates: [...candidates],
       conflict_count: conflicts.length, market_conflicts: conflicts.slice(0, 20) };
   });
@@ -157,9 +177,9 @@ export function aggregateAsinView(rows, { series = false, view = 'queries', merg
       : queries.map(asinRates);
     // Each ASIN contributes to the same observed-week average as the merged query.
     if (average && mergeSources) {
-      const queryWeeks = new Map(queries.map((row) => [row.query, row.average_weeks]));
+      const queryWeeks = new Map(queries.map((row) => [JSON.stringify([row.group.key, row.query]), row.average_weeks]));
       for (const row of exportQueries) {
-        const weeks = queryWeeks.get(row.query);
+        const weeks = queryWeeks.get(JSON.stringify([row.group.key, row.query]));
         for (const key of ASIN_COUNT_KEYS) if (row[key] != null) row[key] *= row.average_weeks / weeks;
         row.average_weeks = weeks;
         Object.assign(row, asinRates(row));
@@ -168,13 +188,13 @@ export function aggregateAsinView(rows, { series = false, view = 'queries', merg
     // Exports split each week's market totals across the SKUs that have that week.
     const marketWeeks = new Map();
     for (const row of rows) {
-      const key = JSON.stringify([row.asin, row.query]);
+      const key = JSON.stringify([row.group.key, row.source_brand ?? '', row.asin, row.query]);
       if (!marketWeeks.has(key)) marketWeeks.set(key, []);
       marketWeeks.get(key).push({ week_end: row.week_end, market_impressions: row.market_impressions,
         market_clicks: row.market_clicks, market_purchases: row.market_purchases });
     }
     for (const row of exportQueries) {
-      row.market_weeks = marketWeeks.get(JSON.stringify([row.asin, row.query])) ?? [];
+      row.market_weeks = marketWeeks.get(JSON.stringify([row.group.key, row.source_brand ?? '', row.asin, row.query])) ?? [];
       const key = groupKey(row);
       if (!queryRows.has(key)) queryRows.set(key, []);
       queryRows.get(key).push(row);
@@ -234,7 +254,7 @@ export function parseAsinReport(text, filename, marketplace) {
 export function mergeAsinRows(rows) {
   const grouped = new Map();
   for (const row of rows) {
-    const key = JSON.stringify([row.asin, row.query]);
+    const key = JSON.stringify([row.group?.key ?? '', row.source_brand ?? '', row.asin, row.query]);
     let item = grouped.get(key);
     if (!item) {
       item = { ...row, key, periods: [], ...Object.fromEntries(ASIN_COUNT_KEYS.map((k) => [k, 0])) };

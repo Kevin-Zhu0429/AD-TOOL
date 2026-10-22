@@ -3,6 +3,18 @@ import assert from 'node:assert/strict';
 import { aggregateAsinView } from '../../shared/abaAsin.js';
 import { buildAsinExport, buildAsinGroupExport, skusForAsinRow } from './abaAsinExport.js';
 
+test('resolved group identities contain only the exact source ASIN and report brands', () => {
+  const data = { skuSource: 'aba', skuItems: [
+    { id: 1, asin: 'A', brand: 'CE', sku: 'A-301' }, { id: 2, asin: 'A', brand: 'CY', sku: 'A-304' },
+    { id: 3, asin: 'B', brand: 'CE', sku: 'B-301' }, { id: 4, asin: 'B', brand: 'CY', sku: 'B-304' },
+  ] };
+  const office = { asins: ['A', 'B'], source_brand: 'CE', source_brands: [{ asin: 'A', brand: 'CE' }, { asin: 'B', brand: 'CE' }] };
+  assert.deepEqual(skusForAsinRow(office, data).map((s) => s.sku), ['A-301', 'B-301']);
+  const sameAsin = { asins: ['A'], source_brand: 'CE', source_brands: [{ asin: 'A', brand: 'CE' }, { asin: 'A', brand: 'CY' }] };
+  assert.deepEqual(skusForAsinRow(sameAsin, data).map((s) => s.sku), ['A-301', 'A-304']);
+  assert.deepEqual(skusForAsinRow({ asins: ['A'] }, data), [], 'private ambiguity still requires an explicit brand');
+});
+
 test('query export preserves displayed merged totals once, exact SKU mappings, null metrics and averaging metadata', () => {
   const row = { query: 'hp deskjet 2700', recognition: 'HP DESKJET2700', asins: ['B000000305', 'B000000306'],
     market_impressions: null, market_clicks: 120, market_purchases: 24, market_cvr: 20,

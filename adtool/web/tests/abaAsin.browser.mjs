@@ -121,7 +121,8 @@ try {
   await view.getByLabel('月份', { exact: true }).selectOption('08');
   await view.getByRole('button', { name: '重新加载' }).waitFor();
   await page.unroute('**/api/aba/asin?**');
-  await view.getByRole('button', { name: '重新加载' }).click();
+  await Promise.all([page.waitForResponse((r) => r.url().includes('/api/aba/asin?') && r.status() === 200),
+    view.getByRole('button', { name: '重新加载' }).click()]);
   await idle();
   assert.equal(await rows().count(), 4);
   await attach([asinSecond]);

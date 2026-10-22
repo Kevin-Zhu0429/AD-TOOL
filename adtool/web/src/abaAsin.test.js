@@ -1,8 +1,51 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseAsinReport, parseAsinUpload, mergeAsinRows, asinRates, aggregateAsinSeries, asinModelOptions, aggregateAsinView, asinQueryAlignment } from '../../shared/abaAsin.js';
+import { parseAsinReport, parseAsinUpload, mergeAsinRows, asinRates, aggregateAsinSeries, asinModelOptions, aggregateAsinView, asinQueryAlignment, resolveAsinPrinter } from '../../shared/abaAsin.js';
 import { abaMatcher } from '../../shared/aba.js';
 import { asinFixture, asinFirst, asinSecond, mergedFixture } from '../../server/tests/abaAsinFixture.js';
+
+test('source SKU models resolve exactly one compatible printer; incomplete, overlapping and mixed mappings stay in review', () => {
+  const match = abaMatcher('', [
+    { brand: 'HP', term: '304', series: 'Deskjet', printer: '2620' },
+    { brand: 'HP', term: '301', series: 'Officejet', printer: '2620' },
+  ])('cartouche hp 2620');
+  for (const [model, name] of [['304', 'DESKJET'], ['301XL', 'OFFICEJET']]) {
+    const resolved = resolveAsinPrinter(match, [{ model }]);
+    assert.match(resolved.group.label, new RegExp(name));
+    assert.equal(resolved.printers.length, 1);
+    assert.equal(asinQueryAlignment(resolved, [{ model }]).status, 'matched');
+  }
+  for (const skus of [[], [{ model: '' }], [{ model: '301/' }], [{ model: '305' }], [{ model: '301/304' }], [{ model: '301' }, { model: '304' }], [{ model: '301' }, { model: '' }]])
+    assert.equal(resolveAsinPrinter(match, skus), match, JSON.stringify(skus));
+  const overlap = abaMatcher('', [
+    { brand: 'HP', term: '301', series: 'Deskjet', printer: '2620' },
+    { brand: 'HP', term: '301/304', series: 'Officejet', printer: '2620' },
+  ])('hp 2620');
+  assert.equal(resolveAsinPrinter(overlap, [{ model: '301' }]), overlap);
+  assert.equal(resolveAsinPrinter(overlap, [{ model: '301/304' }]).group.kind, 'printer');
+});
+
+test('one query assigned to different printers has independent sums, observed-week averages and source contributions', () => {
+  const report = parseAsinReport(asinFirst.text, asinFirst.name, 'ES');
+  const base = { ...report, ...report.rows[0], query: 'hp 2620', candidates: [], group: { key: 'officejet' }, asin_clicks: 10 };
+  const rows = [base, { ...base, week_end: '2026-09-05', asin_clicks: 30, market_impressions: 3000 },
+    { ...base, asin: 'B000000304', group: { key: 'deskjet' }, asin_clicks: 20 }];
+  const sums = aggregateAsinView(rows, { view: 'printers', includeQueries: true });
+  assert.equal(sums.reduce((n, r) => n + r.asin_clicks, 0), 60);
+  const groups = aggregateAsinView(rows, { view: 'printers', average: true, includeQueries: true });
+  for (const [key, market, weeks] of [['officejet', 2000, 2], ['deskjet', 1000, 1]]) {
+    const row = groups.find((r) => r.group.key === key);
+    assert.equal(row.market_impressions, market);
+    assert.equal(row.asin_clicks, 20);
+    assert.equal(row.query_rows.length, 1);
+    assert.equal(row.query_rows[0].average_weeks, weeks);
+    assert.equal(row.query_rows[0].asin_clicks, 20);
+  }
+  const sameAsin = rows.map((r) => ({ ...r, asin: base.asin, source_brand: r.group.key === 'officejet' ? 'CE' : 'CY' }));
+  const exported = aggregateAsinView(sameAsin, { view: 'printers', average: true, includeQueries: true });
+  assert.equal(exported.length, 2);
+  assert.ok(exported.every((r) => r.query_rows.length === 1 && r.query_rows[0].asin_clicks === 20));
+});
 
 test('printer/SKU compatibility flags ENVY6000 on 304, accepts 305XL and keeps incomplete or ambiguous cases for review', () => {
   const match = abaMatcher('', [

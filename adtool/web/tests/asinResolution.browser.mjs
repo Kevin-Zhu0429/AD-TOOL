@@ -1,0 +1,81 @@
+import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+import { createServer } from 'vite';
+import { startAbaTestServer } from '../../server/tests/abaHarness.js';
+import { resolutionAsins as ids, resolutionFiles, resolutionSkus, seedResolution } from '../../server/tests/asinResolutionFixture.js';
+const require = createRequire(import.meta.url);
+const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
+const XLSX = require('xlsx');
+const backend = await startAbaTestServer();
+let vite, browser;
+try {
+  seedResolution(backend.db);
+  vite = await createServer({ root: fileURLToPath(new URL('../', import.meta.url)), server: { host: '127.0.0.1', port: 0, proxy: { '/api': { target: backend.url, changeOrigin: true } } } });
+  await vite.listen();
+  browser = await chromium.launch({ channel: 'msedge', headless: true });
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce' });
+  const errors = []; page.on('pageerror', (error) => errors.push(error.message));
+  const base = 'http://127.0.0.1:' + vite.httpServer.address().port;
+  const login = (username) => page.request.post(base + '/api/auth/login', { data: { username, password: 'local-test-password' } });
+  await login('aba-test');
+  assert.ok((await page.request.post(base + '/api/aba/asin/import', { data: { marketplace: 'ES', files: resolutionFiles } })).ok());
+  await login('aba-other');
+  assert.ok((await page.request.post(base + '/api/aba-skus/import', { data: { rows: [resolutionSkus[0], resolutionSkus[1], resolutionSkus[2], { ...resolutionSkus[3], model: '301/304' }] } })).ok());
+  await login('aba-test'); await page.goto(base);
+  for (const scope of ['private', 'public']) {
+    await page.locator('.topnav').getByRole('button', { name: scope === 'private' ? 'ABA 报告' : 'ABA报告（公共）', exact: true }).click();
+    if (scope === 'private') await page.getByRole('button', { name: 'ASIN 视图', exact: true }).click();
+    else await page.locator('.aba-public-countries button').filter({ hasText: '西班牙' }).click();
+    const view = page.locator('.aba-asin-view');
+    const endpoint = scope === 'private' ? '/api/aba/asin?' : '/api/aba-public/asin?';
+    const idle = () => view.locator('.aba-results[aria-busy="false"]').waitFor();
+    const perform = async (fn) => {
+      await Promise.all([page.waitForResponse((r) => r.url().includes(endpoint) && r.status() === 200), fn()]); await idle();
+    };
+    const select = (label, value) => perform(() => view.getByLabel(label, { exact: true }).selectOption(value));
+    await idle(); await select('词类型', 'printer'); await select('显示方式', 'printers');
+    await perform(() => view.getByRole('button', { name: '全选', exact: true }).click());
+    await select('多周统计', 'average');
+    assert.equal(await view.locator('.aba-group-row').count(), 3);
+    for (const [name, sku] of [['HP OFFICEJET2620', 'SOURCE-301'], ['HP DESKJET2620', 'SOURCE-304']]) {
+      const group = view.locator('.aba-group-row').filter({ has: page.locator('.aba-group-toggle').filter({ hasText: name }) });
+      assert.match(await group.innerText(), new RegExp(sku));
+      assert.equal(await group.locator('td').nth(7).innerText(), '20');
+    }
+    await select('机型与 SKU', 'multi');
+    assert.equal(await view.locator('.aba-group-row').count(), 1);
+    const review = view.locator('.aba-group-row');
+    assert.match(await review.innerText(), /多机型 \/ 待核对/);
+    assert.doesNotMatch(await review.locator('.aba-asin-sku').allTextContents().then((x) => x.join('\n')), /SOURCE-301|SOURCE-304/);
+    await review.locator('.aba-group-toggle').focus(); await page.keyboard.press('Enter');
+    await view.locator('.aba-group-details .aba-table').waitFor();
+    assert.equal(await view.locator('.aba-group-details tbody tr').count(), 1);
+    const download = page.waitForEvent('download'); await view.getByRole('button', { name: '导出 Excel', exact: true }).click();
+    const book = XLSX.readFile(await (await download).path());
+    const cells = XLSX.utils.sheet_to_json(book.Sheets[book.SheetNames[0]], { header: 1, defval: '' });
+    const field = (label) => cells[0].indexOf(label);
+    assert.equal(cells.length, 4);
+    assert.deepEqual(new Set(cells.slice(1).map((r) => r[field('ASIN')])), new Set(ids.slice(2)));
+    assert.equal(cells.slice(1).reduce((n, r) => n + r[field('ASIN 点击')], 0), 15);
+    assert.ok(cells.slice(1).every((r) => r[field('市场IMP(原始总量)')] === 1000));
+    await view.getByLabel('机型与 SKU', { exact: true }).focus(); await page.keyboard.press('Alt+ArrowDown'); await page.keyboard.press('Escape');
+    await page.screenshot({ path: fileURLToPath(new URL('../../.tmp/asin-resolution-' + scope + '.png', import.meta.url)), fullPage: true });
+    await page.setViewportSize({ width: 390, height: 844 }); await page.getByRole('button', { name: '切换主题', exact: true }).click();
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    await view.getByLabel('机型与 SKU', { exact: true }).scrollIntoViewIfNeeded();
+    await page.screenshot({ path: fileURLToPath(new URL('../../.tmp/asin-resolution-' + scope + '-narrow.png', import.meta.url)), fullPage: true });
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await select('ASIN', ids[0]);
+    await view.getByRole('heading', { name: '没有多机型待核对的记录', exact: true }).waitFor();
+    assert.equal(await view.getByRole('button', { name: '导出 Excel', exact: true }).isDisabled(), true);
+    await select('ASIN', ''); await perform(() => view.getByRole('button', { name: '全选', exact: true }).click());
+    await page.route('**' + endpoint + '**', (route) => route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: '归属结果暂不可用' }) }));
+    await view.getByLabel('机型与 SKU', { exact: true }).selectOption('normal');
+    await view.getByText('归属结果暂不可用').waitFor(); await page.unroute('**' + endpoint + '**');
+    await perform(() => view.getByRole('button', { name: '重新加载', exact: true }).click());
+    assert.equal(await view.locator('.aba-group-row').count(), 3);
+  }
+  assert.deepEqual(errors, []);
+  console.log('Source printer resolution passed: private/public, dedicated SKU mapping, independent averages, unresolved filter and XLSX, drilldown, empty, retry, keyboard, native select and narrow themes.');
+} finally { await browser?.close(); await vite?.close(); await backend.close(); }

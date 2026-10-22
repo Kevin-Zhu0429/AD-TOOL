@@ -21,10 +21,12 @@ export const ASIN_GROUP_EXPORT_COLUMNS = BASE_ASIN_EXPORT_COLUMNS.flatMap((colum
 export function skusForAsinRow(row, data, params = {}) {
   const asins = row.asins ?? [row.asin];
   const items = (data.skuItems ?? []).filter((sku) => asins.includes(sku.asin)
-    && (!row.source_brand || asins.length > 1 || String(sku.brand ?? '').toLowerCase() === String(row.source_brand).toLowerCase())
+    && (!row.source_brands?.length || row.source_brands.some((source) => source.asin === sku.asin
+      && String(source.brand).toLowerCase() === String(sku.brand ?? '').toLowerCase()))
+    && (row.source_brands?.length || !row.source_brand || asins.length > 1 || String(sku.brand ?? '').toLowerCase() === String(row.source_brand).toLowerCase())
     && (!params.skuId || String(sku.id) === String(params.skuId))
     && (!data.selectedModel || data.selectedModel.skuIds.includes(sku.id)));
-  if (data.skuSource !== 'aba') return items;
+  if (data.skuSource !== 'aba' || row.source_brands?.length) return items;
   const brands = new Map();
   for (const sku of items) {
     if (!brands.has(sku.asin)) brands.set(sku.asin, new Set());

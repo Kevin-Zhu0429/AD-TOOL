@@ -63,10 +63,12 @@ try {
   await page.screenshot({ path: output + 'aba-desktop.png', fullPage: true });
   await page.locator('.aba-pagination').scrollIntoViewIfNeeded();
   await page.screenshot({ path: output + 'aba-table.png', fullPage: true });
-  await page.getByRole('button', { name: '仅最新周', exact: true }).click();
+  await Promise.all([page.waitForResponse((r) => r.url().includes('/api/aba?') && r.status() === 200),
+    page.getByRole('button', { name: '仅最新周', exact: true }).click()]);
   await idle();
   assert.equal(await bodyRows().count(), 5);
-  await page.getByLabel('包含关联机型词', { exact: true }).uncheck();
+  await Promise.all([page.waitForResponse((r) => r.url().includes('/api/aba?') && r.status() === 200),
+    page.getByLabel('包含关联机型词', { exact: true }).uncheck()]);
   await idle();
   assert.equal(await bodyRows().count(), 3);
   await page.getByLabel('包含关联机型词', { exact: true }).check();

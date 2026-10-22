@@ -2,7 +2,7 @@ import { abaSkuStatus } from './abaSkuLibrary.js';
 // ABA ASIN 周报的查询、匹配、聚合、排序。只依赖传进来的 db,主线程和 worker 线程都能调用。
 import { regionOf } from '../libs.js';
 import { ABA_PAGE_SIZES, abaMatcher } from '../../../shared/aba.js';
-import { ASIN_COLUMNS, asinModelOptions, aggregateAsinView, asinQueryAlignment } from '../../../shared/abaAsin.js';
+import { ASIN_COLUMNS, asinModelOptions, aggregateAsinView, asinQueryAlignment, resolveAsinPrinter } from '../../../shared/abaAsin.js';
 import { abaCoreMatcher } from '../../../shared/abaCore.js';
 
 /** 算出和页码无关的完整结果(排好序的全部行 + 筛选项);翻页只是在它上面切片 */
@@ -57,7 +57,7 @@ export function buildAsinView(db, userId, market, query, scope = 'private') {
   const wordType = coreMode ? 'cartridge' : ['printer', 'cartridge'].includes(query.wordType) ? query.wordType : 'all';
   const match = abaMatcher(String(query.q ?? '').slice(0, 1000), dRows, true, wordType === 'printer' ? 'printer' : 'all');
   const coreMatch = abaCoreMatcher(dRows);
-  const alignmentFilter = ['all', 'mismatch'].includes(query.alignment) ? query.alignment : 'normal';
+  const alignmentFilter = ['all', 'mismatch', 'multi'].includes(query.alignment) ? query.alignment : 'normal';
   const alignmentSummary = { mismatchRecords: 0, reviewRecords: 0, excludedRecords: 0 };
   const skusByAsin = new Map();
   for (const sku of skuItems) {
@@ -78,7 +78,7 @@ export function buildAsinView(db, userId, market, query, scope = 'private') {
       const classified = coreMatch(row.query);
       const initial = match(row.query);
       // A four-digit model stays a printer term even when its D-library mapping is absent.
-      const matching = classified.printerNumbers.length && !initial.hasPrinter
+      let matching = classified.printerNumbers.length && !initial.hasPrinter
         ? { ...initial, hasPrinter: true, group: classified.printerGroup, unmappedPrinter: true,
           matches: initial.matches || (wordType === 'printer' && (!query.q || (
             !/^(?:[a-z]+[-\s]*)?\d{2,3}(?:\s*xl)?$/i.test(String(query.q).trim())
@@ -86,12 +86,13 @@ export function buildAsinView(db, userId, market, query, scope = 'private') {
       if (!matching.matches) continue;
       if (wordType === 'printer' && !matching.hasPrinter) continue;
       if (wordType === 'cartridge' && matching.hasPrinter) continue;
+      const sourceSkus = (skusByAsin.get(report.asin) ?? []).filter((s) => !library.enabled
+        || (shared ? brandKey(s) === brandKey(report) : !brand || brandKey(s) === brand));
+      const ambiguous = library.enabled && !shared && !brand && new Set(sourceSkus.map(brandKey)).size > 1;
+      if (!ambiguous) matching = resolveAsinPrinter(matching, sourceSkus);
       if (query.group && (coreMode ? classified.core.key : matching.group.key) !== query.group) continue;
       const alignmentKey = JSON.stringify([report.asin, shared && library.enabled ? brandKey(report) : '', row.query]);
       if (!alignments.has(alignmentKey)) {
-        const sourceSkus = (skusByAsin.get(report.asin) ?? []).filter((s) => !library.enabled
-          || (shared ? brandKey(s) === brandKey(report) : !brand || brandKey(s) === brand));
-        const ambiguous = library.enabled && !shared && !brand && new Set(sourceSkus.map(brandKey)).size > 1;
         const checked = asinQueryAlignment(matching, sourceSkus);
         if (matching.unmappedPrinter) {
           checked.status = 'review';
@@ -116,7 +117,8 @@ export function buildAsinView(db, userId, market, query, scope = 'private') {
       if (alignment.status === 'mismatch') alignmentSummary.mismatchRecords++;
       if (['review', 'insufficient'].includes(alignment.status)) alignmentSummary.reviewRecords++;
       if ((alignmentFilter === 'normal' && alignment.status === 'mismatch')
-        || (alignmentFilter === 'mismatch' && alignment.status !== 'mismatch')) {
+        || (alignmentFilter === 'mismatch' && alignment.status !== 'mismatch')
+        || (alignmentFilter === 'multi' && !matching.group.key.startsWith('review:'))) {
         alignmentSummary.excludedRecords++; continue;
       }
       rows.push({ ...row, asin: report.asin, source_brand: library.enabled ? (shared ? report.brand : brand || null) : null,
