@@ -4,6 +4,29 @@ import { parseAsinReport, parseAsinUpload, mergeAsinRows, asinRates, aggregateAs
 import { abaMatcher } from '../../shared/aba.js';
 import { asinFixture, asinFirst, asinSecond, mergedFixture } from '../../server/tests/abaAsinFixture.js';
 
+test('ASIN cartridge number priority applies to every two/three-digit model without suppressing explicit printer identities', () => {
+  const rows = [
+    { brand: 'HP', term: '302', series: 'Deskjet', printer: '3050' },
+    { brand: 'HP', term: '305', series: 'Deskjet', printer: '2700' },
+    { brand: 'HP', term: '67', series: 'Deskjet', printer: '1255' },
+    { brand: 'Canon', term: '545/546', series: 'PIXMA', printer: 'TS302, TS305, TS67, TS999' },
+    { brand: 'HP', term: '304', series: 'Deskjet', printer: '302' },
+  ];
+  const match = abaMatcher('', rows, true, 'all', { preferCartridgeNumbers: true });
+  for (const query of ['302', 'ho 302', 'ho 302 noir', '302XL', 'cartouche 302', 'canon 302', '67', '67 noir', '305', '999']) {
+    assert.equal(match(query).hasPrinter, false, query);
+    assert.equal(match(query).group.kind, 'other', query);
+    assert.deepEqual(match(query).candidates, [], query);
+  }
+  for (const query of ['TS302', 'canon ts 302', 'TS305', 'TS67', 'TS999', 'hp deskjet 302', 'cartouche canon ts302 545', 'hp 3050'])
+    assert.equal(match(query).hasPrinter, true, query);
+  assert.equal(abaMatcher('', rows)('302').hasPrinter, true, 'shared brand-report behavior is unchanged');
+  const search = abaMatcher('302', rows, true, 'printer', { preferCartridgeNumbers: true });
+  assert.equal(search('302').matches, false);
+  assert.equal(search('hp deskjet 3050').matches, true, 'search still expands cartridge compatibility');
+  assert.equal(search('canon ts302').matches, false, 'a numeric overlap cannot expand to an unrelated printer');
+});
+
 test('source SKU models resolve exactly one compatible printer; incomplete, overlapping and mixed mappings stay in review', () => {
   const match = abaMatcher('', [
     { brand: 'HP', term: '304', series: 'Deskjet', printer: '2620' },

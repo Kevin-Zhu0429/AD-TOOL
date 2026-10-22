@@ -10,6 +10,7 @@ export const coreReports = [
     row('hp 305', 50), row('hp ink 9999', 700), row('cartouche hp deskjet 2700', 400), row('canon PG545 ink', 500),
     row('305xl', 60), row('cartucce 305', 70), row('301xl', 80), row('canon 541', 90),
     row('imprimante canon', 110), row('hp deskjet', 120), row('canon 260261 ink', 40),
+    row('302', 50), row('ho 302', 60), row('ho 302 noir', 70), row('67', 80), row('canon ts302', 90),
   ] },
   { asin: coreB, week: 38, start: '2026-09-13', end: '2026-09-19', rows: [row('cartouche hp 305', 1000)] },
   { asin: coreA, week: 39, start: '2026-09-20', end: '2026-09-26', rows: [row('cartouche hp 305', 2000)] },
@@ -20,6 +21,10 @@ export const coreSkus = [
   { country: 'ES', brand: 'CY', sku: 'CORE-B305', asin: coreB, model: '305', setGroup: 'C' },
 ];
 export function seedPublicCoreReports(db) {
+  db.prepare('INSERT INTO lib_items(lib,scope,brand,term,series,printer,dedupe) VALUES(?,?,?,?,?,?,?)')
+    .run('D', 'EU', 'Canon', '545/546', 'PIXMA', 'TS302, TS67', 'core-numeric-overlap');
+  db.prepare('INSERT INTO lib_items(lib,scope,brand,term,series,printer,dedupe) VALUES(?,?,?,?,?,?,?)')
+    .run('D', 'EU', 'HP', '67', 'Deskjet', '1255', 'core-two-digit-cartridge');
   for (const report of coreReports) {
     const task = { ...publicTask, brand: report.asin === coreA ? 'CE' : 'CY', week_start: report.start,
       week_end: report.end, asins_json: JSON.stringify([report.asin]) };

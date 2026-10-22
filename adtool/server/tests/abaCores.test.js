@@ -22,7 +22,17 @@ test('private/public core summaries merge language variants, keep generic terms,
       assert.equal(response.status, 200); return response.json();
     };
     const result = await get({ view: 'cores', aggregation: 'average', export: '1' });
-    assert.equal(result.view, 'cores'); assert.equal(result.total, 6);
+    assert.equal(result.view, 'cores'); assert.equal(result.total, 8);
+    assert.equal(result.items.find((r) => r.recognition === 'HP 302').query_count, 3);
+    assert.equal(result.items.find((r) => r.recognition === 'HP 67').query_count, 1);
+    const numeric = await get({ view: 'queries', wordType: 'cartridge', q: '302' });
+    assert.deepEqual(new Set(numeric.items.map((r) => r.query)), new Set(['302', 'ho 302', 'ho 302 noir']));
+    assert.ok(numeric.items.every((r) => r.group.kind === 'other' && !r.candidates.length));
+    const explicit = await get({ view: 'queries', wordType: 'printer', alignment: 'all' });
+    assert.ok(explicit.items.some((r) => r.query === 'canon ts302' && r.group.kind === 'printer'));
+    assert.ok(explicit.items.every((r) => !['302', 'ho 302', 'ho 302 noir', '67'].includes(r.query)));
+    const reviewOnly = await get({ view: 'queries', alignment: 'multi' });
+    assert.ok(reviewOnly.items.every((r) => !['302', 'ho 302', 'ho 302 noir', '67'].includes(r.query)));
     const hp = result.items.find((r) => r.recognition === 'HP 305');
     assert.equal(hp.query_count, 5); assert.equal(hp.market_impressions, 1980); assert.equal(hp.asin_clicks, 11);
     assert.deepEqual(hp.asins, [coreA, coreB]);
@@ -43,7 +53,12 @@ test('private/public core summaries merge language variants, keep generic terms,
     assert.equal(wordRows.length, 2);
     assert.ok(wordRows.every((r) => r[field('market_impressions_original')] === 1500));
     assert.ok(wordRows.every((r) => Math.abs(r[field('market_cvr_original')] - 0.1) < 1e-9));
-    assert.doesNotMatch(JSON.stringify(exported.rows), /9999|deskjet 2700/);
+    assert.doesNotMatch(JSON.stringify(exported.rows), /9999|deskjet 2700|ts302/);
+    for (const query of ['302', 'ho 302', 'ho 302 noir']) {
+      const row = exported.rows.find((r) => r[field('query')] === query);
+      assert.equal(row[field('recognition')], 'HP 302');
+      assert.equal(row[field('asin_clicks')], 2);
+    }
     for (const word of ['hp 305', '305xl', 'cartucce 305']) {
       const row = exported.rows.find((r) => r[field('query')] === word);
       assert.equal(row[field('recognition')], 'HP 305', word);

@@ -158,12 +158,17 @@ function printerIdentity(entry, index) {
 }
 
 /** Classify every term, including literal substring matches, before applying a type filter. */
-export function abaMatcher(search, dRows, includeModels = true, wordType = 'all') {
+export function abaMatcher(search, dRows, includeModels = true, wordType = 'all', { preferCartridgeNumbers = false } = {}) {
   const q = normalize(search);
   const index = buildDModelIndex({ libs: [{ id: 'D' }], items: { D: abaLibrary(dRows) } });
+  // ASIN reports treat bare two/three-digit numbers as cartridge demand.
+  // An explicit printer alias (TS302, DeskJet302, etc.) retains its full token.
+  const mentionsFor = (text) => resolveSearchModels(text, index).map((mention) =>
+    preferCartridgeNumbers && /^\d{2,3}(?:xl)?$/.test(compactModel(mention.token))
+      ? { ...mention, type: 'model', entries: mention.entries.filter((entry) => entry.kind === 'model') } : mention);
   const targetRows = new Set();
   if (q) {
-    const mentions = resolveSearchModels(q, index);
+    const mentions = mentionsFor(q);
     for (const mention of mentions) {
       if (mention.type !== 'model') continue;
       for (const entry of mention.entries) for (const row of entry.rows) targetRows.add(row);
@@ -179,7 +184,7 @@ export function abaMatcher(search, dRows, includeModels = true, wordType = 'all'
     if (cache.has(query)) return cache.get(query);
     const printers = new Map();
     let relatedPrinter = false, relatedCartridge = false, hasCartridge = false, uncertain = false;
-    for (const mention of resolveSearchModels(query, index)) {
+    for (const mention of mentionsFor(query)) {
       if (mention.type === 'brand_conflict') { uncertain = true; continue; }
       if (mention.type === 'ambiguous') uncertain = true;
       for (const entry of mention.entries) {

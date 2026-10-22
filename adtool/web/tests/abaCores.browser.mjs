@@ -38,7 +38,7 @@ try {
     await Promise.all([page.waitForResponse((r) => r.url().includes(endpoint) && r.status() === 200), view.getByRole('button', { name: '全选', exact: true }).click()]);
     await idle(); await change('多周统计', 'average');
     await view.getByRole('heading', { name: 'ASIN 核心词分类汇总', exact: true }).waitFor();
-    assert.equal(await view.locator('.aba-group-row').count(), 6);
+    assert.equal(await view.locator('.aba-group-row').count(), 8);
     assert.match((await view.locator('.aba-group-row').allTextContents()).join('\n'), /超大词/);
     const hp = view.locator('.aba-group-row').filter({ hasText: 'HP 305' });
     assert.equal(await hp.locator('td').nth(1).innerText(), '5');
@@ -58,6 +58,12 @@ try {
     assert.equal(sameWord.length, 2); assert.ok(sameWord.every((r) => r[original] === 1500));
     assert.ok(sameWord.every((r) => Math.abs(r[field('市场CVR(原始总量)')] - 0.1) < 1e-9));
     assert.doesNotMatch(JSON.stringify(cells), /9999|deskjet 2700/);
+    for (const query of ['302', 'ho 302', 'ho 302 noir']) {
+      const row = cells.find((r) => r[field('搜索词')] === query);
+      assert.equal(row[field('核心词分类')], 'HP 302');
+      assert.equal(row[field('ASIN 点击')], 2);
+    }
+    assert.doesNotMatch(JSON.stringify(cells), /canon ts302/);
     await page.screenshot({ path: fileURLToPath(new URL('../../.tmp/aba-core-' + scope + '.png', import.meta.url)), fullPage: true });
     await page.getByRole('button', { name: '切换主题', exact: true }).click(); await page.setViewportSize({ width: 390, height: 844 });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);

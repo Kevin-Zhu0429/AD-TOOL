@@ -55,7 +55,7 @@ export function buildAsinView(db, userId, market, query, scope = 'private') {
   const grouped = view !== 'queries';
   const coreMode = view === 'cores' || String(query.group ?? '').startsWith('core:');
   const wordType = coreMode ? 'cartridge' : ['printer', 'cartridge'].includes(query.wordType) ? query.wordType : 'all';
-  const match = abaMatcher(String(query.q ?? '').slice(0, 1000), dRows, true, wordType === 'printer' ? 'printer' : 'all');
+  const match = abaMatcher(String(query.q ?? '').slice(0, 1000), dRows, true, wordType === 'printer' ? 'printer' : 'all', { preferCartridgeNumbers: true });
   const coreMatch = abaCoreMatcher(dRows);
   const alignmentFilter = ['all', 'mismatch', 'multi'].includes(query.alignment) ? query.alignment : 'normal';
   const alignmentSummary = { mismatchRecords: 0, reviewRecords: 0, excludedRecords: 0 };
