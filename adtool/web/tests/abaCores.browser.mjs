@@ -38,13 +38,14 @@ try {
     await Promise.all([page.waitForResponse((r) => r.url().includes(endpoint) && r.status() === 200), view.getByRole('button', { name: '全选', exact: true }).click()]);
     await idle(); await change('多周统计', 'average');
     await view.getByRole('heading', { name: 'ASIN 核心词分类汇总', exact: true }).waitFor();
-    assert.equal(await view.locator('.aba-group-row').count(), 4);
+    assert.equal(await view.locator('.aba-group-row').count(), 6);
+    assert.match((await view.locator('.aba-group-row').allTextContents()).join('\n'), /超大词/);
     const hp = view.locator('.aba-group-row').filter({ hasText: 'HP 305' });
-    assert.equal(await hp.locator('td').nth(1).innerText(), '2');
-    assert.equal(await hp.locator('td').nth(2).innerText(), '1,800');
+    assert.equal(await hp.locator('td').nth(1).innerText(), '5');
+    assert.equal(await hp.locator('td').nth(2).innerText(), '1,980');
     await hp.locator('.aba-group-toggle').focus(); await page.keyboard.press('Enter');
     await view.locator('.aba-group-details .aba-table').waitFor();
-    assert.equal(await view.locator('.aba-group-details tbody tr').count(), 2);
+    assert.equal(await view.locator('.aba-group-details tbody tr').count(), 5);
     assert.match(await view.locator('.aba-group-details').innerText(), /cartouche hp 305[\s\S]*hp305XLink/);
     const download = page.waitForEvent('download'); await view.getByRole('button', { name: '导出 Excel', exact: true }).click();
     const book = XLSX.readFile(await (await download).path());

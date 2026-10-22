@@ -8,6 +8,8 @@ export const coreReports = [
   { asin: coreA, week: 38, start: '2026-09-13', end: '2026-09-19', rows: [
     row('cartouche hp 305', 1000), row('hp305XLink', 300), row('cartouche imprimante', 200), row('encre noire', 100),
     row('hp 305', 50), row('hp ink 9999', 700), row('cartouche hp deskjet 2700', 400), row('canon PG545 ink', 500),
+    row('305xl', 60), row('cartucce 305', 70), row('301xl', 80), row('canon 541', 90),
+    row('imprimante canon', 110), row('hp deskjet', 120), row('canon 260261 ink', 40),
   ] },
   { asin: coreB, week: 38, start: '2026-09-13', end: '2026-09-19', rows: [row('cartouche hp 305', 1000)] },
   { asin: coreA, week: 39, start: '2026-09-20', end: '2026-09-26', rows: [row('cartouche hp 305', 2000)] },
