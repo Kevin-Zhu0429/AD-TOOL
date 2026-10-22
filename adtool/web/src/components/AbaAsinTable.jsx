@@ -66,9 +66,10 @@ function GroupQueries({ group, params, hideCodes }) {
 
 export default function AbaAsinTable({ data, params, onSort, empty, nested = false, hideIdentity = false }) {
   const [expanded, setExpanded] = useState(null);
-  const grouped = data.view === 'printers';
-  const columns = grouped ? [{ key: 'recognition', label: '机型分类', text: true }, { key: 'query_count', label: '搜索词数量' }, ...ASIN_COLUMNS.slice(2)] : ASIN_COLUMNS;
-  return <div className={`aba-table-scroll${nested ? ' aba-nested-scroll' : ''}`} tabIndex={0} role="region" aria-label={grouped ? 'ASIN 机型分类汇总表，可横向滚动' : 'ASIN 搜索查询明细表，可横向滚动'}>
+  const grouped = data.view === 'printers' || data.view === 'cores';
+  const columns = grouped ? [{ key: 'recognition', label: data.view === 'cores' ? '核心词分类' : '机型分类', text: true }, { key: 'query_count', label: '搜索词数量' }, ...ASIN_COLUMNS.slice(2)]
+    : data.coreClassified ? ASIN_COLUMNS.map((c) => c.key === 'recognition' ? { ...c, label: '核心词识别' } : c) : ASIN_COLUMNS;
+  return <div className={`aba-table-scroll${nested ? ' aba-nested-scroll' : ''}`} tabIndex={0} role="region" aria-label={grouped ? `ASIN ${data.view === 'cores' ? '核心词' : '机型'}分类汇总表，可横向滚动` : 'ASIN 搜索查询明细表，可横向滚动'}>
     <table className="aba-table aba-asin-table"><thead><tr>{columns.map((c) => <th scope="col" key={c.key} aria-sort={data.sort === c.key ? data.direction === 'desc' ? 'descending' : 'ascending' : 'none'}><button onClick={() => onSort(c.key)}>{c.label}<span aria-hidden="true">{data.sort === c.key ? data.direction === 'desc' ? ' ↓' : ' ↑' : ' ↕'}</span></button></th>)}</tr></thead>
       <tbody>{data.items.map((row) => <Fragment key={row.key}><tr className={grouped ? 'aba-group-row' : undefined}>{columns.map((c) => <td key={c.key} className={c.text ? c.key === 'query' ? 'aba-query' : 'aba-recognition' : 'aba-value'}>
         {c.key === 'recognition' ? <>{grouped ? <button className="aba-group-toggle" aria-expanded={expanded === row.key} aria-label={`${expanded === row.key ? '收起' : '展开'} ${[hideIdentity ? row.series_model : sourceLabel(row), row.recognition].filter(Boolean).join(' ')}`} onClick={() => setExpanded((old) => old === row.key ? null : row.key)}>{expanded === row.key ? '▾' : '▸'} {row.recognition}</button> : <strong>{row.recognition}</strong>}{row.candidates.map((candidate) => <small key={candidate}>{candidate}</small>)}{grouped && <Identity row={row} data={data} params={params} hideCodes={hideIdentity} />}</>

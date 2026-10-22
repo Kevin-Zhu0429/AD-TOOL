@@ -3,6 +3,7 @@ import { abaSkuStatus } from './abaSkuLibrary.js';
 import { regionOf } from '../libs.js';
 import { ABA_PAGE_SIZES, abaMatcher } from '../../../shared/aba.js';
 import { ASIN_COLUMNS, asinModelOptions, aggregateAsinView, asinQueryAlignment } from '../../../shared/abaAsin.js';
+import { abaCoreMatcher } from '../../../shared/abaCore.js';
 
 /** 算出和页码无关的完整结果(排好序的全部行 + 筛选项);翻页只是在它上面切片 */
 export function buildAsinView(db, userId, market, query, scope = 'private') {
@@ -50,8 +51,12 @@ export function buildAsinView(db, userId, market, query, scope = 'private') {
   const selectedWeeks = weeks.filter((w) => requestedWeeks.includes(w.week_end)).map((w) => w.week_end);
   const selected = new Map(available.filter((r) => selectedWeeks.includes(r.week_end)).map((r) => [r.id, r]));
   const dRows = db.prepare("SELECT brand, term, series, printer FROM lib_items WHERE lib='D' AND scope=?").all(regionOf(market).id);
-  const wordType = ['printer', 'cartridge'].includes(query.wordType) ? query.wordType : 'all';
+  const view = ['printers', 'cores'].includes(query.view) ? query.view : 'queries';
+  const grouped = view !== 'queries';
+  const coreMode = view === 'cores' || String(query.group ?? '').startsWith('core:');
+  const wordType = coreMode ? 'cartridge' : ['printer', 'cartridge'].includes(query.wordType) ? query.wordType : 'all';
   const match = abaMatcher(String(query.q ?? '').slice(0, 1000), dRows, true, wordType === 'printer' ? 'printer' : 'all');
+  const coreMatch = abaCoreMatcher(dRows);
   const alignmentFilter = ['all', 'mismatch'].includes(query.alignment) ? query.alignment : 'normal';
   const alignmentSummary = { mismatchRecords: 0, reviewRecords: 0, excludedRecords: 0 };
   const skusByAsin = new Map();
@@ -70,17 +75,28 @@ export function buildAsinView(db, userId, market, query, scope = 'private') {
     for (const row of raw) {
       const report = selected.get(row.report_id);
       if (!report) continue;
-      const matching = match(row.query);
+      const classified = coreMatch(row.query);
+      const initial = match(row.query);
+      // A four-digit model stays a printer term even when its D-library mapping is absent.
+      const matching = classified.printerNumbers.length && !initial.hasPrinter
+        ? { ...initial, hasPrinter: true, group: classified.printerGroup, unmappedPrinter: true,
+          matches: initial.matches || (wordType === 'printer' && (!query.q || (
+            !/^(?:[a-z]+[-\s]*)?\d{2,3}(?:\s*xl)?$/i.test(String(query.q).trim())
+            && row.query.normalize('NFKC').toLowerCase().includes(String(query.q).normalize('NFKC').trim().toLowerCase())))) } : initial;
       if (!matching.matches) continue;
       if (wordType === 'printer' && !matching.hasPrinter) continue;
       if (wordType === 'cartridge' && matching.hasPrinter) continue;
-      if (query.group && matching.group.key !== query.group) continue;
+      if (query.group && (coreMode ? classified.core.key : matching.group.key) !== query.group) continue;
       const alignmentKey = JSON.stringify([report.asin, shared && library.enabled ? brandKey(report) : '', row.query]);
       if (!alignments.has(alignmentKey)) {
         const sourceSkus = (skusByAsin.get(report.asin) ?? []).filter((s) => !library.enabled
           || (shared ? brandKey(s) === brandKey(report) : !brand || brandKey(s) === brand));
         const ambiguous = library.enabled && !shared && !brand && new Set(sourceSkus.map(brandKey)).size > 1;
         const checked = asinQueryAlignment(matching, sourceSkus);
+        if (matching.unmappedPrinter) {
+          checked.status = 'review';
+          checked.reason = `搜索词含四位机型 ${classified.printerNumbers.join(' / ')}，机型库尚未明确对应墨盒，请核对`;
+        }
         if (ambiguous) {
           checked.status = 'review';
           checked.reason = '此国家的 ASIN 对应多个品牌，请先选择品牌再核对 SKU';
@@ -105,16 +121,15 @@ export function buildAsinView(db, userId, market, query, scope = 'private') {
       }
       rows.push({ ...row, asin: report.asin, source_brand: library.enabled ? (shared ? report.brand : brand || null) : null,
         week_start: report.week_start, week_end: report.week_end,
-        week_number: report.week_number, recognition: matching.group.kind === 'other' ? '墨盒 KW 词' : matching.group.label,
-        candidates: matching.candidates, group: matching.group, alignment });
+        week_number: report.week_number, recognition: coreMode ? classified.core.label : matching.group.kind === 'other' ? '墨盒 KW 词' : matching.group.label,
+        candidates: matching.candidates, group: coreMode ? classified.core : matching.group, alignment });
     }
   }
   const average = query.aggregation === 'average' && selectedWeeks.length > 1;
-  const view = query.view === 'printers' ? 'printers' : 'queries';
-  const merged = average || view === 'printers' || query.merge !== '0';
+  const merged = average || grouped || query.merge !== '0';
   const exportAll = query.export === '1';
-  const items = aggregateAsinView(rows, { series: !!model || !!query.group, view, mergeWeeks: merged, average, modelLabel: selectedModel?.label, includeQueries: exportAll });
-  const sort = ASIN_COLUMNS.some((c) => c.key === query.sort) || (view === 'printers' && query.sort === 'query_count') ? query.sort : 'market_impressions';
+  const items = aggregateAsinView(rows, { series: !!model || !!query.group, view: grouped ? 'printers' : 'queries', mergeWeeks: merged, average, modelLabel: selectedModel?.label, includeQueries: exportAll });
+  const sort = ASIN_COLUMNS.some((c) => c.key === query.sort) || (grouped && query.sort === 'query_count') ? query.sort : 'market_impressions';
   const direction = query.direction === 'asc' ? 'asc' : 'desc';
   items.sort((a, b) => {
     if (a[sort] === null && b[sort] !== null) return 1;
@@ -122,11 +137,11 @@ export function buildAsinView(db, userId, market, query, scope = 'private') {
     const difference = typeof a[sort] === 'string' ? a[sort].localeCompare(b[sort], 'zh-CN') : (a[sort] ?? 0) - (b[sort] ?? 0);
     return (direction === 'asc' ? difference : -difference) || a.key.localeCompare(b.key);
   });
-  return { skuSource: library.enabled ? 'aba' : 'legacy', skuLibrary: library, reports, years, year, months, month, modelOptions, selectedModel, brands, brand, seriesMerged: !!model || view === 'printers' || !!query.group,
+  return { skuSource: library.enabled ? 'aba' : 'legacy', skuLibrary: library, reports, years, year, months, month, modelOptions, selectedModel, brands, brand, seriesMerged: !!model || grouped || !!query.group,
     unlinkedAsins: [...new Set(dated.filter((r) => !skuItems.some((s) => s.asin === r.asin && String(s.model ?? '').trim())).map((r) => r.asin))],
     asins: [...new Set(brandReports.map((r) => r.asin))], skuItems: filteredSkus, weeks, selectedWeeks,
     selectedReportCount: selected.size, hasModelLibrary: !!dRows.length, total: items.length, recordCount: rows.length,
-    items, exportAll, sort, direction, merged, view, alignmentFilter, alignmentSummary, aggregation: average ? 'average' : 'sum' };
+    items, exportAll, sort, direction, merged, view, coreClassified: coreMode, alignmentFilter, alignmentSummary, aggregation: average ? 'average' : 'sum' };
 }
 
 /** 从完整结果里切出请求的那一页；两种视图导出时都返回全部筛选结果。 */

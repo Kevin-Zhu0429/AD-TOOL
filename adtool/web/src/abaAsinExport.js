@@ -117,6 +117,7 @@ function alignmentSourceText(alignment) {
 }
 
 export function buildAsinGroupExport(data, params = {}) {
+  const columns = data.view === 'cores' ? ASIN_GROUP_EXPORT_COLUMNS.map((c) => c.key === 'recognition' ? { ...c, label: '核心词分类' } : c) : ASIN_GROUP_EXPORT_COLUMNS;
   const entries = (data.items ?? []).flatMap((group) => {
     const queryRows = group.query_rows?.length ? group.query_rows : [{ ...group, query: '' }];
     return queryRows.flatMap((queryRow) => identitiesForAsinRow(queryRow, data, params)
@@ -124,7 +125,7 @@ export function buildAsinGroupExport(data, params = {}) {
   });
   const markets = splitMarketTotals(entries, data.aggregation === 'average');
   const originals = originalMarketAverages(data.items ?? []);
-  const rows = entries.map(({ group, queryRow, identity, termKey }, index) => ASIN_GROUP_EXPORT_COLUMNS.map((column) => {
+  const rows = entries.map(({ group, queryRow, identity, termKey }, index) => columns.map((column) => {
     if (column.key === 'sku') return identity.sku;
     if (column.key === 'recognition') return group.recognition;
     if (column.key === 'asin') return identity.asin;
@@ -136,7 +137,7 @@ export function buildAsinGroupExport(data, params = {}) {
     if (value === null || value === undefined) return '';
     return column.rate ? value / 100 : value;
   }));
-  return { columns: ASIN_GROUP_EXPORT_COLUMNS, rows };
+  return { columns, rows };
 }
 
 export const ASIN_QUERY_EXPORT_COLUMNS = [
@@ -175,7 +176,7 @@ export function buildAsinQueryExport(data, params = {}) {
 }
 
 export function buildAsinExport(data, params = {}) {
-  return data.view === 'printers'
-    ? { ...buildAsinGroupExport(data, params), sheetName: '机型分类汇总' }
+  return data.view === 'printers' || data.view === 'cores'
+    ? { ...buildAsinGroupExport(data, params), sheetName: data.view === 'cores' ? '核心词分类汇总' : '机型分类汇总' }
     : { ...buildAsinQueryExport(data, params), sheetName: '搜索查询明细' };
 }

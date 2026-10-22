@@ -4,7 +4,7 @@
   "locale": "zh-CN",
   "canonicalMap": "UX-CONTRACT.md",
   "ownership": { "Select/Listbox": "native", "Date": "native" },
-  "requiredCommands": ["unit", "api", "asinApi", "portfolioApi", "captainApi", "auditApi", "accountsApi", "portfolioBrowser", "captainBrowser", "inventoryBrowser", "accountsBrowser", "build", "lint", "abaBrowser", "asinBrowser", "publicAbaApi", "publicAbaBrowser", "auditBrowser", "alignmentBrowser", "groupingBrowser", "abaSkusApi", "abaSkusBrowser"],
+  "requiredCommands": ["unit", "api", "asinApi", "portfolioApi", "captainApi", "auditApi", "accountsApi", "portfolioBrowser", "captainBrowser", "inventoryBrowser", "accountsBrowser", "build", "lint", "abaBrowser", "asinBrowser", "publicAbaApi", "publicAbaBrowser", "auditBrowser", "alignmentBrowser", "groupingBrowser", "abaSkusApi", "abaSkusBrowser", "abaCoresApi", "abaCoresBrowser"],
   "commands": {
     "unit": "npm --prefix web test",
     "api": "node --test server/tests/aba.test.js",
@@ -27,7 +27,9 @@
     "alignmentBrowser": "node web/tests/asinAlignment.browser.mjs",
     "groupingBrowser": "node web/tests/asinGrouping.browser.mjs",
     "abaSkusApi": "node --test server/tests/abaSkus.test.js",
-    "abaSkusBrowser": "node web/tests/abaSkus.browser.mjs"
+    "abaSkusBrowser": "node web/tests/abaSkus.browser.mjs",
+    "abaCoresApi": "node --test server/tests/abaCores.test.js",
+    "abaCoresBrowser": "node web/tests/abaCores.browser.mjs"
   },
   "evidence": { "crudFullFlow": "web/tests/aba.browser.mjs", "failurePaths": "server/tests/aba.test.js" }
 }

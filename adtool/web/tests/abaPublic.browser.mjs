@@ -50,7 +50,7 @@ try {
   const idle = () => view.locator('.aba-results[aria-busy="false"]').waitFor();
   await checkAsinExports(page, view, '/api/aba-public/asin');
   await page.locator('.verbadge').click();
-  assert.match(await page.locator('.logrel').first().innerText(), /2\.11\.1[\s\S]*ABA 同步使用最新 SKU 清单[\s\S]*原始总量/);
+  assert.match(await page.locator('.logrel').first().innerText(), /2\.11\.2[\s\S]*ABA 墨盒 KW 新增核心词分类汇总[\s\S]*原始总量/);
   await page.getByRole('button', { name: '知道了', exact: true }).click();
   assert.equal(await view.locator('input[type="file"]').count(), 0);
   assert.equal(await page.getByRole('button', { name: '手动同步', exact: true }).count(), 0);

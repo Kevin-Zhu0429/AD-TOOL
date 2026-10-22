@@ -106,6 +106,7 @@ try {
   await idle();
   await view.locator('th button').filter({ hasText: '品牌占有率' }).click();
   await idle();
+  await view.locator('th[aria-sort="descending"]').waitFor();
   assert.equal(await view.locator('th[aria-sort="descending"]').count(), 1);
   assert.match(await rows().first().innerText(), /hp 4310/);
   await page.screenshot({ path: output + 'aba-asin-desktop.png', fullPage: true });

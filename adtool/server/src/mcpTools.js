@@ -173,7 +173,7 @@ export function createInkMcpServer({ authInfo, siteUrl = '' } = {}) {
         competitors: opportunities(items, product, data.settings?.min_sales ?? 100).slice(0, args.limit) })) }, args);
     });
   for (const [name, path, label] of [['get_aba_brand', '/api/aba', '本人品牌'], ['get_aba_asin', '/api/aba/asin', '本人 ASIN'], ['get_public_aba', '/api/aba-public/asin', '公共 ASIN']]) {
-    route(name, `查询${label} ABA 周报、搜索词和机型分类。query 支持 brand、weeks(结束日期逗号分隔)、q、view=queries/printers、wordType=all/printer/cartridge、model、asin、skuId、year、month、aggregation=sum/average、merge=0/1、sort、direction、page、pageSize。分页不影响全量汇总。`,
+    route(name, `查询${label} ABA 周报、搜索词和机型分类。query 支持 brand、weeks(结束日期逗号分隔)、q、view=queries/printers${name === 'get_aba_brand' ? '' : '/cores'}、wordType=all/printer/cartridge、model、asin、skuId、year、month、aggregation=sum/average、merge=0/1、sort、direction、page、pageSize。分页不影响全量汇总。`,
       { marketplace: market, query }, 'GET', path);
   }
   route('import_aba_brand', '导入本人品牌搜索查询 CSV 周报，同账号/品牌/周重传更新；files 为 name+text。', { marketplace: market, files: reportFiles }, 'POST', '/api/aba/import');
