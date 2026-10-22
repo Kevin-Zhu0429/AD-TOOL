@@ -71,7 +71,7 @@ button,input,select,textarea{font-family:inherit;font-size:inherit;color:inherit
 
 /* ---------- 顶栏 ---------- */
 .app{display:flex;flex-direction:column;height:100%;overflow:hidden}
-.topbar{background:var(--chrome);color:var(--on-fill);padding:9px 16px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.topbar{background:var(--chrome);color:var(--on-fill);padding:9px 16px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;flex:none}
 .brand{display:flex;align-items:baseline;gap:9px;margin-right:4px}
 .brand b{font-size:16px;font-weight:700;letter-spacing:-.02em}
 .brand span{font-size:11px;color:var(--chrome-dim);letter-spacing:.1em}
@@ -113,8 +113,8 @@ button,input,select,textarea{font-family:inherit;font-size:inherit;color:inherit
 .up{color:var(--gd)} .down{color:var(--mg)} .flat{color:var(--ink45)}
 
 /* ---------- 主体 ---------- */
-.main{flex:1;display:grid;grid-template-columns:364px 1fr;overflow:hidden}
-.rail{background:var(--card);border-right:1px solid var(--line);display:flex;flex-direction:column;overflow:hidden}
+.main{flex:1;min-height:0;min-width:0;display:grid;grid-template-columns:364px minmax(0,1fr);overflow:hidden}
+.rail{background:var(--card);border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0;min-width:0;overflow:hidden}
 .railhead{padding:10px 12px;border-bottom:1px solid var(--line);flex:none}
 .srch{width:100%;padding:7px 10px;border:1px solid var(--line);border-radius:3px;background:var(--card)}
 .srch:focus{outline:2px solid var(--cy-b);border-color:var(--cy)}
@@ -127,7 +127,7 @@ button,input,select,textarea{font-family:inherit;font-size:inherit;color:inherit
 .chip.good.on{background:var(--gd);border-color:var(--gd)}
 .railmeta{display:flex;gap:6px;margin-top:7px;align-items:center}
 .railmeta select{flex:1;min-width:0;padding:4px 6px;border:1px solid var(--line);border-radius:4px;background:var(--card);font-size:12px}
-.raillist{overflow-y:auto;flex:1}
+.raillist{overflow-y:auto;flex:1;min-height:0;overscroll-behavior:contain}
 .crow{border-bottom:1px solid var(--line2);padding:10px 12px 10px 14px;cursor:pointer;position:relative;border-left:3px solid transparent}
 .crow:hover{background:var(--hover)}
 .crow.sel{background:var(--cy-b)}
@@ -143,7 +143,8 @@ button,input,select,textarea{font-family:inherit;font-size:inherit;color:inherit
 .edited-mark{position:absolute;right:10px;top:10px;font-size:10px;background:var(--cy);color:var(--on-fill);border-radius:2px;padding:1px 4px;font-family:var(--mono)}
 
 /* ---------- 详情 ---------- */
-.detail{overflow-y:auto;display:flex;flex-direction:column}
+.detail{overflow:auto;min-height:0;min-width:0;display:flex;flex-direction:column;overscroll-behavior:contain}
+.detail > *{flex-shrink:0}
 .dhead{background:var(--card);border-bottom:1px solid var(--line);padding:14px 18px}
 .dtitle{font-size:18px;font-weight:700;letter-spacing:-.02em;word-break:break-all}
 .dmeta{display:flex;gap:9px;flex-wrap:wrap;margin-top:6px;font-size:12px;color:var(--ink70);align-items:center}
@@ -186,7 +187,7 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px;background:var(--ca
 .tbl tr.lv-good td:first-child{box-shadow:inset 3px 0 0 var(--gd)}
 .tbl tr.paused td{color:var(--ink45)}
 .tbl tr.paused .nmcell{text-decoration:line-through}
-.cellin{width:84px;border:1px solid var(--line);border-radius:4px;padding:4px 7px;font-family:var(--mono);text-align:right;background:var(--card)}
+.cellin{width:84px;border:1px solid var(--line);border-radius:4px;padding:4px 7px;font-family:var(--mono);text-align:right;background:var(--card);color:var(--ink)}
 .cellin:focus{outline:2px solid var(--cy-b);border-color:var(--cy)}
 .cellin.dirty,.cellsel.dirty{border-color:var(--cy);background:var(--cy-b);font-weight:700}
 .cellsel{border:1px solid var(--line);border-radius:4px;padding:4px 6px;background:var(--card);font-size:12px}
@@ -213,12 +214,12 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px;background:var(--ca
 .vbtn{padding:5px 13px;font-size:13px;color:var(--chrome-dim);cursor:pointer;white-space:nowrap}
 .vbtn:hover{color:var(--on-fill)}
 .vbtn.on{background:var(--cy);color:var(--on-fill);font-weight:600}
-.analysis{flex:1;display:flex;flex-direction:column;overflow:hidden;background:var(--card)}
+.analysis{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden;background:var(--card)}
 .antabs{display:flex;background:var(--card);border-bottom:1px solid var(--line);flex:none;padding:0 6px}
 .antabs .tab{padding:10px 16px;font-size:13px;cursor:pointer;border-bottom:2px solid transparent;color:var(--ink70)}
 .antabs .tab:hover{color:var(--ink)}
 .antabs .tab.on{border-bottom-color:var(--fill);color:var(--ink);font-weight:600}
-.anbody{flex:1;overflow:auto}
+.anbody{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain}
 .anbar{display:flex;gap:10px;align-items:center;padding:11px 18px;background:var(--head);border-bottom:1px solid var(--line);flex-wrap:wrap;font-size:13px;position:sticky;top:0;z-index:8}
 .anbar input[type=text],.anbar input[type=number],.anbar select{border:1px solid var(--line);border-radius:4px;padding:5px 9px;background:var(--card);font-size:13px}
 .anbar input[type=text]{width:190px}
@@ -392,7 +393,7 @@ table.sub{width:100%;border-collapse:collapse;font-size:12px;background:var(--ca
 .toast.on{opacity:1}
 @media (prefers-reduced-motion: reduce){*{transition:none !important;animation:none !important}}
 @media (max-width:640px){.loadbar{grid-template-columns:minmax(0,1fr) auto}.loadbar progress{grid-column:1/-1;grid-row:2}.loadcopy{display:block}.loadcopy strong,.loadcopy span{display:block}.loadcopy span{margin-top:2px}}
-@media (max-width:900px){.main{grid-template-columns:1fr;grid-template-rows:240px 1fr}.rail{border-right:0;border-bottom:1px solid var(--line)}}
+@media (max-width:900px){.main{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0, min(240px, 45%)) minmax(0,1fr)}.rail{border-right:0;border-bottom:1px solid var(--line)}}
 /* 船长同步的库存变动 → 一键关闭 / 重新开启商品广告 */
 .inventory-alert > div{flex:1}
 .inventory-alert .btn{flex:none;align-self:center}

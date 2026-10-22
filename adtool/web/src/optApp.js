@@ -519,7 +519,7 @@ export function mountOptimizer(root, host, options) {
       '<button class="btn sm" data-batch="enable">启用</button>'+
       (kind==='target'?'<button class="btn sm" data-batch="bid-10">竞价 −10%</button><button class="btn sm" data-batch="bid-20">竞价 −20%</button>'+
         '<button class="btn sm" data-batch="bid+10">竞价 +10%</button>'+
-        '<span style="margin-left:6px">设为 <input type="number" step="0.01" id="batchBid" style="width:70px" class="cellin"> </span>'+
+        '<label style="margin-left:6px">设为 <input type="number" step="0.01" id="batchBid" style="width:70px" class="cellin"> </label>'+
         '<button class="btn sm" data-batch="bid-set">应用</button>':'')+
       '<div style="flex:1"></div><button class="btn sm" data-batch="clear">取消选择</button></div>';
   }

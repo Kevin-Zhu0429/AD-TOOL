@@ -170,7 +170,7 @@ export default function App() {
           首次进入后只隐藏、不卸载，回到其他页面再切回来仍是原来的实例。
         */}
         {optimizerOpened && user.adOpt && (
-          <div style={{ display: page === 'optimizer' ? 'block' : 'none' }}>
+          <div className="optimizer-slot" style={{ display: page === 'optimizer' ? 'block' : 'none' }}>
             <Suspense fallback={null}>
               <OptimizerPage theme={theme} market={market} />
             </Suspense>

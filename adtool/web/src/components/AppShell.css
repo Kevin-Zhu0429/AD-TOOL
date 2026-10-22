@@ -143,6 +143,15 @@
 
 .shell-main { flex: 1; overflow: auto; }
 
+/* 优化工作台独占剩余高度，管理员提示仍留在工作台上方。 */
+.shell-main-optimizer { display: flex; flex-direction: column; }
+.shell-main-optimizer > .admin-attention { flex: none; }
+.optimizer-slot { flex: 1; min-height: 400px; }
+
+/* 工具条换行后仍给列表和详情留出可操作高度，提示过长时由页面承接。 */
+@media (max-width: 900px) { .optimizer-slot { min-height: 720px; } }
+@media (max-width: 640px) { .optimizer-slot { min-height: 900px; } }
+
 @media (max-width: 780px) {
   .topbar { gap: 6px; padding: 0 10px; }
   .topbar-name { display: none; }

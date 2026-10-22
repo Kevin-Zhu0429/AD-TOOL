@@ -4,8 +4,9 @@
   "locale": "zh-CN",
   "canonicalMap": "UX-CONTRACT.md",
   "ownership": { "Select/Listbox": "native", "Date": "native" },
-  "requiredCommands": ["unit", "api", "asinApi", "portfolioApi", "captainApi", "auditApi", "accountsApi", "portfolioBrowser", "captainBrowser", "inventoryBrowser", "accountsBrowser", "build", "lint", "abaBrowser", "asinBrowser", "publicAbaApi", "publicAbaBrowser", "auditBrowser", "alignmentBrowser", "groupingBrowser", "abaSkusApi", "abaSkusBrowser", "abaCoresApi", "abaCoresBrowser"],
+  "requiredCommands": ["unit", "api", "asinApi", "portfolioApi", "captainApi", "auditApi", "accountsApi", "portfolioBrowser", "captainBrowser", "inventoryBrowser", "accountsBrowser", "build", "lint", "abaBrowser", "asinBrowser", "publicAbaApi", "publicAbaBrowser", "auditBrowser", "alignmentBrowser", "groupingBrowser", "abaSkusApi", "abaSkusBrowser", "abaCoresApi", "abaCoresBrowser", "optimizerBrowser"],
   "commands": {
+    "optimizerBrowser": "node web/tests/optimizerLayout.browser.mjs",
     "unit": "npm --prefix web test",
     "api": "node --test server/tests/aba.test.js",
     "build": "npm --prefix web run build",
