@@ -192,3 +192,38 @@ test('original-total columns are interleaved complete query market averages, ind
     market_weeks: [{ week_end: '2026-09-19', market_clicks: 0, market_purchases: 0, market_impressions: 0 }] }] }] });
   assert.equal(zero.rows[0][zero.columns.findIndex((c) => c.key === 'market_cvr_original')], '');
 });
+
+
+test('four selected weeks never dilute a source ASIN appearing in one week, including a real zero-count week', () => {
+  const weeks = ['2026-09-26', '2026-10-03', '2026-10-10', '2026-10-17'];
+  const markets = [[4400,100,30], [4500,110,36], [5051,117,36], [4089,96,35]];
+  const row = (asin, index, counts) => ({ asin, query: 'hp deskjet 3700 printer ink cartridges',
+    group: { key: 'hp|deskjet3700' }, recognition: 'HP DESKJET3700', candidates: [],
+    week_start: weeks[index], week_end: weeks[index], week_number: 39 + index, query_volume: 100,
+    market_impressions: markets[index][0], market_clicks: markets[index][1], market_purchases: markets[index][2],
+    asin_impressions: counts[0], asin_clicks: counts[1], asin_purchases: counts[2] });
+  const source = weeks.map((_, i) => row('A', i, [100*(i+1),10*(i+1),2*(i+1)]));
+  source.push(row('B', 3, [12,1,0]), row('C', 0, [20,2,1]), row('C', 1, [0,0,0]));
+  const skuItems = ['A','B','C'].map((asin, i) => ({ id: i+1, asin, sku: 'SKU-'+asin }));
+  const details = aggregateAsinView(source, { average: true });
+  for (const view of ['printers', 'cores']) {
+    const items = aggregateAsinView(source, { view: 'printers', average: true, includeQueries: true });
+    const book = buildAsinExport({ view, aggregation: 'average', skuItems, items });
+    const col = (key) => book.columns.findIndex((c) => c.key === key);
+    for (const [asin, imp, clicks, purchases, observed] of [['A',250,25,5,4], ['B',12,1,0,1], ['C',10,1,0.5,2]]) {
+      const exported = book.rows.find((r) => r[col('asin')] === asin);
+      const website = details.find((r) => r.asin === asin);
+      const sourceRow = items[0].query_rows.find((r) => r.asin === asin);
+      assert.equal(sourceRow.average_weeks, observed);
+      for (const [key, value] of [['asin_impressions',imp],['asin_clicks',clicks],['asin_purchases',purchases]]) {
+        assert.equal(exported[col(key)], value, view+' '+asin+' '+key);
+        assert.equal(exported[col(key)], website[key]);
+      }
+      assert.equal(exported[col('asin_cvr')], website.asin_cvr / 100);
+      assert.equal(exported[col('market_impressions_original')], 4510);
+      assert.equal(exported[col('market_clicks_original')], 105.75);
+      assert.equal(exported[col('market_purchases_original')], 34.25);
+    }
+    assert.equal(items[0].asin_clicks, 25.75, 'merged query summary retains its existing four-week denominator');
+  }
+});

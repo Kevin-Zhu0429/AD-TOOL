@@ -175,16 +175,9 @@ export function aggregateAsinView(rows, { series = false, view = 'queries', merg
     const exportQueries = mergeSources
       ? aggregateAsinQueries(rows, { series: false, mergeWeeks, average, modelLabel }).map(asinRates)
       : queries.map(asinRates);
-    // Each ASIN contributes to the same observed-week average as the merged query.
-    if (average && mergeSources) {
-      const queryWeeks = new Map(queries.map((row) => [JSON.stringify([row.group.key, row.query]), row.average_weeks]));
-      for (const row of exportQueries) {
-        const weeks = queryWeeks.get(JSON.stringify([row.group.key, row.query]));
-        for (const key of ASIN_COUNT_KEYS) if (row[key] != null) row[key] *= row.average_weeks / weeks;
-        row.average_weeks = weeks;
-        Object.assign(row, asinRates(row));
-      }
-    }
+    // Source detail rows keep their own observed-week averages, just like the
+    // per-ASIN query view. Merged-query averages use a different denominator
+    // and cannot be reconstructed by adding these independent source averages.
     // Exports split each week's market totals across the SKUs that have that week.
     const marketWeeks = new Map();
     for (const row of rows) {

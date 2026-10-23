@@ -4,9 +4,11 @@
   "locale": "zh-CN",
   "canonicalMap": "UX-CONTRACT.md",
   "ownership": { "Select/Listbox": "native", "Date": "native" },
-  "requiredCommands": ["unit", "api", "asinApi", "portfolioApi", "captainApi", "auditApi", "accountsApi", "portfolioBrowser", "captainBrowser", "inventoryBrowser", "accountsBrowser", "build", "lint", "abaBrowser", "asinBrowser", "publicAbaApi", "publicAbaBrowser", "auditBrowser", "alignmentBrowser", "groupingBrowser", "abaSkusApi", "abaSkusBrowser", "abaCoresApi", "abaCoresBrowser", "optimizerBrowser", "asinResolutionApi", "asinResolutionBrowser"],
+  "requiredCommands": ["unit", "api", "asinApi", "portfolioApi", "captainApi", "auditApi", "accountsApi", "portfolioBrowser", "captainBrowser", "inventoryBrowser", "accountsBrowser", "build", "lint", "abaBrowser", "asinBrowser", "publicAbaApi", "publicAbaBrowser", "auditBrowser", "alignmentBrowser", "groupingBrowser", "abaSkusApi", "abaSkusBrowser", "abaCoresApi", "abaCoresBrowser", "optimizerBrowser", "asinResolutionApi", "asinResolutionBrowser", "asinOwnWeeksApi", "asinOwnWeeksBrowser"],
   "commands": {
     "optimizerBrowser": "node web/tests/optimizerLayout.browser.mjs",
+    "asinOwnWeeksApi": "node --test server/tests/asinOwnWeeks.test.js",
+    "asinOwnWeeksBrowser": "node web/tests/asinOwnWeeks.browser.mjs",
     "asinResolutionApi": "node --test server/tests/asinResolution.test.js",
     "asinResolutionBrowser": "node web/tests/asinResolution.browser.mjs",
     "unit": "npm --prefix web test",

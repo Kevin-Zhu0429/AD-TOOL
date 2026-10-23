@@ -213,7 +213,7 @@ test('weekly averages use each query observed weeks, preserve decimals and add u
   const otherAsin = seriesExport.query_rows.find((row) => row.asin === 'B000008888' && row.query === base.query);
   assert.equal(seriesExport.query_rows.length, 3);
   assert.equal(original.asin_clicks, 10.5);
-  assert.equal(otherAsin.asin_clicks, 5);
+  assert.equal(otherAsin.asin_clicks, 10);
   assert.notEqual(original, otherAsin);
   const conflict = aggregateAsinView([base, { ...base, asin: 'B000008888', market_clicks: 101 }, next], { average: true, series: true })[0];
   assert.equal(conflict.market_clicks, null);
@@ -221,7 +221,7 @@ test('weekly averages use each query observed weeks, preserve decimals and add u
   assert.equal(conflict.conflict_count, 1);
 });
 
-test('printer summary merges all ASINs without a model selection and exports the same observed-week contributions', () => {
+test('printer summary merges all ASINs while exports retain each source own observed-week average', () => {
   const report = parseAsinReport(asinFirst.text, asinFirst.name, 'ES');
   const base = { ...report, ...report.rows[0], candidates: [], recognition: 'HP 2820', group: { key: '2820' } };
   const rows = [base, { ...base, week_end: '2026-09-05' }, { ...base, asin: 'B000008888', asin_clicks: 20 }];
@@ -234,8 +234,8 @@ test('printer summary merges all ASINs without a model selection and exports the
   assert.equal(summed[0].asin_clicks, 40);
   const averaged = aggregateAsinView(rows, { view: 'printers', average: true, includeQueries: true })[0];
   assert.equal(averaged.asin_clicks, 20);
-  assert.equal(averaged.query_rows.reduce((n, r) => n + r.asin_clicks, 0), averaged.asin_clicks);
-  assert.ok(averaged.query_rows.every((r) => r.average_weeks === 2));
+  assert.equal(averaged.query_rows.reduce((n, r) => n + r.asin_clicks, 0), 30);
+  assert.deepEqual(averaged.query_rows.map((r) => r.average_weeks), [2, 1]);
   const conflict = aggregateAsinView([base, { ...rows[2], market_clicks: 101 }], { view: 'printers' })[0];
   assert.equal(conflict.market_clicks, null);
   assert.equal(conflict.conflict_count, 1);

@@ -62,7 +62,7 @@ try {
     assert.equal(grouped.items[0].market_impressions, 1200); close(grouped.items[0].asin_clicks, 88 / 3);
     assert.deepEqual(grouped.items[0].asins, [one, two]); assert.equal(grouped.alignmentSummary.mismatchRecords, 3);
     const exported = await (await page.request.get(base + endpoint + '?' + params + '&export=1')).json();
-    close(exported.items[0].query_rows.reduce((n, r) => n + r.asin_clicks, 0), 88 / 3);
+    close(exported.items[0].query_rows.reduce((n, r) => n + r.asin_clicks, 0), 36);
     const child = await (await page.request.get(base + endpoint + '?' + params + '&view=queries&group=' + encodeURIComponent(grouped.items[0].group.key))).json();
     assert.equal(child.total, 2); close(child.items.reduce((n, r) => n + r.asin_clicks, 0), 88 / 3);
     const filtered = await (await page.request.get(base + endpoint + '?' + params + '&asin=' + two)).json();
@@ -98,7 +98,7 @@ try {
     const download = page.waitForEvent('download'); await view.getByRole('button', { name: '导出 Excel', exact: true }).click();
     const book = XLSX.readFile(await (await download).path());
     const cells = XLSX.utils.sheet_to_json(book.Sheets[book.SheetNames[0]], { header: 1, defval: '' });
-    assert.equal(cells.length, 4); close(cells.slice(1).reduce((n, r) => n + r[cells[0].indexOf('ASIN 点击')], 0), 88 / 3);
+    assert.equal(cells.length, 4); close(cells.slice(1).reduce((n, r) => n + r[cells[0].indexOf('ASIN 点击')], 0), 36);
     assert.equal(cells.slice(1).reduce((n, r) => n + r[4], 0), 1200);
     const original = cells[0].indexOf('市场IMP(原始总量)');
     assert.ok(original > 0);
