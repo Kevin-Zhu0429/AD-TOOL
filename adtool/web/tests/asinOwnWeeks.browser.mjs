@@ -3,7 +3,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
 import { startAbaTestServer } from '../../server/tests/abaHarness.js';
-import { ownIds, ownSkus, ownFiles, seedOwnWeeks } from '../../server/tests/asinOwnWeeksFixture.js';
+import { ownIds, ownSkus, ownFiles, ownPrinterQuery, ownSecondQuery, seedOwnWeeks } from '../../server/tests/asinOwnWeeksFixture.js';
 const require=createRequire(import.meta.url), { chromium }=require(process.env.PLAYWRIGHT_MODULE||'playwright'), XLSX=require('xlsx');
 const backend=await startAbaTestServer(); let vite,browser;
 try {
@@ -24,6 +24,7 @@ try {
     const idle=()=>view.locator('.aba-results[aria-busy="false"]').waitFor();
     const perform=async(fn)=>{ await Promise.all([page.waitForResponse((r)=>r.url().includes(endpoint)&&!r.url().includes('export=1')&&r.status()===200),fn()]); await idle(); };
     const choose=async(label,value)=>{ if (await view.getByLabel(label,{ exact:true }).inputValue()!==value) await perform(()=>view.getByLabel(label,{ exact:true }).selectOption(value)); };
+    const search=(query)=>perform(()=>view.getByLabel('搜索查询 / 墨盒型号',{ exact:true }).fill(query));
     const allWeeks=()=>perform(()=>view.getByRole('button',{ name:'全选',exact:true }).click());
     const download=async()=>{
       const pending=page.waitForEvent('download'); await view.getByRole('button',{ name:'导出 Excel',exact:true }).click();
@@ -35,14 +36,23 @@ try {
       const zero=rows.slice(1).find((r)=>r[col('ASIN')]===ownIds[2]); assert.equal(zero[col('ASIN IMP')],10); assert.equal(zero[col('ASIN 点击')],1); assert.equal(zero[col('ASIN 购买')],0.5);
       return rare;
     };
-    await idle(); await choose('词类型','printer'); await choose('显示方式','printers'); await allWeeks(); await choose('多周统计','average');
+    await idle(); await choose('词类型','printer'); await choose('显示方式','printers'); await allWeeks(); await choose('多周统计','average'); await search(ownPrinterQuery);
     assert.equal(await view.locator('.aba-group-row').count(),1); assert.equal(await view.locator('.aba-group-row td').nth(7).innerText(),'25.75');
     await download();
+    await search(ownSecondQuery);
+    const secondDownload=page.waitForEvent('download'); await view.getByRole('button',{ name:'导出 Excel',exact:true }).click();
+    const secondBook=XLSX.readFile(await(await secondDownload).path());
+    const secondCells=XLSX.utils.sheet_to_json(secondBook.Sheets[secondBook.SheetNames[0]],{ header:1,defval:'' });
+    const secondCol=(label)=>secondCells[0].indexOf(label);
+    const secondRare=secondCells.slice(1).find((r)=>r[secondCol('ASIN')]===ownIds[1]);
+    assert.equal(secondRare[secondCol('ASIN IMP')],23); assert.equal(secondRare[secondCol('ASIN 点击')],1);
+    assert.equal(secondRare[secondCol('ASIN 购买')],0); assert.equal(secondRare[secondCol('市场IMP(原始总量)')],1400.5);
+    await search(ownPrinterQuery);
     await choose('ASIN',ownIds[1]); await choose('显示方式','queries');
     const row=view.locator('.aba-table tbody tr').first(); assert.equal(await row.locator('td').nth(6).innerText(),'12'); assert.equal(await row.locator('td').nth(7).innerText(),'1'); assert.equal(await row.locator('td').nth(8).innerText(),'0');
     await page.screenshot({ path:fileURLToPath(new URL('../../.tmp/asin-own-week-'+scope+'.png',import.meta.url)),fullPage:true });
-    await choose('ASIN',''); await allWeeks(); await choose('词类型','cartridge'); await choose('显示方式','cores'); await download();
+    await choose('ASIN',''); await allWeeks(); await choose('词类型','cartridge'); await choose('显示方式','cores'); await search('hp 65 ink'); await download();
     await page.setViewportSize({ width:390,height:844 }); assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true); await page.setViewportSize({ width:1440,height:1000 });
   }
-  assert.deepEqual(errors,[]); console.log('Own-week ASIN export passed: private/public, four-week selection, 12/1/0 one-week source, real zero rows, printer/core XLSX, page equality, full market originals and narrow layout.');
+  assert.deepEqual(errors,[]); console.log('Own-week ASIN export passed: private/public, four-week selection, 12/1/0 and 23/1/0 one-week sources under four/two global query weeks, real zero rows, printer/core XLSX, page equality, full market originals and narrow layout.');
 } finally { await browser?.close(); await vite?.close(); await backend.close(); }

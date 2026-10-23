@@ -4,6 +4,7 @@ import { savePublicReports } from '../src/services/publicAsinData.js';
 export const ownIds = ['B000006501', 'B0BZJ2F2SK', 'B000006503'];
 export const ownPrinterQuery = 'hp deskjet 3700 printer ink cartridges';
 export const ownCoreQuery = 'hp 65 ink';
+export const ownSecondQuery = 'deskjet 3700 ink cartridges';
 export const ownWeeks = [
   { week: 39, start: '2026-09-20', end: '2026-09-26' }, { week: 40, start: '2026-09-27', end: '2026-10-03' },
   { week: 41, start: '2026-10-04', end: '2026-10-10' }, { week: 42, start: '2026-10-11', end: '2026-10-17' },
@@ -13,6 +14,10 @@ const report = (asin, index, counts) => ({ asin, ...ownWeeks[index], rows: [ownP
   .map((query) => [query, 100, ...markets[index], ...counts]) });
 export const ownReports = ownWeeks.map((_, i) => report(ownIds[0], i, [100*(i+1),10*(i+1),2*(i+1)]));
 ownReports.push(report(ownIds[1],3,[12,1,0]), report(ownIds[2],0,[20,2,1]), report(ownIds[2],1,[0,0,0]));
+// This second term exists across two weeks, but the rare ASIN has it only once.
+ownReports[1].rows.push([ownSecondQuery,100,1800,50,10,40,4,1]);
+ownReports[2].rows.push([ownSecondQuery,100,1001,27,8,50,5,1]);
+ownReports.push({ asin:ownIds[1], ...ownWeeks[2], rows:[[ownSecondQuery,100,1001,27,8,23,1,0]] });
 export const ownFiles = ownReports.map((r) => ({ name: `${r.asin}-${r.week}.csv`, text: asinFixture(r) }));
 export const ownSkus = ownIds.map((asin, i) => ({ country: 'ES', asin, brand: ['CE','PG','CC'][i], model: '65',
   sku: ['FOUR-WEEKS-65','h65xlcpg','ZERO-WEEK-65'][i], setGroup: 'C' }));

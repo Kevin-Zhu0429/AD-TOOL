@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { startAbaTestServer } from './abaHarness.js';
-import { ownIds, ownSkus, ownFiles, ownWeeks, ownPrinterQuery, ownCoreQuery, seedOwnWeeks } from './asinOwnWeeksFixture.js';
+import { ownIds, ownSkus, ownFiles, ownWeeks, ownPrinterQuery, ownCoreQuery, ownSecondQuery, seedOwnWeeks } from './asinOwnWeeksFixture.js';
 import { buildAsinExport } from '../../web/src/abaAsinExport.js';
 test('private/public source export averages match per-ASIN pages for 1/2/4 observed weeks, zero rows and both classifications', async (t) => {
   const server = await startAbaTestServer(); t.after(() => server.close()); seedOwnWeeks(server.db);
@@ -18,6 +18,15 @@ test('private/public source export averages match per-ASIN pages for 1/2/4 obser
       const response=await fetch(server.url+'/api'+endpoint+'?'+new URLSearchParams({ marketplace:'ES', weeks:ownWeeks.map((w)=>w.end).join(','), aggregation:'average', wordType:query.q===ownCoreQuery?'cartridge':'printer', ...query }),{ headers:{ cookie } });
       assert.equal(response.status,200); return response.json();
     };
+    const twoWeekTerm=await get({ view:'printers', q:ownSecondQuery, export:'1' });
+    assert.equal(twoWeekTerm.selectedWeeks.length,4);
+    const rare=twoWeekTerm.items[0].query_rows.find((r)=>r.asin===ownIds[1]);
+    assert.equal(rare.average_weeks,1); assert.equal(rare.asin_impressions,23); assert.equal(rare.asin_clicks,1);
+    assert.equal(twoWeekTerm.items[0].periods.length,2);
+    const secondBook=buildAsinExport(twoWeekTerm), secondCol=(key)=>secondBook.columns.findIndex((c)=>c.key===key);
+    const secondCells=secondBook.rows.find((r)=>r[secondCol('asin')]===ownIds[1]);
+    assert.equal(secondCells[secondCol('asin_impressions')],23); assert.equal(secondCells[secondCol('asin_clicks')],1);
+    assert.equal(secondCells[secondCol('market_impressions_original')],1400.5);
     for (const [view,query] of [['printers',ownPrinterQuery],['cores',ownCoreQuery]]) {
       const all=await get({ view, q:query, export:'1' }); assert.equal(all.selectedWeeks.length,4); assert.equal(all.total,1);
       assert.equal(all.items[0].asin_clicks,25.75);
