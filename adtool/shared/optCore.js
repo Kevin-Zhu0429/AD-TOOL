@@ -227,8 +227,34 @@ function worstLevel(flags) {
 }
 
 /* ---------- 解析工作簿 ---------- */
+// 后台导出的批量表有时把 <dimension> 写错(例如 153313 行的表只写 A1:BB1),
+// SheetJS 照着它截范围,结果只剩表头、一行数据都读不到。这里按实际单元格重算范围。
+export function repairSheetRefs(wb, XLSX) {
+  (wb.SheetNames || []).forEach(function (n) {
+    var ws = wb.Sheets[n];
+    if (!ws) return;
+    var maxR = -1, maxC = -1;
+    for (var key in ws) {
+      if (key.charCodeAt(0) === 33) continue; // '!' 开头是元信息
+      var c = 0, i = 0, code;
+      while (i < key.length && (code = key.charCodeAt(i)) >= 65 && code <= 90) { c = c * 26 + code - 64; i++; }
+      var r = +key.slice(i);
+      if (!i || !r) continue;
+      if (r - 1 > maxR) maxR = r - 1;
+      if (c - 1 > maxC) maxC = c - 1;
+    }
+    if (maxR < 0) return;
+    var range = ws['!ref'] ? XLSX.utils.decode_range(ws['!ref']) : { s: { r: 0, c: 0 }, e: { r: 0, c: 0 } };
+    if (maxR <= range.e.r && maxC <= range.e.c) return;
+    range.e.r = Math.max(range.e.r, maxR);
+    range.e.c = Math.max(range.e.c, maxC);
+    ws['!ref'] = XLSX.utils.encode_range(range);
+  });
+  return wb;
+}
+
 function parse(arrayBuffer, XLSX) {
-  var wb = XLSX.read(arrayBuffer, { type: 'array' });
+  var wb = repairSheetRefs(XLSX.read(arrayBuffer, { type: 'array' }), XLSX);
   var sheetName = null;
   ['商品推广活动', 'Sponsored Products Campaigns'].forEach(function (n) {
     if (!sheetName && wb.SheetNames.indexOf(n) >= 0) sheetName = n;
@@ -352,7 +378,7 @@ function reportCols(header) {
 }
 
 function parseSearchTermReport(arrayBuffer, model, XLSX) {
-  var wb = XLSX.read(arrayBuffer, { type: 'array' });
+  var wb = repairSheetRefs(XLSX.read(arrayBuffer, { type: 'array' }), XLSX);
   var best = null;
   wb.SheetNames.forEach(function (n) {
     if (best) return;
