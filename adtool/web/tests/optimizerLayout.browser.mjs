@@ -74,8 +74,13 @@ try {
       return route.fulfill({ json: data });
     });
     await page.goto(`http://127.0.0.1:${vite.httpServer.address().port}`);
+    const attention = page.getByLabel('超级管理员待处理事项', { exact: true });
+    await page.locator('.topnav').getByRole('button', { name: '首页', exact: true }).waitFor();
+    if (role === 'owner') await attention.getByRole('heading', { name: '待处理事项 · 1 项' }).waitFor();
+    else assert.equal(await attention.count(), 0);
     await page.getByRole('button', { name: '广告优化', exact: true }).click();
     await page.locator('.dropbox').waitFor();
+    assert.equal(await attention.count(), 0);
     assert.equal((await state(page)).shell.top, 0);
     await page.locator('#fileA').setInputFiles(workbook());
     await page.locator('#raillist .crow').first().click();
@@ -141,9 +146,18 @@ try {
     // Switching routes retains the native workbench instance and restores the sibling page layout.
     await page.getByRole('button', { name: '开设广告', exact: true }).click();
     await page.locator('.bhero').first().waitFor();
+    assert.equal(await attention.count(), 0);
     assert.equal(await page.locator('.shell-main-optimizer').count(), 0);
     assert.equal(await page.locator('.optimizer-slot').isVisible(), false);
+    const attentionReload = role === 'owner'
+      ? page.waitForResponse((response) => new URL(response.url()).pathname === '/api/aba-public/attention' && response.ok())
+      : Promise.resolve();
+    await page.locator('.topnav').getByRole('button', { name: '首页', exact: true }).click();
+    await attentionReload;
+    if (role === 'owner') await attention.getByRole('heading', { name: '待处理事项 · 1 项' }).waitFor();
+    else assert.equal(await attention.count(), 0);
     await page.getByRole('button', { name: '广告优化', exact: true }).click();
+    assert.equal(await attention.count(), 0);
     assert.match(await page.locator('#chgCount').innerText(), /65 处改动/);
     await page.locator('[data-view="analysis"]').click();
     await page.locator('#anbody').waitFor();
@@ -179,7 +193,7 @@ try {
     assert.deepEqual(errors, []);
     await context.close();
   }
-  console.log('Optimizer layout browser workflow passed: independent scrolling, boundaries, theme contrast, bulk bids, persistent routes, analysis and narrow layouts (operator + owner).');
+  console.log('Optimizer layout browser workflow passed: home-only owner attention, independent scrolling, boundaries, theme contrast, bulk bids, persistent routes, analysis and narrow layouts (operator + owner).');
 } finally {
   await browser?.close();
   await vite.close();

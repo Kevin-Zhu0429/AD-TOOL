@@ -132,11 +132,11 @@ try {
   }
   await login(ownerPage, 'aba-other');
   const attention = ownerPage.getByLabel('超级管理员待处理事项', { exact: true });
+  assert.equal(await attention.count(), 0);
+  await ownerPage.locator('.topnav').getByRole('button', { name: '首页', exact: true }).click();
   await attention.getByRole('heading', { name: '待处理事项 · 4 项' }).waitFor();
   assert.equal(await attention.locator('li').count(), 3);
   assert.match(await attention.innerText(), /8 份 ASIN 周报/);
-  await ownerPage.locator('.topnav').getByRole('button', { name: '首页', exact: true }).click();
-  await attention.getByRole('heading', { name: '待处理事项 · 4 项' }).waitFor();
   await ownerPage.reload();
   await attention.getByRole('heading', { name: '待处理事项 · 4 项' }).waitFor();
   await attention.getByRole('button', { name: '查看全部 4 项待处理事项' }).focus();
@@ -164,6 +164,7 @@ try {
   await attention.getByRole('alert').waitFor({ state: 'hidden' });
   await attention.getByRole('button', { name: '前往公共 ABA 处理' }).click();
   await ownerPage.getByRole('heading', { name: 'ABA报告（公共）', exact: true }).waitFor();
+  assert.equal(await attention.count(), 0);
   await ownerPage.getByRole('button', { name: '手动同步', exact: true }).click();
   await ownerPage.getByRole('heading', { name: '同步进行中', exact: true }).waitFor();
   assert.ok(await ownerPage.getByLabel('报告批次处理进度').count());
@@ -185,11 +186,14 @@ try {
   // Server-confirmed recovery removes notices; reading them did not clear any rows.
   assert.equal(backend.db.prepare('SELECT COUNT(*) n FROM aba_public_actions').get().n, 8);
   backend.db.prepare('DELETE FROM aba_public_actions').run();
-  await attention.getByRole('button', { name: '刷新待处理事项' }).click();
+  assert.equal(await attention.count(), 0);
+  const attentionReload = ownerPage.waitForResponse((response) => new URL(response.url()).pathname === '/api/aba-public/attention' && response.ok());
+  await ownerPage.locator('.topnav').getByRole('button', { name: '首页', exact: true }).click();
+  await attentionReload;
   await attention.getByRole('heading', { name: '待处理事项 · 暂无待处理事项' }).waitFor();
   assert.equal(await attention.locator('li').count(), 0);
   assert.deepEqual(errors, []);
-  console.log('Public ABA browser passed: all-country access, shared SKU/model filters, public nested details and XLSX export, role restriction, persisted progress, errors/retry, keyboard, light/dark and narrow layout.');
+  console.log('Public ABA browser passed: all-country access, shared SKU/model filters, public nested details and XLSX export, role restriction, home-only attention with fresh recovery status, persisted progress, errors/retry, keyboard, light/dark and narrow layout.');
 } finally {
   await browser?.close();
   await vite?.close();

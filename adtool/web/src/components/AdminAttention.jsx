@@ -6,8 +6,8 @@ import './AbaPage.css';
 
 const COUNTRIES = { ES: '西班牙', DE: '德国', FR: '法国', IT: '意大利', UK: '英国', US: '美国', CA: '加拿大' };
 
-/** 登录后在全部页面持续展示，读取不会将未解决事项标为已处理。 */
-export default function AdminAttention({ onOpen, refreshKey }) {
+/** 仅在超级管理员首页展示，读取不会将未解决事项标为已处理。 */
+export default function AdminAttention({ onOpen }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [retry, setRetry] = useState(0);
@@ -31,7 +31,7 @@ export default function AdminAttention({ onOpen, refreshKey }) {
     };
     poll();
     return () => { controller.abort(); clearTimeout(timer); };
-  }, [retry, refreshKey]);
+  }, [retry]);
   const items = data?.items ?? [];
   const { pageSize } = paging;
   const pageCount = Math.max(1, Math.ceil(items.length / pageSize));

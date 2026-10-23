@@ -141,7 +141,7 @@ export default function AppShell({
       </header>
 
       <main className={`shell-main${page === 'optimizer' ? ' shell-main-optimizer' : ''}`}>
-        {user.role === 'owner' && <AdminAttention key={user.id} refreshKey={page} onOpen={() => onNav('abaPublic')} />}
+        {user.role === 'owner' && page === 'home' && <AdminAttention key={user.id} onOpen={() => onNav('abaPublic')} />}
         {children}
       </main>
     </div>
