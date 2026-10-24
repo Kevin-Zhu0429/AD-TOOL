@@ -209,10 +209,10 @@ test('AI connectors: OAuth login, read tools, proposals and token lifecycle', as
     const tools = (await mcp.listTools()).tools;
     assert.deepEqual(tools.map((tool) => tool.name).sort(), ['claim_confirmed_ad_changes', 'get_agent_context', 'get_catalog_items', 'get_change_impact', 'get_competitor_overview', 'get_listing',
       'get_listing_attributes', 'get_listing_health', 'get_product_images', 'get_returns', 'get_sales_stats', 'get_sales_trend', 'get_search_terms', 'get_storage_fees', 'get_style_intel', 'get_traffic',
-      'list_change_proposals', 'list_skus', 'mark_ad_changes_applied', 'propose_ad_changes', 'propose_listing_changes', 'report_ad_change_result', 'save_ad_spend', 'save_daily_report', 'save_lesson', 'save_weekly_report', 'store_overview']);
+      'list_change_proposals', 'list_skus', 'mark_ad_changes_applied', 'propose_ad_changes', 'propose_listing_changes', 'report_ad_change_result', 'save_ad_spend', 'save_daily_report', 'save_lesson', 'save_sku_ad_stats', 'save_weekly_report', 'store_overview']);
     // 会写东西的只有:两个提议工具(写进网站的待确认队列)和日报、经验(写网站自己的表),都不碰亚马逊
     assert.deepEqual(tools.filter((tool) => !tool.annotations.readOnlyHint).map((tool) => tool.name).sort(),
-      ['claim_confirmed_ad_changes', 'mark_ad_changes_applied', 'propose_ad_changes', 'propose_listing_changes', 'report_ad_change_result', 'save_ad_spend', 'save_daily_report', 'save_lesson', 'save_weekly_report']);
+      ['claim_confirmed_ad_changes', 'mark_ad_changes_applied', 'propose_ad_changes', 'propose_listing_changes', 'report_ad_change_result', 'save_ad_spend', 'save_daily_report', 'save_lesson', 'save_sku_ad_stats', 'save_weekly_report']);
     assert.ok(tools.every((tool) => tool.annotations.destructiveHint !== true));
     const call = async (name, args = {}) => {
       const result = await mcp.callTool({ name, arguments: args });

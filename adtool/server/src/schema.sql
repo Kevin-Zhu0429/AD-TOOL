@@ -564,6 +564,24 @@ CREATE TABLE IF NOT EXISTS pet_ad_spend_daily (
   updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
 
+-- 每个 SKU 每月的广告花费和广告销售额(SP/SB/SD 合计,按推广的 SKU 归):广告 API 开通前由 Claude 用 Miguelpet 查好写进来
+-- (MCP save_sku_ad_stats),同一个月再写整月替换。价格策略表按它算每个 SKU 的 ACOS 和费比
+CREATE TABLE IF NOT EXISTS pet_ad_sku_monthly (
+  month TEXT NOT NULL,
+  sku TEXT NOT NULL COLLATE NOCASE,
+  asin TEXT,
+  spend REAL NOT NULL DEFAULT 0,
+  sales REAL,
+  orders INTEGER,
+  units INTEGER,
+  clicks INTEGER,
+  impressions INTEGER,
+  through_day TEXT,
+  source TEXT,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  PRIMARY KEY(month, sku)
+);
+
 -- 亚马逊 Listing 当前售价和状态,每次同步整表替换
 CREATE TABLE IF NOT EXISTS pet_listing_cache (
   sku TEXT PRIMARY KEY COLLATE NOCASE,

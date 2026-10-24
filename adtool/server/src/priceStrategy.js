@@ -6,8 +6,8 @@ import { pacificDay, shiftDay } from './petAmazon.js';
 import { priceSyncStatus, syncAmazonData } from './priceStrategySync.js';
 import { buildPriceBoard, monthlySummary, recentDays, weeklySummary } from './petSales.js';
 import { withProfit, yearGrossProfit } from './petCosts.js';
-import { monthlyAdSpend } from './petAdSpend.js';
-import { monthlyStorageCosts } from './petStorage.js';
+import { monthlyAdSpend, skuAdMonths, skuAdStats } from './petAdSpend.js';
+import { monthlyStorageCosts, shiftMonth, skuStorageCosts } from './petStorage.js';
 
 export const priceStrategyRouter = express.Router();
 priceStrategyRouter.use(requireLogin);
@@ -26,8 +26,51 @@ priceStrategyRouter.get('/', (req, res) => {
   const board = buildPriceBoard({ skus, sales, listings, today });
   // 每行带上单件毛利和毛利率(成本、FBA 费、佣金来自 SKU 库)
   board.rows = withProfit(board.rows).map(({ fob, firstLeg, duty, referralRate, feeUpdatedAt, costUpdatedAt, ...row }) => row);
-  res.json({ ...board, sync: priceSyncStatus() });
+  const thisMonth = today.slice(0, 7);
+  const month = /^\d{4}-(0[1-9]|1[0-2])$/.test(String(req.query.month ?? '')) && req.query.month <= thisMonth ? req.query.month : thisMonth;
+  const costs = monthCosts(board.rows, month, today);
+  res.json({ ...board, ...costs, feeMonths: Array.from({ length: 12 }, (_, index) => shiftMonth(thisMonth, -index)), sync: priceSyncStatus() });
 });
+
+const round2 = (value) => (value == null || !Number.isFinite(value) ? null : Math.round(value * 100) / 100);
+const percent = (part, whole) => (part != null && whole > 0 ? Math.round(part / whole * 1000) / 10 : null);
+
+/**
+ * 每个 SKU 某月的广告花费、广告销售额、ACOS(广告花费 ÷ 广告销售额)、费比(广告花费 ÷ 这个 SKU 当月全部销售额,即 TACOS)
+ * 和仓储费(月度仓储费 + 超龄附加费)。直接改 rows 的每一行,返回这个月的说明数据。
+ */
+function monthCosts(rows, month, today) {
+  const ads = skuAdStats(month);
+  const adMonth = skuAdMonths().find((item) => item.month === month) ?? null;
+  const storage = skuStorageCosts(month, today);
+  const end = month === today.slice(0, 7) ? today : `${month}-31`;
+  const sales = new Map(db.prepare('SELECT sku, SUM(units) AS units, SUM(sales) AS sales FROM pet_daily_sales WHERE day>=? AND day<=? GROUP BY lower(sku)')
+    .all(`${month}-01`, end).map((row) => [row.sku.toLowerCase(), row]));
+  const seen = new Set();
+  for (const row of rows) {
+    const key = row.sku.toLowerCase();
+    seen.add(key);
+    const ad = ads.get(key), sold = sales.get(key), fee = storage.bySku.get(key);
+    const adSpend = ad ? ad.spend : adMonth ? 0 : null;
+    const storageFee = fee && (fee.storageFee != null || fee.agedSurcharge != null) ? round2((fee.storageFee ?? 0) + (fee.agedSurcharge ?? 0)) : null;
+    Object.assign(row, {
+      feeUnits: sold?.units ?? 0, feeSales: round2(sold?.sales ?? 0),
+      adSpend, adSales: ad?.sales ?? null, adOrders: ad?.orders ?? null,
+      acos: ad ? percent(ad.spend, ad.sales) : null,
+      tacos: adSpend ? percent(adSpend, sold?.sales ?? 0) : adSpend === 0 && sold?.sales > 0 ? 0 : null,
+      storageFee, storageMonthly: fee?.storageFee ?? null, agedSurcharge: fee?.agedSurcharge ?? null,
+      storageEstimated: !!(fee?.storageEstimated || fee?.agedEstimated),
+      storagePerUnit: storageFee != null && sold?.units > 0 ? round2(storageFee / sold.units) : null,
+    });
+  }
+  // 价格策略表里没有的 SKU(SKU 库删掉的)只算进合计
+  const other = { adSpend: 0, adSales: 0 };
+  for (const [key, ad] of ads) if (!seen.has(key)) { other.adSpend += ad.spend; other.adSales += ad.sales ?? 0; }
+  return { feeMonth: month,
+    adData: adMonth ? { throughDay: adMonth.throughDay, updatedAt: adMonth.updatedAt, skus: adMonth.skus } : null,
+    storageData: { hasData: storage.hasData, estimated: storage.estimated, unmatched: storage.unmatched },
+    feeOther: { adSpend: round2(other.adSpend), adSales: round2(other.adSales) } };
+}
 
 /** 销售统计:周销量 + 每月数据 */
 priceStrategyRouter.get('/stats', (req, res) => {

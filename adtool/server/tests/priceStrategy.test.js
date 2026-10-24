@@ -213,6 +213,24 @@ test('Amazon sync fills the SKU library and daily sales; the price board and sta
   const augustAuto = (await call('/price-strategy/stats?weeks=2', user)).data.monthly.months[7];
   assert.deepEqual([augustAuto.adSpend, augustAuto.adSource, augustAuto.adDays, augustAuto.storageFee, augustAuto.agedSurcharge, augustAuto.actualProfit],
     [7, 'auto', 2, 5, 2, -14]);
+  // 价格策略表:每个 SKU 某月的广告花费、ACOS、费比和仓储费
+  const { saveSkuAdStats } = await import('../src/petAdSpend.js');
+  assert.throws(() => saveSkuAdStats('2026-9', [{ sku: 'DOG-L', spend: 1 }]), /月份格式/);
+  const savedAds = saveSkuAdStats('2026-09', [{ sku: 'DOG-L', spend: 6, sales: 20, orders: 1 }, { sku: 'dog-l', spend: 4, sales: 10, orders: 1 },
+    { sku: 'GONE', spend: 2 }], { throughDay: '2026-09-21' });
+  assert.deepEqual([savedAds.saved, savedAds.spend, savedAds.sales], [2, 12, 30], '同一 SKU 多行相加');
+  backend.db.prepare("INSERT INTO pet_storage_fees (month, asin, fee) VALUES ('2026-09', 'B000000001', 1.5)").run();
+  const feeBoard = (await call('/price-strategy?month=2026-09', user)).data;
+  assert.equal(feeBoard.feeMonth, '2026-09');
+  assert.equal(feeBoard.feeMonths[0], '2026-09');
+  const feeDog = feeBoard.rows.find((row) => row.sku === 'DOG-L'), feeXl = feeBoard.rows.find((row) => row.sku === 'DOG-XL');
+  // DOG-L 9 月卖了 $119.96:ACOS 10/30,费比 10/119.96;仓储费按 ASIN 对回 SKU
+  assert.deepEqual([feeDog.adSpend, feeDog.adSales, feeDog.acos, feeDog.tacos, feeDog.storageFee, feeDog.storageEstimated], [10, 30, 33.3, 8.3, 1.5, false]);
+  assert.deepEqual([feeXl.adSpend, feeXl.tacos, feeXl.storageFee], [0, 0, null], '这个月有广告数据但没推的 SKU 花费是 0');
+  assert.deepEqual([feeBoard.adData.throughDay, feeBoard.feeOther.adSpend], ['2026-09-21', 2]);
+  const augBoard = (await call('/price-strategy?month=2026-08', user)).data;
+  assert.deepEqual([augBoard.adData, augBoard.rows.find((row) => row.sku === 'DOG-L').adSpend, augBoard.rows.find((row) => row.sku === 'DOG-L').storageFee], [null, null, 2]);
+  assert.equal((await call('/price-strategy?month=2027-01', user)).data.feeMonth, '2026-09', '未来月份退回本月');
   // 9 月 DOG-XL 没有成本,不算进毛利,覆盖率低于 100%
   const septAuto = (await call('/price-strategy/stats?weeks=2', user)).data.monthly.months[8];
   assert.deepEqual(septAuto.missingCostSkus, ['DOG-XL']);

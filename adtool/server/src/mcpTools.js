@@ -9,7 +9,7 @@ import { buildPriceBoard, monthlySummary, recentDays, weeklySummary, WEEKDAYS } 
 import { priceSyncStatus } from './priceStrategySync.js';
 import { abaSyncStatus } from './petAbaSync.js';
 import { withProfit, yearGrossProfit } from './petCosts.js';
-import { adSpendCoverage, monthlyAdSpend, saveAdSpend } from './petAdSpend.js';
+import { adSpendCoverage, monthlyAdSpend, saveAdSpend, saveSkuAdStats, skuAdMonths } from './petAdSpend.js';
 import { latestSync } from './stockEvents.js';
 import { competitorSyncStatus, listingHealth, ownStyles, recentChanges, styleDetail } from './petCompetitors.js';
 import { AD_ACTIONS, AD_ENTITIES, claimAdChanges, listChanges, proposeAdChanges, proposeListingChanges, recordedTime, recordExecutedAdChanges, reportAdResult,
@@ -156,6 +156,8 @@ export function storeOverview({ weeks = 8 } = {}) {
     storage: storageSummary(),
     // 每天广告花费写到了哪天(save_ad_spend);lastDay 早于昨天就要补
     adSpendDays: adSpendCoverage(),
+    // 每个 SKU 每月广告数据写到了哪个月、截到哪天(save_sku_ad_stats);本月 throughDay 早于昨天就要重写本月
+    skuAdMonths: skuAdMonths().slice(-3),
     competitorChanges7d: { total: changes.length,
       byKind: changes.reduce((counts, change) => ({ ...counts, [change.label]: (counts[change.label] ?? 0) + 1 }), {}) },
     notes: ['销量来自亚马逊订单报告,按太平洋时间切日;待付款订单金额按 Listing 售价估算。',
@@ -542,7 +544,7 @@ propose_listing_changes、propose_ad_changes 只把改动放进网站的「待�
 改动执行后用 get_change_impact 看前后对比(销量、访问量、转化率、搜索份额),至少等执行后 7 天再下结论。
 看退货率、退货原因和买家退货留言用 get_returns(转化正常但差评多、或某个尺码卖得好却留不住时先看它)。
 看库龄、超龄附加费(超过 180 天的库存每月 15 号收)、月度仓储费用 get_storage_fees(决定补多少货、哪些要降价清库存或移除时先看它)。
-看月度目标和利润用 get_sales_stats(利润已扣广告花费、仓储费和超龄附加费);每日分析要用 save_ad_spend 写入每天广告花费;看竞品最近的降价、改标题、换主图用 get_competitor_overview。
+看月度目标和利润用 get_sales_stats(利润已扣广告花费、仓储费和超龄附加费);每日分析要用 save_ad_spend 写入每天广告花费,再用 save_sku_ad_stats 写入本月每个 SKU 的广告花费和广告销售额(价格策略表的 ACOS、费比用它);看竞品最近的降价、改标题、换主图用 get_competitor_overview。
 看或改标题五点以外的属性(产品描述、材质、尺寸、重量、特点、适用宠物等)先用 get_listing_attributes(全店概览,或指定 SKU 看全部属性,includeSchema 看还能填哪些),再用 propose_listing_changes 的 field=attribute 提;店主也会在网站「Listing」板块直接改,这些改动同样记在改动日志里、算冷却期。
 提改动前:先用 get_listing 看现在的文案;尺寸、材质、填充物等产品规格只写有依据的,拿不准就先问用户,不要编;同一款的不同尺码、颜色是不同 SKU,要分别提;改五点要给出全部条目;reason 写清依据的数据(搜索词份额、竞品对比、体检问题、毛利)。改价前看 list_skus 的保本价;正在做促销价的 SKU 改原价前台不变,要改前台价提 sale_price(促销价,带结束日期)。广告改动需要广告活动、广告组、关键词等的数字编号,来自用户给的批量表/报告,或 Miguelpet 连接器 query_ads 查到的编号。提完把 confirmUrl 告诉用户去确认。
 店主确认的广告改动(没有广告 API 时)由 Claude 用 Miguelpet 执行:claim_confirmed_ad_changes 领取 → 在 Miguelpet 里核对当前值 → prepare_change_plan + apply_change_plan → report_ad_change_result 回报。只执行领到的这些,一条一条照着改,不加别的。
@@ -662,6 +664,22 @@ export function createPetMcpServer(deps = {}) {
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, wrap(({ days }) => saveAdSpend(days)));
+
+  server.registerTool('save_sku_ad_stats', {
+    title: '写入每个 SKU 当月广告数据',
+    description: '把某个月每个 SKU 的广告花费和广告销售额(美元,SP/SB/SD 合计,按推广的 SKU 归)写进网站,价格策略表按它算每个 SKU 的 ACOS 和费比(广告花费 ÷ 这个 SKU 当月销售额)。广告 API 开通前,用 Miguelpet query_ads entity=productAds、groupByField=AD_SKU、dateType=CU(月初到昨天)查好再调它,每页 100 行要翻完。整月替换:同一个月再写会把这个月旧数据全部换掉,所以要一次传齐这个月所有有花费的 SKU;同一 SKU 多行会自动相加。只写网站自己的表,不碰亚马逊。',
+    inputSchema: {
+      month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/).describe('月份 YYYY-MM(太平洋时间)'),
+      throughDay: z.string().regex(DAY).optional().describe('数据截到哪天 YYYY-MM-DD,一般是昨天'),
+      skus: z.array(z.object({
+        sku: z.string().min(1), asin: z.string().optional(),
+        spend: z.number().min(0).describe('这个 SKU 当月广告花费(cost)'),
+        sales: z.number().min(0).optional().describe('广告销售额(cpcSales)'), orders: z.number().int().min(0).optional().describe('广告订单(cpcOrder)'),
+        units: z.number().int().min(0).optional().describe('广告销量'), clicks: z.number().int().min(0).optional(), impressions: z.number().int().min(0).optional(),
+      })).min(1).max(1000),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, wrap(({ month, throughDay, skus }) => saveSkuAdStats(month, skus, { throughDay })));
 
   server.registerTool('get_search_terms', {
     title: 'ABA 搜索词表现',

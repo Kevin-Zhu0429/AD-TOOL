@@ -52,3 +52,4 @@
 }
 .price-sync-card { display: grid; gap: 8px; margin-bottom: 14px; padding: 12px 16px; }
 .price-sync-card .hint { margin: 0; }
+.price-strategy .est { margin-left: 3px; padding: 0 3px; border-radius: 3px; font-size: 10px; color: var(--text-dim); border: 1px solid currentColor; }
