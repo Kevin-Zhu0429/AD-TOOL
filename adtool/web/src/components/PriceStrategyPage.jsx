@@ -69,9 +69,9 @@ export default function PriceStrategyPage({ onOpenShipments }) {
   const running = data?.sync?.running;
   useEffect(() => {
     if (!running) return undefined;
-    const timer = setInterval(() => { void load(true); }, 5_000);
+    const timer = setInterval(() => { void load(true, month); }, 5_000);
     return () => clearInterval(timer);
-  }, [running]);
+  }, [running, month]);
 
   const rows = useMemo(() => {
     if (!data) return [];
