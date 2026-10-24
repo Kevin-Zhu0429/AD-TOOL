@@ -97,6 +97,17 @@ const PROFIT_NOTES = ['单件毛利 = 售价 − 落地成本(FOB+头程+关税,
 
 // ---------- 店铺总览 ----------
 
+/** 仓储费板块的要点:超龄件数和下次附加费、下月仓储费、规则提醒;细节用 get_storage_fees */
+function storageSummary() {
+  const board = storageBoard({ months: 3 });
+  if (!board.snapshotDate && !board.lastFeeMonth) return null;
+  const { totals } = board;
+  return { snapshotDate: board.snapshotDate, aged181Units: totals.aged181, aged91To180Units: totals.aged91,
+    nextAgedSurchargeEstimate: totals.aisFee, nextMonthStorageEstimate: totals.storageNextMonth,
+    lastMonthStorageFee: totals.lastMonthFee, lastFeeMonth: totals.lastFeeMonth, excessUnits: totals.excess,
+    findings: board.findings.filter((item) => item.level !== 'info').map((item) => item.title) };
+}
+
 export function storeOverview({ weeks = 8 } = {}) {
   const today = todayOf();
   const board = priceBoard(today);
@@ -140,6 +151,7 @@ export function storeOverview({ weeks = 8 } = {}) {
     lastStockSync: stockSync ? { syncedAt: stockSync.at,
       newlyOutOfStock: stockSync.outOfStock.map((event) => ({ sku: event.sku, asin: event.asin, prevStock: event.prevStock, transit: event.transit })),
       restocked: stockSync.restocked.map((event) => ({ sku: event.sku, asin: event.asin, stock: event.stock })) } : null,
+    storage: storageSummary(),
     competitorChanges7d: { total: changes.length,
       byKind: changes.reduce((counts, change) => ({ ...counts, [change.label]: (counts[change.label] ?? 0) + 1 }), {}) },
     notes: ['销量来自亚马逊订单报告,按太平洋时间切日;待付款订单金额按 Listing 售价估算。',
@@ -550,7 +562,7 @@ export function createPetMcpServer(deps = {}) {
 
   server.registerTool('store_overview', {
     title: '店铺总览',
-    description: '全店数据新鲜度、SKU/ASIN 数、近 7 天和前 7 天销量销售额、本月目标完成和利润、最近几周周销量;断货、库存不足、积压、有货不动销、每件亏钱、缺成本的 SKU 提醒;最近一次库存同步的新断货和补货;近 7 天竞品变化数量。分析前先调用它。',
+    description: '全店数据新鲜度、SKU/ASIN 数、近 7 天和前 7 天销量销售额、本月目标完成和利润、最近几周周销量;断货、库存不足、积压、有货不动销、每件亏钱、缺成本的 SKU 提醒;最近一次库存同步的新断货和补货;仓储费要点(超龄件数、下次超龄附加费和下月仓储费预估、提醒);近 7 天竞品变化数量。分析前先调用它。',
     inputSchema: { weeks: z.number().int().min(1).max(26).default(8).describe('周销量看最近几周') },
     annotations: local,
   }, wrap((args) => storeOverview(args)));
