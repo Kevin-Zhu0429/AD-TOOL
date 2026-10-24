@@ -16,6 +16,7 @@ import { AD_ACTIONS, AD_ENTITIES, claimAdChanges, listChanges, proposeAdChanges,
 import { TRAFFIC_GROUPS, trafficReport, trafficSyncStatus } from './petTraffic.js';
 import { changeImpact } from './petImpact.js';
 import { returnRecords, returnsAnalysis, returnsSyncStatus } from './petReturns.js';
+import { storageBoard } from './petStorage.js';
 import { listingAttributesForAgent } from './petListings.js';
 import { ACTION_TYPES, agentContext, AREAS, LESSON_VERDICTS, REVIEW_VERDICTS, saveDailyReport, saveLesson, saveWeeklyReport, SECTION_STATUS, WEEKLY_LIMITS } from './petAgent.js';
 
@@ -96,6 +97,17 @@ const PROFIT_NOTES = ['单件毛利 = 售价 − 落地成本(FOB+头程+关税,
 
 // ---------- 店铺总览 ----------
 
+/** 仓储费板块的要点:超龄件数和下次附加费、下月仓储费、规则提醒;细节用 get_storage_fees */
+function storageSummary() {
+  const board = storageBoard({ months: 3 });
+  if (!board.snapshotDate && !board.lastFeeMonth) return null;
+  const { totals } = board;
+  return { snapshotDate: board.snapshotDate, aged181Units: totals.aged181, aged91To180Units: totals.aged91,
+    nextAgedSurchargeEstimate: totals.aisFee, nextMonthStorageEstimate: totals.storageNextMonth,
+    lastMonthStorageFee: totals.lastMonthFee, lastFeeMonth: totals.lastFeeMonth, excessUnits: totals.excess,
+    findings: board.findings.filter((item) => item.level !== 'info').map((item) => item.title) };
+}
+
 export function storeOverview({ weeks = 8 } = {}) {
   const today = todayOf();
   const board = priceBoard(today);
@@ -139,6 +151,7 @@ export function storeOverview({ weeks = 8 } = {}) {
     lastStockSync: stockSync ? { syncedAt: stockSync.at,
       newlyOutOfStock: stockSync.outOfStock.map((event) => ({ sku: event.sku, asin: event.asin, prevStock: event.prevStock, transit: event.transit })),
       restocked: stockSync.restocked.map((event) => ({ sku: event.sku, asin: event.asin, stock: event.stock })) } : null,
+    storage: storageSummary(),
     competitorChanges7d: { total: changes.length,
       byKind: changes.reduce((counts, change) => ({ ...counts, [change.label]: (counts[change.label] ?? 0) + 1 }), {}) },
     notes: ['销量来自亚马逊订单报告,按太平洋时间切日;待付款订单金额按 Listing 售价估算。',
@@ -524,6 +537,7 @@ propose_listing_changes、propose_ad_changes 只把改动放进网站的「待�
 分析某个产品的常用顺序:store_overview 看全店(含利润、断货补货、竞品变化提醒) → list_skus 找到 SKU/ASIN、看单件毛利和库存拆分 → get_sales_trend 看趋势 → get_traffic 看访问量和转化率(分清是没流量还是转化差) → get_search_terms 看流量词和份额 → get_style_intel 看这个款式的竞品、价格带和核心词覆盖 → get_listing_health 看文案体检 → get_listing 看实时文案 → get_catalog_items / get_product_images 对比竞品。
 改动执行后用 get_change_impact 看前后对比(销量、访问量、转化率、搜索份额),至少等执行后 7 天再下结论。
 看退货率、退货原因和买家退货留言用 get_returns(转化正常但差评多、或某个尺码卖得好却留不住时先看它)。
+看库龄、超龄附加费(超过 180 天的库存每月 15 号收)、月度仓储费用 get_storage_fees(决定补多少货、哪些要降价清库存或移除时先看它)。
 看月度目标和利润用 get_sales_stats;看竞品最近的降价、改标题、换主图用 get_competitor_overview。
 看或改标题五点以外的属性(产品描述、材质、尺寸、重量、特点、适用宠物等)先用 get_listing_attributes(全店概览,或指定 SKU 看全部属性,includeSchema 看还能填哪些),再用 propose_listing_changes 的 field=attribute 提;店主也会在网站「Listing」板块直接改,这些改动同样记在改动日志里、算冷却期。
 提改动前:先用 get_listing 看现在的文案;尺寸、材质、填充物等产品规格只写有依据的,拿不准就先问用户,不要编;同一款的不同尺码、颜色是不同 SKU,要分别提;改五点要给出全部条目;reason 写清依据的数据(搜索词份额、竞品对比、体检问题、毛利)。改价前看 list_skus 的保本价;正在做促销价的 SKU 改原价前台不变,要改前台价提 sale_price(促销价,带结束日期)。广告改动需要广告活动、广告组、关键词等的数字编号,来自用户给的批量表/报告,或 Miguelpet 连接器 query_ads 查到的编号。提完把 confirmUrl 告诉用户去确认。
@@ -548,7 +562,7 @@ export function createPetMcpServer(deps = {}) {
 
   server.registerTool('store_overview', {
     title: '店铺总览',
-    description: '全店数据新鲜度、SKU/ASIN 数、近 7 天和前 7 天销量销售额、本月目标完成和利润、最近几周周销量;断货、库存不足、积压、有货不动销、每件亏钱、缺成本的 SKU 提醒;最近一次库存同步的新断货和补货;近 7 天竞品变化数量。分析前先调用它。',
+    description: '全店数据新鲜度、SKU/ASIN 数、近 7 天和前 7 天销量销售额、本月目标完成和利润、最近几周周销量;断货、库存不足、积压、有货不动销、每件亏钱、缺成本的 SKU 提醒;最近一次库存同步的新断货和补货;仓储费要点(超龄件数、下次超龄附加费和下月仓储费预估、提醒);近 7 天竞品变化数量。分析前先调用它。',
     inputSchema: { weeks: z.number().int().min(1).max(26).default(8).describe('周销量看最近几周') },
     annotations: local,
   }, wrap((args) => storeOverview(args)));
@@ -614,6 +628,21 @@ export function createPetMcpServer(deps = {}) {
     return { ...rest, skus: result.skus.slice(0, limit), totalSkus: result.skus.length,
       lastSync: sync.lastSuccess?.completedAt ?? null, lastSyncError: sync.lastError?.message ?? null,
       ...(sku ? { records: returnRecords({ sku, days }) } : {}) };
+  }));
+
+  server.registerTool('get_storage_fees', {
+    title: '仓储费与库龄',
+    description: '亚马逊库存规划报告和仓储费报告:每个 SKU 的在库/在途、库龄分段(0–90、91–180、181–365、365 天以上)、下次超龄附加费预估(按库龄段)、下月仓储费预估、上月实际仓储费(摊到每件)、近几个月已收的超龄附加费、近 30 天销量和可售天数、亚马逊判定的冗余件数和建议;按款式、按月汇总,并给出规则提醒(快进超龄的、冗余的、仓储费吃毛利的)。',
+    inputSchema: {
+      sku: optionalText('只看这个 SKU'), style: optionalText('只看这个款式'),
+      months: z.number().int().min(1).max(18).default(6).describe('按月汇总看最近几个月'),
+      limit: z.number().int().min(1).max(500).default(100).describe('SKU 最多返回几行(按超龄附加费、超龄件数、下月仓储费从多到少)'),
+    },
+    annotations: local,
+  }, wrap(({ sku, style, months, limit }) => {
+    const { sync, skus, ...rest } = storageBoard({ sku, style, months });
+    return { ...rest, skus: skus.slice(0, limit), totalSkus: skus.length,
+      lastSync: sync.lastSuccess?.completedAt ?? null, lastSyncError: sync.lastError?.message ?? null };
   }));
 
   server.registerTool('get_search_terms', {

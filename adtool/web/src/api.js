@@ -48,6 +48,8 @@ export const api = {
   submitListing: (sku, changes, reason) => request(`/listings/item/${encodeURIComponent(sku)}/submit`, { method: 'POST', body: { changes, reason } }),
   shipments: (days) => request(`/shipments?days=${encodeURIComponent(days)}`),
   syncShipments: () => request('/shipments/sync', { method: 'POST', body: {} }),
+  storage: ({ months, style }) => request(`/storage?months=${encodeURIComponent(months)}&style=${encodeURIComponent(style ?? '')}`),
+  syncStorage: () => request('/storage/sync', { method: 'POST', body: {} }),
   agentReports: () => request('/agent/reports'),
   agentReport: (day) => request(`/agent/reports/${encodeURIComponent(day)}`),
   agentWeekly: () => request('/agent/weekly'),
