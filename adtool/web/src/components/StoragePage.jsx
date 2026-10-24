@@ -71,9 +71,10 @@ export default function StoragePage({ onOpenShipments }) {
   const running = data?.sync?.running;
   useEffect(() => {
     if (!running) return undefined;
+    // 换了筛选要重建,否则一直按旧的月份/款式刷新
     const timer = setInterval(() => { void load(true); }, 5_000);
     return () => clearInterval(timer);
-  }, [running]);
+  }, [running, months, style]);
 
   const [styleOptions, setStyleOptions] = useState([]);
   useEffect(() => { if (data && !style) setStyleOptions(data.styles.map((item) => item.style).filter((name) => !name.startsWith('('))); }, [data, style]);

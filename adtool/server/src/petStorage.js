@@ -80,7 +80,9 @@ export function ageBuckets(row) {
     }
     return total;
   };
-  const plus = columns.find((column) => column.from === 365 && column.to == null) ?? columns.find((column) => column.from === 366 && column.to == null);
+  // 一年以上:有 365-plus / 366-plus 汇总列就用它;美国站报告只给 366-to-455 和 456-plus,两列相加
+  const plus = columns.find((column) => (column.from === 365 || column.from === 366) && column.to == null)
+    ?? { quantity: columns.filter((column) => column.from >= 366).reduce((sum, column) => sum + column.quantity, 0) };
   return {
     d0_90: pick(0, 90) ?? 0,
     d91_180: pick(91, 180) ?? 0,

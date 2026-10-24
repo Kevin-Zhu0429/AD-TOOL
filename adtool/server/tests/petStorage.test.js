@@ -91,6 +91,8 @@ test('storage board: inventory planning, monthly storage fees and aged inventory
     // 只有细分列(0-30 / 31-60 / 61-90、181-330 / 331-365)也能拼出四段
     assert.deepEqual(storage.ageBuckets({ 'inv-age-0-to-30-days': '1', 'inv-age-31-to-60-days': '2', 'inv-age-61-to-90-days': '3', 'inv-age-91-to-180-days': '4',
       'inv-age-181-to-330-days': '5', 'inv-age-331-to-365-days': '6', 'inv-age-365-plus-days': '7' }), { d0_90: 6, d91_180: 4, d181_365: 11, d365plus: 7 });
+    // 美国站:一年以上拆成 366–455 和 456 天以上
+    assert.equal(storage.ageBuckets({ 'inv-age-0-to-90-days': '1', 'inv-age-366-to-455-days': '12', 'inv-age-456-plus-days': '8' }).d365plus, 20);
     assert.equal(storage.storageFeeFromReport({ asin: 'B1', country_code: 'CA', estimated_monthly_storage_fee: '1' }), null);
     const old = storage.agedChargeFromReport({ 'snapshot-date': '2023-02-15', sku: 'A', 'qty-charged-12-mo-long-term-storage-fee': '2', 'amount-charged-12-mo-long-term-storage-fee': '3.5',
       'qty-charged-6-mo-long-term-storage-fee': '1', 'amount-charged-6-mo-long-term-storage-fee': '1.25' });
