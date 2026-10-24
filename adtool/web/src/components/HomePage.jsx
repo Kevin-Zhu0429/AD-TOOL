@@ -164,6 +164,12 @@ export default function HomePage({ user, market, onNav, theme, onOpenChangelog }
           meta="US 站 · FBA 入库货件 · 自动同步"
           onClick={() => onNav('shipments')}
         />}
+        {isPet && <EntryCard
+          tone="amber" icon="box" title="仓储费"
+          desc="每个 SKU 的库龄分布、快超 180 天的库存、下次超龄附加费和下月仓储费预估，以及每月实际收了多少仓储费。"
+          meta="US 站 · 库存规划 / 仓储费报告 · 每天同步"
+          onClick={() => onNav('storage')}
+        />}
         <EntryCard
           tone="green" icon="box" title="小工具"
           desc="收纳日常办公中随开随用的轻量工具。首个工具可以把多个 Excel 文件中的表格快速汇总到一张工作表,全程只在本机浏览器中处理。"

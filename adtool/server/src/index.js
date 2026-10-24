@@ -23,6 +23,7 @@ import { createChangeRouter, startChangeScheduler } from './petChanges.js';
 import { startTrafficSyncScheduler } from './petTraffic.js';
 import { returnsRouter, startReturnsSyncScheduler } from './petReturns.js';
 import { shipmentsRouter, startShipmentsSyncScheduler } from './petShipments.js';
+import { storageRouter, startStorageSyncScheduler } from './petStorage.js';
 import { createIntelRouter } from './petIntelActions.js';
 import { createAgentRouter } from './petAgent.js';
 import { createListingRouter, startListingSyncScheduler } from './petListings.js';
@@ -69,6 +70,7 @@ app.use('/api/changes', createChangeRouter());
 app.use('/api/intel', createIntelRouter());
 app.use('/api/returns', returnsRouter);
 app.use('/api/shipments', shipmentsRouter);
+app.use('/api/storage', storageRouter);
 app.use('/api/agent', createAgentRouter());
 app.use('/api/listings', createListingRouter());
 
@@ -99,5 +101,6 @@ app.listen(PORT, '0.0.0.0', () => {
   startTrafficSyncScheduler();
   startReturnsSyncScheduler();
   startShipmentsSyncScheduler();
+  startStorageSyncScheduler();
   startListingSyncScheduler();
 });

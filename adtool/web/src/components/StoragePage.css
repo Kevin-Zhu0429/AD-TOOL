@@ -1,0 +1,43 @@
+.storage-page .stg-sub { font-size: 15px; color: var(--text-dim); font-weight: 500; }
+.storage-page .ret-findings .btn { margin-top: 6px; }
+
+.stg-grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 16px; }
+.stg-grid > .card { padding: 14px 16px; margin-bottom: 16px; min-width: 0; }
+.stg-sizes { display: block; color: var(--text-faint); font-size: 11px; font-weight: 400; white-space: normal; }
+
+.stg-months { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; font-size: 13px; }
+.stg-months li { display: grid; grid-template-columns: 4.6em minmax(0, 1fr) minmax(9em, auto); gap: 8px; align-items: center; }
+.stg-month { font-variant-numeric: tabular-nums; color: var(--text-dim); white-space: nowrap; }
+.stg-track { display: flex; }
+.stg-fill { display: block; height: 100%; }
+.stg-fill.fee { background: var(--accent); opacity: 0.8; }
+.stg-fill.aged { background: var(--red); opacity: 0.8; }
+.stg-month-num { font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+.stg-month-num small { display: block; color: var(--text-faint); font-size: 11px; }
+.stg-month-num small.danger { display: inline; font-size: 12px; }
+
+.stg-dot { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin: 0 4px 0 8px; vertical-align: -1px; }
+.stg-dot.fee { background: var(--accent); }
+.stg-dot.aged, .stg-dot.a3 { background: var(--red); }
+.stg-dot.a0, .stg-age .a0 { background: var(--green); }
+.stg-dot.a1, .stg-age .a1 { background: var(--amber); }
+.stg-dot.a2, .stg-age .a2 { background: color-mix(in srgb, var(--red) 65%, var(--amber)); }
+.stg-age .a3 { background: var(--red); }
+.stg-legend { margin-left: 10px; white-space: nowrap; }
+
+.stg-age { display: flex; width: 120px; height: 10px; border-radius: 5px; overflow: hidden; background: var(--panel-3); margin-top: 4px; }
+.stg-age > span { display: block; height: 100%; opacity: 0.85; }
+.stg-action { display: block; color: var(--text-dim); font-size: 11px; }
+.storage-page .link-btn { all: unset; cursor: pointer; color: var(--accent-text); text-decoration: underline; text-underline-offset: 2px; }
+.storage-page .link-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.stg-detail { display: grid; gap: 6px; font-size: 13px; }
+.stg-detail > div { display: flex; flex-wrap: wrap; gap: 4px 16px; align-items: baseline; }
+.stg-detail > div > b:first-child { min-width: 7em; }
+
+@media (max-width: 1100px) { .stg-grid { grid-template-columns: 1fr; } }
+@media (max-width: 760px) {
+  .stg-legend { display: block; margin: 4px 0 0; white-space: normal; }
+  .stg-months li { grid-template-columns: 5em minmax(0, 1fr); }
+  .stg-month-num { grid-column: 1 / -1; text-align: left; }
+}

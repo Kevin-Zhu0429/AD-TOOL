@@ -22,6 +22,7 @@ export async function startPetTestServer({ changeDeps } = {}) {
   const { createIntelRouter } = await import('../src/petIntelActions.js');
   const { returnsRouter } = await import('../src/petReturns.js');
   const { shipmentsRouter } = await import('../src/petShipments.js');
+  const { storageRouter } = await import('../src/petStorage.js');
   const { createAgentRouter } = await import('../src/petAgent.js');
   for (const [username, role] of [['pet-owner', 'owner'], ['pet-user', 'operator']]) {
     db.prepare(`INSERT INTO users (username, display_name, password_hash, role, marketplace, manual_ads, ad_opt, product_intel, seen_version)
@@ -39,6 +40,7 @@ export async function startPetTestServer({ changeDeps } = {}) {
   app.use('/api/intel', createIntelRouter(changeDeps));
   app.use('/api/returns', returnsRouter);
   app.use('/api/shipments', shipmentsRouter);
+  app.use('/api/storage', storageRouter);
   app.use('/api/agent', createAgentRouter());
   app.use('/api/neg', (req, res) => res.status(404).json({ error: '宠物版未启用共享否定词库' }));
   const server = await new Promise((resolve) => { const listener = app.listen(0, '127.0.0.1', () => resolve(listener)); });

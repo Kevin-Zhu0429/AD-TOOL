@@ -504,6 +504,53 @@ CREATE TABLE IF NOT EXISTS pet_inbound_shipment_items (
 );
 CREATE INDEX IF NOT EXISTS idx_pet_inbound_items_sku ON pet_inbound_shipment_items(sku);
 
+-- 仓储费板块:FBA 库存规划报告(GET_FBA_INVENTORY_PLANNING_DATA)最近一份快照,每个 SKU 一行。
+-- 库龄分段、超龄附加费预估、下月仓储费预估、近 30/90 天销量等都在 data_json 里(报告列名亚马逊会改,解析后再存)
+CREATE TABLE IF NOT EXISTS pet_storage_inventory (
+  sku TEXT PRIMARY KEY COLLATE NOCASE,
+  asin TEXT,
+  fnsku TEXT,
+  snapshot_date TEXT,
+  data_json TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+
+-- 月度仓储费(GET_FBA_STORAGE_FEE_CHARGES_DATA):按月、按 ASIN/FNSKU、按仓库一行。报告里没有 SKU,用 FNSKU 对回 SKU
+CREATE TABLE IF NOT EXISTS pet_storage_fees (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  month TEXT NOT NULL,
+  asin TEXT,
+  fnsku TEXT,
+  fulfillment_center TEXT,
+  size_tier TEXT,
+  avg_quantity REAL NOT NULL DEFAULT 0,
+  item_volume REAL,
+  volume_units TEXT,
+  total_volume REAL,
+  base_rate REAL,
+  surcharge_rate REAL,
+  utilization_ratio REAL,
+  fee REAL NOT NULL DEFAULT 0,
+  incentive_fee REAL
+);
+CREATE INDEX IF NOT EXISTS idx_pet_storage_fees_month ON pet_storage_fees(month);
+
+-- 已收的超龄库存附加费(GET_FBA_FULFILLMENT_LONGTERM_STORAGE_FEE_CHARGES_DATA):每月 15 号前后按库龄收,每次收费每个 SKU、每个库龄段一行
+CREATE TABLE IF NOT EXISTS pet_storage_aged_charges (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  month TEXT NOT NULL,
+  snapshot_date TEXT,
+  sku TEXT COLLATE NOCASE,
+  fnsku TEXT,
+  asin TEXT,
+  quantity INTEGER NOT NULL DEFAULT 0,
+  amount REAL NOT NULL DEFAULT 0,
+  age_tier TEXT,
+  rate REAL,
+  volume REAL
+);
+CREATE INDEX IF NOT EXISTS idx_pet_storage_aged_month ON pet_storage_aged_charges(month);
+
 -- 亚马逊 Listing 当前售价和状态,每次同步整表替换
 CREATE TABLE IF NOT EXISTS pet_listing_cache (
   sku TEXT PRIMARY KEY COLLATE NOCASE,
