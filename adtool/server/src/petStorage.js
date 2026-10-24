@@ -579,8 +579,11 @@ export function monthlyStorageCosts(year, today = todayOf()) {
   for (const row of fees) item(row.month).storageFee = money(row.fee);
   for (const row of aged) item(row.month).agedSurcharge = money(row.amount);
   for (const month of agedDone) if (month.startsWith(`${year}-`) && item(month).agedSurcharge == null) item(month).agedSurcharge = 0;
-  // 拉过但没有收费行的月份就是 0
-  for (const month of state('storage_fee_months') ?? []) if (month.startsWith(`${year}-`) && item(month).storageFee == null) item(month).storageFee = 0;
+  // 拉过但没有收费行的月份就是 0;上个月的报告要到本月中旬才出,拉到空的不算 0,下面用预估
+  const lastMonth = shiftMonth(monthOf(today), -1);
+  for (const month of state('storage_fee_months') ?? []) {
+    if (month.startsWith(`${year}-`) && month < lastMonth && item(month).storageFee == null) item(month).storageFee = 0;
+  }
 
   const planning = db.prepare('SELECT data_json FROM pet_storage_inventory').all().map((row) => JSON.parse(row.data_json));
   if (planning.length) {

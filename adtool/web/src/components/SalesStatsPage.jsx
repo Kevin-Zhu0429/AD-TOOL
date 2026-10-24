@@ -101,7 +101,7 @@ export default function SalesStatsPage() {
         <div className="row wrap stats-head"><div className="card-title">每月数据</div><div className="spacer" />
           <label>年份 <select className="inp" value={shownYear} onChange={(e) => setYear(Number(e.target.value))}>
             {[thisYear - 1, thisYear, thisYear + 1].map((option) => <option key={option} value={option}>{option} 年</option>)}</select></label></div>
-        <MonthlyTable monthly={data.monthly} onEdit={(row) => { setFormError(''); setEditor({ ...row, actualProfit: row.profitSource === 'manual' ? row.actualProfit : '' }); }} />
+        <MonthlyTable monthly={data.monthly} onEdit={(row) => { setFormError(''); setEditor({ ...row, actualProfit: row.profitSource === 'manual' ? row.actualProfit : '', adSpend: row.adSource === 'manual' ? row.adSpend : '' }); }} />
         <p className="hint">实际销量和销售额来自亚马逊订单（不含税、已排除取消；待付款订单按当前售价估算）。目标点「编辑」填写。广告花费每天自动同步（标「自动」），手填了以手填为准；费比＝广告花费÷实际销售额。仓储费＝月度仓储费＋超龄附加费，来自「仓储费」板块；报告还没出的月份按亚马逊预估算（标「预估」）。
           实际利润额默认自动计算（标「自动」）：每天每个 SKU 的销售额 − 销量×（落地成本＋FBA 配送费）− 佣金，再减广告花费、仓储费和超龄附加费；成本在 SKU 库维护，没扣退货。缺成本的 SKU 不算进去（标「自动·部分」，鼠标放上去看缺哪些），利润率＝利润额÷算进去的销售额。在「编辑」里手填实际利润额会以手填为准。
           达成率<span className="good">绿色</span>表示跟上时间进度，<span className="warn">黄色</span>略落后，<span className="danger">红色</span>落后 10 个点以上。{data.monthly.months.some((row) => row.partial) ? ' 带 * 的月份只有部分订单数据。' : ''}</p>

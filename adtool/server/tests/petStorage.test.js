@@ -158,6 +158,10 @@ test('storage board: inventory planning, monthly storage fees and aged inventory
     // 15 号之前本月超龄附加费还没收,用预估
     assert.equal(storage.monthlyStorageCosts(2026, '2026-10-10').get('2026-10').agedSurcharge, 15, '已有 10 月收费记录就用实际');
     assert.equal(costs.get('2026-07').storageFee, 0);
+    // 11 月初:10 月的报告拉到是空的(还没出),仍按预估扣,不当 0
+    backend.db.prepare("INSERT OR REPLACE INTO pet_price_sync_state(key,value) VALUES('storage_fee_months', ?)").run(JSON.stringify(['2026-07', '2026-08', '2026-09', '2026-10']));
+    const november = storage.monthlyStorageCosts(2026, '2026-11-03').get('2026-10');
+    assert.deepEqual([november.storageFee, november.storageEstimated], [50.3, true]);
 
     const login = await fetch(`${backend.url}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username: 'pet-user', password: 'pet-test-password' }) });
