@@ -551,6 +551,19 @@ CREATE TABLE IF NOT EXISTS pet_storage_aged_charges (
 );
 CREATE INDEX IF NOT EXISTS idx_pet_storage_aged_month ON pet_storage_aged_charges(month);
 
+-- 每天全店广告花费(太平洋时间):广告 API 开通前由 Claude 每天用 Miguelpet 查好写进来(MCP save_ad_spend),同一天再写就覆盖。
+-- 销售统计里没手填广告花费的月份按这里汇总,从利润里扣掉
+CREATE TABLE IF NOT EXISTS pet_ad_spend_daily (
+  day TEXT PRIMARY KEY,
+  spend REAL NOT NULL DEFAULT 0,
+  sales REAL,
+  orders INTEGER,
+  clicks INTEGER,
+  impressions INTEGER,
+  source TEXT,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+
 -- 亚马逊 Listing 当前售价和状态,每次同步整表替换
 CREATE TABLE IF NOT EXISTS pet_listing_cache (
   sku TEXT PRIMARY KEY COLLATE NOCASE,
