@@ -202,6 +202,17 @@ test('Amazon sync fills the SKU library and daily sales; the price board and sta
   const august = (await call('/price-strategy/stats?weeks=2', user)).data.monthly.months[7];
   assert.deepEqual([august.profitSource, august.grossProfit, august.actualProfit, august.margin, august.coverage], ['auto', 0, -10, -10, 100]);
   assert.equal(september.profitSource, 'manual', '手填的实际利润额优先');
+  // 广告花费没手填就用每天同步的合计;仓储费和超龄附加费也从自动利润里扣
+  assert.equal((await call('/price-strategy/targets/2026-08', user, { adSpend: '' }, 'PUT')).status, 200);
+  const { saveAdSpend } = await import('../src/petAdSpend.js');
+  assert.deepEqual(saveAdSpend([{ day: '2026-08-03', spend: 3 }, { day: '2026-08-04', spend: 9.5 }]), { saved: 2, firstDay: '2026-08-03', lastDay: '2026-08-04', days: 2 });
+  assert.equal(saveAdSpend([{ day: '2026-08-04', spend: 4 }]).days, 2, '同一天再写覆盖');
+  assert.throws(() => saveAdSpend([{ day: '8/5', spend: 1 }]), /日期格式/);
+  backend.db.prepare("INSERT INTO pet_storage_fees (month, asin, fee) VALUES ('2026-08', 'B0', 5)").run();
+  backend.db.prepare("INSERT INTO pet_storage_aged_charges (month, sku, quantity, amount) VALUES ('2026-08', 'DOG-L', 1, 2)").run();
+  const augustAuto = (await call('/price-strategy/stats?weeks=2', user)).data.monthly.months[7];
+  assert.deepEqual([augustAuto.adSpend, augustAuto.adSource, augustAuto.adDays, augustAuto.storageFee, augustAuto.agedSurcharge, augustAuto.actualProfit],
+    [7, 'auto', 2, 5, 2, -14]);
   // 9 月 DOG-XL 没有成本,不算进毛利,覆盖率低于 100%
   const septAuto = (await call('/price-strategy/stats?weeks=2', user)).data.monthly.months[8];
   assert.deepEqual(septAuto.missingCostSkus, ['DOG-XL']);

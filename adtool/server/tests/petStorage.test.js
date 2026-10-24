@@ -151,6 +151,18 @@ test('storage board: inventory planning, monthly storage fees and aged inventory
     assert.match(titles, /旺季仓储费/);
     assert.equal(board.styles[0].style, '方窝牛津');
 
+    // 销售统计扣的每月仓储费:9 月用实际报告,10 月报告没出,用「下月仓储费预估」按已过 24/31 天折算
+    const costs = storage.monthlyStorageCosts(2026, '2026-10-24');
+    assert.deepEqual(costs.get('2026-09'), { storageFee: 46.5, agedSurcharge: 12.5, storageEstimated: false, agedEstimated: false });
+    assert.deepEqual(costs.get('2026-10'), { storageFee: 38.94, agedSurcharge: 15, storageEstimated: true, agedEstimated: false });
+    // 15 号之前本月超龄附加费还没收,用预估
+    assert.equal(storage.monthlyStorageCosts(2026, '2026-10-10').get('2026-10').agedSurcharge, 15, '已有 10 月收费记录就用实际');
+    assert.equal(costs.get('2026-07').storageFee, 0);
+    // 11 月初:10 月的报告拉到是空的(还没出),仍按预估扣,不当 0
+    backend.db.prepare("INSERT OR REPLACE INTO pet_price_sync_state(key,value) VALUES('storage_fee_months', ?)").run(JSON.stringify(['2026-07', '2026-08', '2026-09', '2026-10']));
+    const november = storage.monthlyStorageCosts(2026, '2026-11-03').get('2026-10');
+    assert.deepEqual([november.storageFee, november.storageEstimated], [50.3, true]);
+
     const login = await fetch(`${backend.url}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username: 'pet-user', password: 'pet-test-password' }) });
     const cookie = login.headers.get('set-cookie').split(';')[0];

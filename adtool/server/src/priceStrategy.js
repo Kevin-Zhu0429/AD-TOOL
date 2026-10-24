@@ -6,6 +6,8 @@ import { pacificDay, shiftDay } from './petAmazon.js';
 import { priceSyncStatus, syncAmazonData } from './priceStrategySync.js';
 import { buildPriceBoard, monthlySummary, recentDays, weeklySummary } from './petSales.js';
 import { withProfit, yearGrossProfit } from './petCosts.js';
+import { monthlyAdSpend } from './petAdSpend.js';
+import { monthlyStorageCosts } from './petStorage.js';
 
 export const priceStrategyRouter = express.Router();
 priceStrategyRouter.use(requireLogin);
@@ -46,7 +48,8 @@ priceStrategyRouter.get('/stats', (req, res) => {
     target_profit AS targetProfit, actual_profit AS actualProfit, ad_spend AS adSpend FROM pet_monthly_targets WHERE month LIKE ?`)
     .all(`${year}-%`).map((row) => [row.month, row]));
   res.json({ today, year, coveredFrom, weekly: weeklySummary(unitsByDay, today, weeks, coveredFrom),
-    monthly: monthlySummary({ year, actuals, targets, today, coveredFrom, profits: yearGrossProfit(year) }), sync });
+    monthly: monthlySummary({ year, actuals, targets, today, coveredFrom, profits: yearGrossProfit(year),
+      adSpends: monthlyAdSpend(year), storage: monthlyStorageCosts(year, today) }), sync });
 });
 
 const TARGET_FIELDS = [['targetUnits', 'target_units', '目标销量', true], ['targetSales', 'target_sales', '目标销售额'],

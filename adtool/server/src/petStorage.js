@@ -558,3 +558,48 @@ storageRouter.post('/sync', (req, res) => {
   void syncStorage().catch((error) => console.error('[storage-sync]', error.message));
   res.status(202).json({ accepted: true });
 });
+
+// ---------- 销售统计:每月仓储费 ----------
+
+/**
+ * 某年每月要从利润里扣的仓储费:Map(month → { storageFee, agedSurcharge, storageEstimated, agedEstimated })。
+ *   月度仓储费:有月度仓储费报告就用实际数;报告还没出的本月和上月,用库存规划报告的「下月仓储费预估」,本月按已过天数折算。
+ *   超龄附加费:有已收报告就用实际数;本月 15 号前还没收,用规划报告的「下次超龄附加费预估」。
+ * 还没有任何仓储数据的月份不放进来(不扣,也不当 0)。
+ */
+export function monthlyStorageCosts(year, today = todayOf()) {
+  const result = new Map();
+  const fees = db.prepare("SELECT month, SUM(fee) AS fee FROM pet_storage_fees WHERE month LIKE ? GROUP BY month").all(`${year}-%`);
+  const aged = db.prepare("SELECT month, SUM(amount) AS amount FROM pet_storage_aged_charges WHERE month LIKE ? GROUP BY month").all(`${year}-%`);
+  const agedDone = new Set(state('storage_aged_months') ?? []);
+  const item = (month) => {
+    if (!result.has(month)) result.set(month, { storageFee: null, agedSurcharge: null, storageEstimated: false, agedEstimated: false });
+    return result.get(month);
+  };
+  for (const row of fees) item(row.month).storageFee = money(row.fee);
+  for (const row of aged) item(row.month).agedSurcharge = money(row.amount);
+  for (const month of agedDone) if (month.startsWith(`${year}-`) && item(month).agedSurcharge == null) item(month).agedSurcharge = 0;
+  // 拉过但没有收费行的月份就是 0;上个月的报告要到本月中旬才出,拉到空的不算 0,下面用预估
+  const lastMonth = shiftMonth(monthOf(today), -1);
+  for (const month of state('storage_fee_months') ?? []) {
+    if (month.startsWith(`${year}-`) && month < lastMonth && item(month).storageFee == null) item(month).storageFee = 0;
+  }
+
+  const planning = db.prepare('SELECT data_json FROM pet_storage_inventory').all().map((row) => JSON.parse(row.data_json));
+  if (planning.length) {
+    const thisMonth = monthOf(today);
+    const day = Number(today.slice(8, 10));
+    const days = Number(monthEnd(thisMonth).slice(8, 10));
+    const nextStorage = planning.reduce((sum, row) => sum + (row.storageNextMonth ?? 0), 0);
+    const nextAged = planning.reduce((sum, row) => sum + (row.aisFee ?? 0), 0);
+    for (const [month, share] of [[shiftMonth(thisMonth, -1), 1], [thisMonth, day / days]]) {
+      if (!month.startsWith(`${year}-`)) continue;
+      const entry = item(month);
+      if (entry.storageFee == null) Object.assign(entry, { storageFee: money(nextStorage * share), storageEstimated: true });
+    }
+    if (thisMonth.startsWith(`${year}-`) && day < 16 && !aged.some((row) => row.month === thisMonth)) {
+      Object.assign(item(thisMonth), { agedSurcharge: money(nextAged), agedEstimated: true });
+    }
+  }
+  return result;
+}

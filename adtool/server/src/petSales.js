@@ -96,19 +96,22 @@ const daysInMonth = (month) => new Date(Date.UTC(Number(month.slice(0, 4)), Numb
  */
 /**
  * 每月数据。profits 是按成本和亚马逊费用自动算的毛利(petCosts.yearGrossProfit):
- * 实际利润额没手填时 = 毛利 − 广告花费;手填了以手填为准。
+ * 实际利润额没手填时 = 毛利 − 广告花费 − 仓储费 − 超龄附加费;手填了以手填为准。
+ * 广告花费没手填时用每天同步的广告花费合计(adSpends);仓储费来自仓储费板块(storage,实际或预估)。
  * 自动算的利润率 = 实际利润额 ÷ 算进毛利的那部分销售额(缺成本的 SKU 不在分母里)。
  */
-function profitOf({ manual, auto, adSpend, sales, target }) {
+function profitOf({ manual, auto, adSpend, storage, sales, target }) {
   const grossProfit = auto?.coveredSales ? auto.grossProfit : null;
-  const actualProfit = manual ?? (grossProfit != null ? round(grossProfit - (adSpend ?? 0)) : null);
+  const storageCost = (storage?.storageFee ?? 0) + (storage?.agedSurcharge ?? 0);
+  const actualProfit = manual ?? (grossProfit != null ? round(grossProfit - (adSpend ?? 0) - storageCost) : null);
   const profitBase = manual != null ? sales : grossProfit != null ? auto.coveredSales : null;
   return { actualProfit, profitSource: manual != null ? 'manual' : grossProfit != null ? 'auto' : null,
     grossProfit, profitBase, coverage: grossProfit != null ? ratio(auto.coveredSales, sales) : null,
     missingCostSkus: auto?.missingSkus ?? [], profitRate: ratio(actualProfit, target), margin: ratio(actualProfit, profitBase) };
 }
 
-export function monthlySummary({ year, actuals = new Map(), targets = new Map(), today, coveredFrom = null, profits = new Map() }) {
+export function monthlySummary({ year, actuals = new Map(), targets = new Map(), today, coveredFrom = null, profits = new Map(),
+  adSpends = new Map(), storage = new Map() }) {
   const currentMonth = today.slice(0, 7);
   const months = Array.from({ length: 12 }, (_, index) => {
     const month = `${year}-${String(index + 1).padStart(2, '0')}`;
@@ -120,13 +123,20 @@ export function monthlySummary({ year, actuals = new Map(), targets = new Map(),
       : round(Number(today.slice(8, 10)) / daysInMonth(month) * 100, 1);
     const sales = actual ? round(actual.sales) : null;
     const pick = (key) => target[key] ?? null;
+    // 广告花费:手填优先,否则用每天同步的合计
+    const autoAd = month <= currentMonth ? adSpends.get(month) ?? null : null;
+    const adSpend = pick('adSpend') ?? autoAd?.spend ?? null;
+    const adSource = pick('adSpend') != null ? 'manual' : autoAd ? 'auto' : null;
+    const cost = month <= currentMonth ? storage.get(month) ?? null : null;
     return { month, label: `${Number(month.slice(5, 7))}月`, current: month === currentMonth,
       partial: !!(covered && coveredFrom && coveredFrom > `${month}-01`), progress,
       targetUnits: pick('targetUnits'), units: actual?.units ?? null, unitsRate: ratio(actual?.units, pick('targetUnits')),
       targetSales: pick('targetSales'), sales, estimatedSales: actual ? round(actual.estimatedSales) : null,
       salesRate: ratio(sales, pick('targetSales')),
-      targetProfit: pick('targetProfit'), adSpend: pick('adSpend'), adRatio: ratio(pick('adSpend'), sales),
-      ...profitOf({ manual: pick('actualProfit'), auto: actual ? profits.get(month) : null, adSpend: pick('adSpend'), sales, target: pick('targetProfit') }) };
+      targetProfit: pick('targetProfit'), adSpend, adSource, adDays: adSource === 'auto' ? autoAd.days : null, adRatio: ratio(adSpend, sales),
+      storageFee: cost?.storageFee ?? null, agedSurcharge: cost?.agedSurcharge ?? null,
+      storageEstimated: !!(cost?.storageEstimated || cost?.agedEstimated),
+      ...profitOf({ manual: pick('actualProfit'), auto: actual ? profits.get(month) : null, adSpend, storage: cost, sales, target: pick('targetProfit') }) };
   });
   const sum = (key) => {
     const values = months.map((row) => row[key]).filter((value) => value != null);
@@ -135,6 +145,7 @@ export function monthlySummary({ year, actuals = new Map(), targets = new Map(),
   const total = { month: String(year), label: '全年', targetUnits: sum('targetUnits'), units: sum('units'),
     targetSales: sum('targetSales'), sales: sum('sales'), estimatedSales: sum('estimatedSales'),
     targetProfit: sum('targetProfit'), actualProfit: sum('actualProfit'), adSpend: sum('adSpend'),
+    storageFee: sum('storageFee'), agedSurcharge: sum('agedSurcharge'),
     grossProfit: sum('grossProfit'), profitBase: sum('profitBase') };
   Object.assign(total, { unitsRate: ratio(total.units, total.targetUnits), salesRate: ratio(total.sales, total.targetSales),
     profitRate: ratio(total.actualProfit, total.targetProfit), adRatio: ratio(total.adSpend, total.sales),
