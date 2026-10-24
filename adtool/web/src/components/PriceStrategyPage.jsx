@@ -21,17 +21,31 @@ const SORTS = {
   speed7d: (row) => row.speed7d, monthUnits: (row) => row.monthUnits, price: (row) => row.price ?? -1,
   selloutDate: (row) => row.soldOut ? '0' : row.selloutDate ?? '9',
   profit: (row) => row.profit ?? -Infinity, margin: (row) => row.margin ?? -Infinity,
+  adSpend: (row) => row.adSpend ?? -1, acos: (row) => row.acos ?? -1, tacos: (row) => row.tacos ?? -1, storageFee: (row) => row.storageFee ?? -1,
 };
+// ACOS 超过 40% 标红、超过 30% 标黄;费比超过 20% 标红、超过 12% 标黄
+const acosLevel = (value) => value == null ? '' : value > 40 ? 'danger' : value > 30 ? 'warn' : '';
+const tacosLevel = (value) => value == null ? '' : value > 20 ? 'danger' : value > 12 ? 'warn' : '';
+const monthLabel = (month) => `${Number(month.slice(5, 7))}月`;
+const pctText = (value) => value == null ? '' : `${fmt(value, 1)}%`;
+const storageNote = (row) => row.storageFee == null ? undefined : [
+  row.storageMonthly != null ? `月度仓储费 $${fmt(row.storageMonthly, 2)}` : null,
+  row.agedSurcharge != null ? `超龄附加费 $${fmt(row.agedSurcharge, 2)}` : null,
+  row.storagePerUnit != null ? `摊到当月每件卖出 $${fmt(row.storagePerUnit, 2)}` : null,
+  row.storageEstimated ? '亚马逊报告还没出，按库存规划报告预估' : null].filter(Boolean).join('；');
+const adNote = (row) => row.adSpend == null ? undefined : `广告销售额 $${fmt(row.adSales ?? 0, 2)}${row.adOrders != null ? `，广告订单 ${row.adOrders}` : ''}；当月销售额 $${fmt(row.feeSales, 2)}（${row.feeUnits} 件）`;
 // 毛利率:亏钱标红,低于 15% 标黄
 const marginLevel = (row) => row.profit == null ? '' : row.profit < 0 ? 'danger' : row.margin < 15 ? 'warn' : '';
 const missingNote = (row) => row.missing?.length ? `缺${row.missing.join('、')}，到 SKU 库补` : undefined;
 
 function exportRows(data, rows) {
   const headers = ['日期', 'SKU', '款式', '尺码', '颜色', 'ASIN', '在库', '在途', '在库可售天数', '在库在途可售天数',
-    ...data.days.map((day) => `${md(day)}销量`), '近3日动销', '近7天动销速度', `${Number(data.today.slice(5, 7))}月销量`, '预估售罄日', '售价', '单件毛利', '毛利率(%)'];
+    ...data.days.map((day) => `${md(day)}销量`), '近3日动销', '近7天动销速度', `${Number(data.today.slice(5, 7))}月销量`, '预估售罄日', '售价', '单件毛利', '毛利率(%)',
+    ...[`广告花费`, '广告销售额', 'ACOS(%)', '费比(%)', '仓储费'].map((label) => `${monthLabel(data.feeMonth)}${label}`)];
   const body = rows.map((row) => [slash(data.today), row.sku, row.style ?? '', row.size ?? '', row.color ?? '', row.asin ?? '',
     row.stock ?? '', row.transit ?? '', row.stockDays ?? '', row.stockTransitDays ?? '', ...row.daily.map((units) => units || ''),
-    row.movement3d || '', row.speed7d || '', row.monthUnits || '', row.soldOut ? '已断货' : row.selloutDate ?? '', row.price ?? '', row.profit ?? '', row.margin ?? '']);
+    row.movement3d || '', row.speed7d || '', row.monthUnits || '', row.soldOut ? '已断货' : row.selloutDate ?? '', row.price ?? '', row.profit ?? '', row.margin ?? '',
+    row.adSpend ?? '', row.adSales ?? '', row.acos ?? '', row.tacos ?? '', row.storageFee ?? '']);
   const book = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet([headers, ...body]), '价格策略');
   XLSX.writeFile(book, `价格策略_${data.today}.xlsx`);
@@ -43,20 +57,21 @@ export default function PriceStrategyPage({ onOpenShipments }) {
   const [error, setError] = useState(''), [message, setMessage] = useState('');
   const [query, setQuery] = useState(''), [activeOnly, setActiveOnly] = useState(true);
   const [sort, setSort] = useState({ key: 'speed7d', desc: true });
+  const [month, setMonth] = useState('');
 
-  async function load(silent = false) {
+  async function load(silent = false, pick = month) {
     if (!silent) setLoading(true);
-    try { setData(await api.priceStrategy()); setError(''); }
+    try { setData(await api.priceStrategy(pick)); setError(''); }
     catch (err) { setError(err.message); }
     finally { if (!silent) setLoading(false); }
   }
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(false, month); }, [month]);
   const running = data?.sync?.running;
   useEffect(() => {
     if (!running) return undefined;
-    const timer = setInterval(() => { void load(true); }, 5_000);
+    const timer = setInterval(() => { void load(true, month); }, 5_000);
     return () => clearInterval(timer);
-  }, [running]);
+  }, [running, month]);
 
   const rows = useMemo(() => {
     if (!data) return [];
@@ -81,6 +96,7 @@ export default function PriceStrategyPage({ onOpenShipments }) {
         const revenue = priced.reduce((total, row) => total + row.price * row.sales7d, 0);
         return revenue ? priced.reduce((total, row) => total + row.profit * row.sales7d, 0) / revenue * 100 : null;
       })(),
+      adSpend: sum('adSpend'), adSales: sum('adSales'), feeSales: sum('feeSales'), storageFee: sum('storageFee'),
       risk: rows.filter((row) => row.sales7d > 0 && (row.soldOut || row.stockDays < 30)).length,
       daily: data ? data.days.map((_, index) => rows.reduce((total, row) => total + row.daily[index], 0)) : [] };
   }, [rows, data]);
@@ -120,6 +136,8 @@ export default function PriceStrategyPage({ onOpenShipments }) {
       <div className="row wrap price-toolbar">
         <label>搜索 <input className="inp" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="SKU / ASIN / 款式 / 颜色" /></label>
         <label className="price-check"><input type="checkbox" checked={activeOnly} onChange={(e) => setActiveOnly(e.target.checked)} /> 隐藏无库存、无销量的 SKU</label>
+        <label>广告/仓储费月份 <select className="inp" value={data?.feeMonth ?? month} onChange={(e) => setMonth(e.target.value)}>
+          {(data?.feeMonths ?? []).map((item) => <option key={item} value={item}>{item.replace('-', ' 年 ')} 月</option>)}</select></label>
         <div className="spacer" /><span className="hint">{rows.length} / {data?.rows.length ?? 0} 个 SKU · 点表头排序</span></div>
       {loading ? <p role="status">正在加载价格策略表…</p> : !rows.length ? <p className="note">{data?.rows.length ? '当前筛选没有结果。' : '还没有数据。配置亚马逊凭证后点「立即同步」。'}</p> :
         <div className="price-table" role="region" tabIndex={0} aria-label="价格策略表"><table className="tbl">
@@ -127,9 +145,13 @@ export default function PriceStrategyPage({ onOpenShipments }) {
             {head('stock', '在库', 'num')}{head('transit', '在途', 'num')}{head('stockDays', <>在库<br />可售天数</>, 'num')}{head('stockTransitDays', <>在库在途<br />可售天数</>, 'num')}
             <th colSpan={7} className="group">近 7 日动销</th>
             {head('movement3d', <>近3日<br />动销</>, 'num')}{head('speed7d', <>近7天<br />动销速度</>, 'num')}{head('monthUnits', `${Number(data.today.slice(5, 7))}月销量`, 'num')}
-            {head('selloutDate', <>预估<br />售罄日</>)}{head('price', '售价', 'num')}{head('profit', <>单件<br />毛利</>, 'num')}{head('margin', '毛利率', 'num')}</tr>
+            {head('selloutDate', <>预估<br />售罄日</>)}{head('price', '售价', 'num')}{head('profit', <>单件<br />毛利</>, 'num')}{head('margin', '毛利率', 'num')}
+            <th colSpan={4} className="group">{monthLabel(data.feeMonth)}广告与仓储</th></tr>
             <tr>{data.days.map((day, index) => <th key={day} className={`sortable day${index >= 4 ? ' recent' : ''}`} aria-sort={sort.key === `d${index}` ? (sort.desc ? 'descending' : 'ascending') : 'none'}>
-              <button type="button" onClick={() => setSort({ key: `d${index}`, desc: sort.key === `d${index}` ? !sort.desc : true })}>{md(day)}<small>{weekOf(day)}</small></button></th>)}</tr></thead>
+              <button type="button" onClick={() => setSort({ key: `d${index}`, desc: sort.key === `d${index}` ? !sort.desc : true })}>{md(day)}<small>{weekOf(day)}</small></button></th>)}
+              {[['adSpend', '广告花费'], ['acos', 'ACOS'], ['tacos', '费比'], ['storageFee', '仓储费']].map(([key, label]) =>
+                <th key={key} className="sortable num" aria-sort={sort.key === key ? (sort.desc ? 'descending' : 'ascending') : 'none'}>
+                  <button type="button" onClick={() => setSort({ key, desc: sort.key === key ? !sort.desc : true })}>{label}{sort.key === key ? (sort.desc ? ' ↓' : ' ↑') : ''}</button></th>)}</tr></thead>
           <tbody>{rows.map((row) => {
             const level = row.soldOut && row.sales7d > 0 ? 'danger' : urgency(row.stockDays);
             return <tr key={row.sku}>
@@ -149,16 +171,30 @@ export default function PriceStrategyPage({ onOpenShipments }) {
               <td className={level}>{row.soldOut ? (row.sales7d > 0 ? '已断货' : '') : row.selloutDate ? slash(row.selloutDate) : ''}</td>
               <td className="num">{row.price == null ? '' : fmt(row.price, 2)}</td>
               <td className={`num ${marginLevel(row)}`} title={missingNote(row)}>{row.profit == null ? '' : fmt(row.profit, 2)}</td>
-              <td className={`num strong ${marginLevel(row)}`} title={missingNote(row)}>{row.margin == null ? '' : `${fmt(row.margin, 1)}%`}</td></tr>;
+              <td className={`num strong ${marginLevel(row)}`} title={missingNote(row)}>{row.margin == null ? '' : `${fmt(row.margin, 1)}%`}</td>
+              <td className="num" title={adNote(row)}>{row.adSpend ? fmt(row.adSpend, 2) : row.adSpend === 0 && row.feeSales > 0 ? '0' : ''}</td>
+              <td className={`num ${acosLevel(row.acos)}`} title={adNote(row)}>{row.adSpend > 0 && !row.adSales ? '无出单' : pctText(row.acos)}</td>
+              <td className={`num strong ${tacosLevel(row.tacos)}`} title={adNote(row)}>{row.adSpend > 0 && !row.feeSales ? '无销量' : pctText(row.tacos)}</td>
+              <td className="num" title={storageNote(row)}>{row.storageFee == null ? '' : <>{fmt(row.storageFee, 2)}{row.storageEstimated && <small className="est">估</small>}</>}</td></tr>;
           })}</tbody>
           <tfoot><tr><td className="col-date">合计</td><td className="col-sku" /><td /><td className="num">{fmt(totals.stock)}</td><td className="num">{fmt(totals.transit)}</td><td /><td />
             {totals.daily.map((units, index) => <td key={index} className="num day">{fmt(units)}</td>)}
             <td /><td className="num">{fmt(totals.sales7d / 7, 2)}</td><td className="num">{fmt(totals.monthUnits)}</td><td /><td /><td />
-            <td className="num" title="近 7 天按销量加权">{totals.margin7d == null ? '' : `${fmt(totals.margin7d, 1)}%`}</td></tr></tfoot>
+            <td className="num" title="近 7 天按销量加权">{totals.margin7d == null ? '' : `${fmt(totals.margin7d, 1)}%`}</td>
+            <td className="num">{totals.adSpend ? fmt(totals.adSpend, 2) : ''}</td>
+            <td className={`num ${acosLevel(totals.adSales ? totals.adSpend / totals.adSales * 100 : null)}`}>{totals.adSales ? pctText(totals.adSpend / totals.adSales * 100) : ''}</td>
+            <td className={`num ${tacosLevel(totals.feeSales ? totals.adSpend / totals.feeSales * 100 : null)}`}>{totals.feeSales && totals.adSpend ? pctText(totals.adSpend / totals.feeSales * 100) : ''}</td>
+            <td className="num">{totals.storageFee ? fmt(totals.storageFee, 2) : ''}</td></tr></tfoot>
         </table></div>}
       <p className="hint price-legend">近3日动销＝最近 3 天销量÷3；近7天动销速度＝近 7 天销量÷7；可售天数＝库存÷近7天动销速度；预估售罄日＝今天＋在库可售天数。点「在途」数字看装着这个 SKU 的货件。
         <span className="danger">红色</span>为 30 天内卖完，<span className="warn">黄色</span>为 60 天内。月销量含今天已同步的订单。
-        单件毛利＝售价－落地成本－FBA 配送费－佣金（成本在 SKU 库维护，FBA 费和佣金每天从亚马逊读取），未扣广告费和仓储费；毛利率亏钱标红、低于 15% 标黄，合计行是近 7 天按销量加权的毛利率；空白表示缺成本或费用。广告数据等亚马逊广告 API 开通后再加。</p>
+        单件毛利＝售价－落地成本－FBA 配送费－佣金（成本在 SKU 库维护，FBA 费和佣金每天从亚马逊读取），未扣广告费和仓储费；毛利率亏钱标红、低于 15% 标黄，合计行是近 7 天按销量加权的毛利率；空白表示缺成本或费用。</p>
+      {data && <p className="hint price-legend">{monthLabel(data.feeMonth)}广告与仓储：广告花费和广告销售额是 SP/SB/SD 合计、按推广的 SKU 归（亚马逊广告 API 开通前每天用 SellerSpace 拉一次），
+        {data.adData ? `数据截到 ${data.adData.throughDay ? slash(data.adData.throughDay) : '（未注明）'}；` : '这个月还没有 SKU 广告数据；'}
+        ACOS＝广告花费÷广告销售额（超过 30% 标黄、40% 标红）；费比＝广告花费÷这个 SKU 当月全部销售额（即 TACOS，超过 12% 标黄、20% 标红）。广告销售额可能包含买家点广告后买的同款其他尺码颜色。
+        仓储费＝月度仓储费＋超龄附加费，来自仓储费板块；<small className="est">估</small> 表示亚马逊报告还没出，按库存规划报告预估（本月按已过天数折算）。鼠标停在数字上看明细。
+        {!data.storageData?.hasData && ' 这个月还没有仓储费数据。'}
+        {data.feeOther?.adSpend ? ` 另有 $${fmt(data.feeOther.adSpend, 2)} 广告花费的 SKU 不在表里，没算进合计。` : ''}</p>}
     </section>
   </div>;
 }

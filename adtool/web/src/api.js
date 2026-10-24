@@ -16,7 +16,7 @@ async function request(path, options = {}) {
 export const CHANGES_EVENT = 'adtool:changes';
 
 export const api = {
-  priceStrategy: () => request('/price-strategy'),
+  priceStrategy: (month) => request(`/price-strategy${month ? `?month=${encodeURIComponent(month)}` : ''}`),
   changes: (view) => request(`/changes?view=${encodeURIComponent(view)}`),
   changeCounts: () => request('/changes/counts'),
   changeLog: () => request('/changes/log'),

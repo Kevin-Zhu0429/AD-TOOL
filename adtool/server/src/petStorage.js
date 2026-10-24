@@ -400,6 +400,23 @@ export function storageFindings(rows, totals, today) {
   return findings.sort((a, b) => levels[a.level] - levels[b.level]);
 }
 
+/** 仓储费报告没有 SKU:FNSKU 对回 SKU,没有 FNSKU 的用 ASIN(一个 ASIN 只有一个 SKU 时)。返回 row → 小写 SKU 或 null */
+function feeSkuResolver(planning, directory) {
+  const skuByFnsku = new Map(planning.filter((row) => row.fnsku).map((row) => [lower(row.fnsku), row.sku]));
+  const asinSkus = new Map();
+  for (const row of [...planning, ...directory]) {
+    if (!row.asin) continue;
+    const set = asinSkus.get(row.asin.toUpperCase()) ?? new Set();
+    set.add(lower(row.sku)); asinSkus.set(row.asin.toUpperCase(), set);
+  }
+  return (row) => {
+    const byFnsku = row.fnsku && skuByFnsku.get(lower(row.fnsku));
+    if (byFnsku) return lower(byFnsku);
+    const set = row.asin ? asinSkus.get(row.asin.toUpperCase()) : null;
+    return set?.size === 1 ? [...set][0] : null;
+  };
+}
+
 /**
  * 仓储费看板:每个 SKU 的在库/在途、库龄分段、下次超龄附加费预估、下月仓储费预估、上月实际仓储费、近几个月已收超龄附加费;
  * 按款式汇总、按月汇总,并给出规则提醒。style / sku 只看这些。
@@ -412,20 +429,7 @@ export function storageBoard({ style, sku, months = 6, today = todayOf() } = {})
   const dirBySku = new Map(directory.map((row) => [lower(row.sku), row]));
   const detail = new Map(db.prepare('SELECT * FROM pet_inventory_detail').all().map((row) => [lower(row.sku), row]));
 
-  // 仓储费报告没有 SKU:FNSKU 对回 SKU,没有 FNSKU 的用 ASIN(一个 ASIN 只有一个 SKU 时)
-  const skuByFnsku = new Map(planning.filter((row) => row.fnsku).map((row) => [lower(row.fnsku), row.sku]));
-  const asinSkus = new Map();
-  for (const row of [...planning, ...directory]) {
-    if (!row.asin) continue;
-    const set = asinSkus.get(row.asin.toUpperCase()) ?? new Set();
-    set.add(lower(row.sku)); asinSkus.set(row.asin.toUpperCase(), set);
-  }
-  const skuOfFee = (row) => {
-    const byFnsku = row.fnsku && skuByFnsku.get(lower(row.fnsku));
-    if (byFnsku) return lower(byFnsku);
-    const set = row.asin ? asinSkus.get(row.asin.toUpperCase()) : null;
-    return set?.size === 1 ? [...set][0] : null;
-  };
+  const skuOfFee = feeSkuResolver(planning, directory);
 
   const thisMonth = monthOf(today);
   const firstMonth = shiftMonth(thisMonth, -(span - 1));
@@ -602,4 +606,53 @@ export function monthlyStorageCosts(year, today = todayOf()) {
     }
   }
   return result;
+}
+
+// ---------- 价格策略表:每个 SKU 某月的仓储费 ----------
+
+/**
+ * 某月每个 SKU 的月度仓储费和超龄附加费,口径同 monthlyStorageCosts:
+ *   有月度仓储费报告用实际数;报告还没出的本月和上月按库存规划报告的「下月仓储费预估」(本月按已过天数折算)。
+ *   超龄附加费用已收的实际数;本月 15 号前还没收,用「下次超龄附加费预估」。
+ * 返回 { bySku: Map(小写 SKU → { storageFee, agedSurcharge, storageEstimated, agedEstimated }), unmatched, hasData }
+ */
+export function skuStorageCosts(month, today = todayOf()) {
+  const planning = db.prepare('SELECT data_json FROM pet_storage_inventory').all().map((row) => JSON.parse(row.data_json));
+  const directory = db.prepare("SELECT sku, asin FROM sku_items WHERE user_id=? AND country='US'").all(PET_SHOP_ID);
+  const skuOfFee = feeSkuResolver(planning, directory);
+  const bySku = new Map();
+  const item = (key) => {
+    if (!bySku.has(key)) bySku.set(key, { storageFee: null, agedSurcharge: null, storageEstimated: false, agedEstimated: false });
+    return bySku.get(key);
+  };
+  const unmatched = { storageFee: 0, agedSurcharge: 0 };
+  const fees = db.prepare('SELECT * FROM pet_storage_fees WHERE month=?').all(month);
+  for (const row of fees) {
+    const key = skuOfFee(row);
+    if (!key) { unmatched.storageFee += row.fee; continue; }
+    const entry = item(key); entry.storageFee = money((entry.storageFee ?? 0) + row.fee);
+  }
+  const aged = db.prepare('SELECT * FROM pet_storage_aged_charges WHERE month=?').all(month);
+  for (const row of aged) {
+    const key = row.sku ? lower(row.sku) : skuOfFee(row);
+    if (!key) { unmatched.agedSurcharge += row.amount; continue; }
+    const entry = item(key); entry.agedSurcharge = money((entry.agedSurcharge ?? 0) + row.amount);
+  }
+  const thisMonth = monthOf(today);
+  const lastMonth = shiftMonth(thisMonth, -1);
+  // 拉过但没有收费行的月份是 0(上月报告本月中旬才出,不算)
+  const feeKnown = fees.length > 0 || (month < lastMonth && (state('storage_fee_months') ?? []).includes(month));
+  const agedKnown = aged.length > 0 || (state('storage_aged_months') ?? []).includes(month);
+  if (planning.length) {
+    const day = Number(today.slice(8, 10));
+    const share = month === thisMonth ? day / Number(monthEnd(thisMonth).slice(8, 10)) : month === lastMonth ? 1 : 0;
+    const estimateAged = month === thisMonth && day < 16 && !aged.length;
+    for (const row of planning) {
+      const entry = item(lower(row.sku));
+      if (!feeKnown && share > 0 && row.storageNextMonth != null) Object.assign(entry, { storageFee: money(row.storageNextMonth * share), storageEstimated: true });
+      if (estimateAged && row.aisFee > 0) Object.assign(entry, { agedSurcharge: money(row.aisFee), agedEstimated: true });
+    }
+  }
+  return { bySku, unmatched: { storageFee: money(unmatched.storageFee), agedSurcharge: money(unmatched.agedSurcharge) },
+    hasData: feeKnown || agedKnown || bySku.size > 0, estimated: !feeKnown };
 }
